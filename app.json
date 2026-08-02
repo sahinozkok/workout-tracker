@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "workout-tracker",
+    "name": "Set Günlüğü",
     "slug": "workout-tracker",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -27,6 +27,7 @@
     },
     "plugins": [
       "expo-router",
+      "expo-notifications",
       [
         "expo-splash-screen",
         {
@@ -37,6 +38,14 @@
           "dark": {
             "backgroundColor": "#000000"
           }
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Profiline, programlarına ve antrenmanlarına görsel eklemek için fotoğraflarına erişmemize izin ver.",
+          "cameraPermission": false,
+          "microphonePermission": false
         }
       ]
     ],

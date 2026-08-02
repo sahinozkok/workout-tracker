@@ -1,0 +1,28 @@
+import { ProgramIconName } from '@/types/workout';
+
+export const PROGRAM_ICON_OPTIONS: { icon: ProgramIconName; label: string }[] = [
+  { icon: 'barbell-outline', label: 'Halter' },
+  { icon: 'fitness-outline', label: 'Fitness' },
+  { icon: 'body-outline', label: 'Vücut' },
+  { icon: 'flash-outline', label: 'Güç' },
+  { icon: 'flame-outline', label: 'Yoğun' },
+  { icon: 'trophy-outline', label: 'Hedef' },
+  { icon: 'walk-outline', label: 'Yürüyüş' },
+  { icon: 'bicycle-outline', label: 'Bisiklet' },
+  { icon: 'football-outline', label: 'Futbol' },
+  { icon: 'basketball-outline', label: 'Basketbol' },
+  { icon: 'tennisball-outline', label: 'Tenis' },
+  { icon: 'golf-outline', label: 'Golf' },
+  { icon: 'baseball-outline', label: 'Top' },
+  { icon: 'medal-outline', label: 'Madalya' },
+  { icon: 'heart-outline', label: 'Sağlık' },
+  { icon: 'pulse-outline', label: 'Nabız' },
+  { icon: 'speedometer-outline', label: 'Hız' },
+  { icon: 'timer-outline', label: 'Süre' },
+  { icon: 'stopwatch-outline', label: 'Kronometre' },
+  { icon: 'water-outline', label: 'Su' },
+  { icon: 'nutrition-outline', label: 'Beslenme' },
+  { icon: 'moon-outline', label: 'Gece' },
+  { icon: 'sunny-outline', label: 'Gündüz' },
+  { icon: 'shield-checkmark-outline', label: 'Dayanıklılık' },
+];
