@@ -17,6 +17,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemeColors } from '@/constants/theme';
+import { useAuth } from '@/context/auth-context';
 import { useProfile } from '@/context/profile-context';
 import { ThemePreference } from '@/context/theme-context';
 import { useWorkout } from '@/context/workout-context';
@@ -33,6 +34,7 @@ const GOAL_OPTIONS: { icon: keyof typeof Ionicons.glyphMap; label: string; value
 ];
 
 export default function ProfileScreen() {
+  const { signOut, user } = useAuth();
   const { profile, restTimerEnabled, saveProfile, setRestTimerEnabled } = useProfile();
   const { disciplineStatuses, programs } = useWorkout();
   const { colors, isDark, preference, setPreference } = useAppTheme();
@@ -112,6 +114,20 @@ export default function ProfileScreen() {
     } catch {
       Alert.alert('Ayar kaydedilemedi', 'Mola sayacı ayarını tekrar değiştirmeyi dene.');
     }
+  }
+
+  function handleSignOut() {
+    Alert.alert('Çıkış yap', 'Bu cihazdaki Supabase oturumun kapatılacak. Devam etmek istiyor musun?', [
+      { text: 'Vazgeç', style: 'cancel' },
+      {
+        text: 'Çıkış yap',
+        style: 'destructive',
+        onPress: async () => {
+          const result = await signOut();
+          if (result.error) Alert.alert('Çıkış yapılamadı', result.error);
+        },
+      },
+    ]);
   }
 
   const avatarLetter = draft.displayName.trim().charAt(0).toLocaleUpperCase('tr-TR') || 'S';
@@ -319,6 +335,23 @@ export default function ProfileScreen() {
               trackColor={{ false: colors.surfaceMuted, true: colors.primary }}
               value={restTimerEnabled}
             />
+          </View>
+
+          <View style={styles.accountCard}>
+            <View style={styles.accountInfo}>
+              <Ionicons name="shield-checkmark-outline" size={20} color={colors.disciplineCompleted} />
+              <View style={styles.accountText}>
+                <Text style={styles.accountTitle}>Supabase hesabı bağlı</Text>
+                <Text numberOfLines={1} style={styles.accountEmail}>{user?.email}</Text>
+              </View>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              onPress={handleSignOut}
+              style={({ pressed }) => [styles.signOutButton, pressed && styles.pressed]}>
+              <Ionicons name="log-out-outline" size={18} color={colors.danger} />
+              <Text style={styles.signOutText}>Çıkış yap</Text>
+            </Pressable>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -565,6 +598,26 @@ function createStyles(colors: ThemeColors) {
       width: 34,
     },
     compactThemeButtonSelected: { backgroundColor: colors.primary },
+    accountCard: {
+      backgroundColor: colors.surface,
+      borderColor: colors.border,
+      borderRadius: 18,
+      borderWidth: 1,
+      gap: 13,
+      padding: 15,
+    },
+    accountInfo: { alignItems: 'center', flexDirection: 'row', gap: 10 },
+    accountText: { flex: 1 },
+    accountTitle: { color: colors.text, fontSize: 13, fontWeight: '800' },
+    accountEmail: { color: colors.textSecondary, fontSize: 11, marginTop: 2 },
+    signOutButton: {
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+      flexDirection: 'row',
+      gap: 6,
+      paddingVertical: 4,
+    },
+    signOutText: { color: colors.danger, fontSize: 12, fontWeight: '800' },
     pressed: { opacity: 0.72 },
   });
 }

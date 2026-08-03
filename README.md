@@ -75,6 +75,9 @@ Expo Router'da `app` klasöründeki her ekran dosyası bir sayfadır. `_layout.t
 - Ad, kullanıcı adı, biyografi ve antrenman hedefi düzenlenebilen profil
 - Güneş, telefon ve ay simgeli küçük görünüm seçiciyle açık, sistem ve koyu tema seçenekleri
 - Profil ekranından mola sayacını açma veya kapatma
+- Supabase bağlantısı ve cihazda saklanan kullanıcı oturumu
+- E-posta ve şifreyle hesap oluşturma, giriş yapma ve çıkış yapma
+- Oturum durumuna göre korunan uygulama ekranları
 
 Program verileri ve seçilen program/gün fotoğrafları şu anda yalnızca uygulama belleğinde tutulur. Uygulama tamamen kapatıldığında sıfırlanır. Kalıcı kayıt ve fotoğraf yükleme, ileride Supabase bağlantısıyla eklenecek.
 
