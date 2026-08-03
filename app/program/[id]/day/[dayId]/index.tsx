@@ -134,7 +134,13 @@ export default function WorkoutDayScreen() {
     completeSet(todayKey, exercise.id, exercise.targetSets);
 
     const completesWholeWorkout = totalCompletedSets + 1 >= totalTargetSets;
-    if (!restTimerEnabled || exercise.restSeconds <= 0 || completesWholeWorkout) return;
+    if (completesWholeWorkout) {
+      if (workoutSession?.status === 'running') finishWorkout(workoutSession.id);
+      void clearRestTimer();
+      return;
+    }
+
+    if (!restTimerEnabled || exercise.restSeconds <= 0) return;
 
     const exerciseName = getProgramExerciseName(exercise.exerciseId, exercise.customExerciseName);
     setRestTimer({ endsAt: Date.now() + exercise.restSeconds * 1000, exerciseName });
@@ -301,7 +307,7 @@ export default function WorkoutDayScreen() {
             <Ionicons name="checkmark-circle" size={28} color={colors.disciplineCompleted} />
             <View style={styles.successText}>
               <Text style={styles.successTitle}>Günün tüm setleri tamamlandı!</Text>
-              <Text style={styles.successBody}>Harika iş. Bütün hedef setleri işaretledin.</Text>
+              <Text style={styles.successBody}>Kronometre durduruldu ve antrenman süren geçmişe kaydedildi.</Text>
             </View>
           </View>
         )}
