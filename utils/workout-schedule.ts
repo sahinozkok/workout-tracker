@@ -25,8 +25,14 @@ export function getScheduledDisciplineStatus(
   activeProgram: WorkoutProgram | undefined,
   activeProgramStartedAt: string | undefined,
   completedSetCounts: Record<string, number>,
+  todayKey: string,
 ): DisciplineStatus | undefined {
   if (!activeProgram || !activeProgramStartedAt || dateKey < activeProgramStartedAt) return undefined;
+  // Gelecek günlere otomatik durum üretilmez.
+  if (dateKey > todayKey) return undefined;
+
+  // Bugün henüz gün bitmediği için 0 ilerleme "atlandı" sayılmaz; nötr kalır.
+  const isToday = dateKey === todayKey;
   const weekday = dateFromKey(dateKey).getDay();
   const scheduledDays = activeProgram.days.filter((day) => day.scheduledWeekday === weekday);
 
@@ -37,7 +43,7 @@ export function getScheduledDisciplineStatus(
 
   const exercises = workoutDays.flatMap((day) => day.exercises);
   const totalTargetSets = exercises.reduce((total, exercise) => total + exercise.targetSets, 0);
-  if (totalTargetSets === 0) return 'skipped';
+  if (totalTargetSets === 0) return isToday ? undefined : 'skipped';
 
   const totalCompletedSets = exercises.reduce(
     (total, exercise) =>
@@ -48,7 +54,7 @@ export function getScheduledDisciplineStatus(
 
   if (totalCompletedSets === totalTargetSets) return 'completed';
   if (totalCompletedSets > 0) return 'partial';
-  return 'skipped';
+  return isToday ? undefined : 'skipped';
 }
 
 export function buildDisciplineStatuses(
@@ -60,6 +66,7 @@ export function buildDisciplineStatuses(
   const statuses = { ...manualStatuses };
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  const todayKey = toDateKey(today);
 
   for (let dayOffset = 0; dayOffset <= 400; dayOffset += 1) {
     const date = new Date(today);
@@ -70,6 +77,7 @@ export function buildDisciplineStatuses(
       activeProgram,
       activeProgramStartedAt,
       completedSetCounts,
+      todayKey,
     );
     if (scheduledStatus) statuses[dateKey] = scheduledStatus;
   }
