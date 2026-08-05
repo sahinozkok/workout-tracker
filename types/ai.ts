@@ -42,3 +42,15 @@ export type ExerciseProgressMetrics = {
 };
 
 export type ExerciseProgressInsight = WeeklyWorkoutInsight;
+
+export type ChatRole = 'user' | 'assistant';
+
+export type CoachChatMessage = {
+  id: string;
+  role: ChatRole;
+  content: string;
+  createdAt: string;
+  clientMessageId: string;
+  // Yalnızca istemci tarafında kullanılır; sunucuda saklanmaz.
+  status?: 'sending' | 'sent' | 'failed';
+};

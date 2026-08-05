@@ -48,6 +48,7 @@ export default function TabLayout() {
         name="coach"
         options={{
           title: 'AI Koç',
+          headerShown: false,
           tabBarIcon: ({ color, focused, size }) => <Ionicons name={focused ? 'sparkles' : 'sparkles-outline'} size={size} color={color} />,
         }}
       />
