@@ -72,9 +72,12 @@ function AppNavigation() {
     <ThemeProvider value={navigationTheme}>
       <Stack
         screenOptions={{
+          animation: 'slide_from_right',
           contentStyle: { backgroundColor: colors.background },
+          headerShadowVisible: false,
           headerStyle: { backgroundColor: colors.surface },
           headerTintColor: colors.text,
+          headerTitleStyle: { fontSize: 19, fontWeight: '900' },
         }}>
         <Stack.Protected guard={!session}>
           <Stack.Screen name="(auth)" options={{ headerShown: false }} />

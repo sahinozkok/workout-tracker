@@ -80,6 +80,25 @@ export type WorkoutSession = {
   completedAt?: string;
 };
 
+export type WorkoutSetPerformance = {
+  weightKg?: number;
+  repetitions: number;
+  rpe?: number;
+};
+
+export type WorkoutSetRecord = {
+  id: string;
+  sessionId: string;
+  programExerciseId?: string;
+  exerciseName: string;
+  dateKey: string;
+  setNumber: number;
+  weightKg?: number;
+  repetitions?: number;
+  rpe?: number;
+  completedAt: string;
+};
+
 export type NewWorkoutProgram = Pick<WorkoutProgram, 'name' | 'days'> & { visual: WorkoutVisual };
 export type NewProgramExercise = Omit<ProgramExercise, 'id'>;
 

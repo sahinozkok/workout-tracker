@@ -1,19 +1,128 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { WorkoutVisualDisplay } from '@/components/workout-visual-display';
 import { ThemeColors } from '@/constants/theme';
-import { getWeekdayLabel } from '@/constants/weekdays';
 import { useWorkout } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import { getProgramVisual } from '@/utils/workout-visual';
 
 export default function ProgramsScreen() {
-  const { activateProgram, activeProgramId, programs } = useWorkout();
+  const { created } = useLocalSearchParams<{ created?: string }>();
+  const {
+    activateProgram,
+    activeProgramId,
+    deleteProgram,
+    isProgramsLoading,
+    programs,
+    programsError,
+    refreshPrograms,
+  } = useWorkout();
   const { colors } = useAppTheme();
   const styles = createStyles(colors);
+  const [activatingProgramId, setActivatingProgramId] = useState<string>();
+  const [deletingProgramId, setDeletingProgramId] = useState<string>();
+  const [showCreatedNotice, setShowCreatedNotice] = useState(created === '1');
+
+  useEffect(() => {
+    if (created !== '1') return;
+    setShowCreatedNotice(true);
+    const timeout = setTimeout(() => setShowCreatedNotice(false), 2400);
+    return () => clearTimeout(timeout);
+  }, [created]);
+
+  async function handleActivateProgram(programId: string) {
+    setActivatingProgramId(programId);
+    try {
+      await activateProgram(programId);
+    } catch (error) {
+      Alert.alert(
+        'Aktif program değiştirilemedi',
+        error instanceof Error ? error.message : 'Lütfen internet bağlantını kontrol edip tekrar dene.',
+      );
+    } finally {
+      setActivatingProgramId(undefined);
+    }
+  }
+
+  function openProgramMenu(programId: string, programName: string, isActive: boolean) {
+    Alert.alert(programName, 'Program için yapmak istediğin işlemi seç.', [
+      { text: 'Vazgeç', style: 'cancel' },
+      ...(!isActive
+        ? [{ text: 'Aktif program yap', onPress: () => void handleActivateProgram(programId) }]
+        : []),
+      {
+        text: 'Düzenle',
+        onPress: () => router.push({ pathname: '/program/[id]', params: { id: programId } }),
+      },
+      {
+        text: 'Sil',
+        style: 'destructive' as const,
+        onPress: () => confirmDeleteProgram(programId, programName, isActive),
+      },
+    ]);
+  }
+
+  function confirmDeleteProgram(programId: string, programName: string, isActive: boolean) {
+    Alert.alert(
+      'Programı sil',
+      `“${programName}” ve içindeki günler silinecek.${isActive ? ' Bu program şu anda aktif.' : ''}`,
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Programı sil',
+          style: 'destructive',
+          onPress: () => void handleDeleteProgram(programId),
+        },
+      ],
+    );
+  }
+
+  async function handleDeleteProgram(programId: string) {
+    setDeletingProgramId(programId);
+    try {
+      await deleteProgram(programId);
+    } catch (error) {
+      Alert.alert(
+        'Program silinemedi',
+        error instanceof Error ? error.message : 'Lütfen internet bağlantını kontrol edip tekrar dene.',
+      );
+    } finally {
+      setDeletingProgramId(undefined);
+    }
+  }
+
+  if (isProgramsLoading) {
+    return (
+      <SafeAreaView style={styles.container} edges={['bottom']}>
+        <View style={styles.loadingState}>
+          <ActivityIndicator color={colors.primary} size="large" />
+          <Text style={styles.loadingText}>Programların yükleniyor…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (programsError) {
+    return (
+      <SafeAreaView style={styles.container} edges={['bottom']}>
+        <View style={styles.emptyState}>
+          <Ionicons name="cloud-offline-outline" size={42} color={colors.textTertiary} />
+          <Text style={styles.emptyTitle}>Programlar yüklenemedi</Text>
+          <Text style={styles.description}>{programsError}</Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => void refreshPrograms()}
+            style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}>
+            <Text style={styles.buttonText}>Tekrar dene</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (programs.length === 0) {
     return (
@@ -43,6 +152,13 @@ export default function ProgramsScreen() {
           <CreateButton compact />
         </View>
 
+        {showCreatedNotice && (
+          <View style={styles.successNotice}>
+            <Ionicons name="checkmark-circle" size={19} color={colors.disciplineCompleted} />
+            <Text style={styles.successNoticeText}>Programın kaydedildi.</Text>
+          </View>
+        )}
+
         <View style={styles.programList}>
           {programs.map((program) => {
             const isActive = program.id === activeProgramId;
@@ -62,46 +178,39 @@ export default function ProgramsScreen() {
                     />
                   </View>
                   <View style={styles.programInfo}>
-                    <Text style={styles.programName}>{program.name}</Text>
-                    <Text style={styles.programMeta}>{program.days.length} antrenman günü</Text>
-                    <View style={styles.dayChips}>
-                      {program.days.map((day) => (
-                        <View key={day.id} style={[styles.dayChip, day.isOffDay && styles.offDayChip]}>
-                          <Text style={[styles.dayChipText, day.isOffDay && styles.offDayChipText]}>
-                            {getWeekdayLabel(day.scheduledWeekday).slice(0, 3)} · {day.name}
-                          </Text>
+                    <Text numberOfLines={1} style={styles.programName}>{program.name}</Text>
+                    <View style={styles.programMetaRow}>
+                      <Text numberOfLines={1} style={styles.programMeta}>
+                        Haftada {program.days.filter((day) => !day.isOffDay).length} antrenman
+                        {program.days.some((day) => day.isOffDay) ? ` · ${program.days.filter((day) => day.isOffDay).length} dinlenme` : ''}
+                      </Text>
+                      {isActive && (
+                        <View style={styles.activeBadge}>
+                          <View style={styles.activeDot} />
+                          <Text style={styles.activeBadgeText}>AKTİF</Text>
                         </View>
-                      ))}
+                      )}
                     </View>
                   </View>
-                  <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
                 </Pressable>
-
-                {isActive ? (
-                  <View style={styles.activeProgramRow}>
-                    <Ionicons name="checkmark-circle" size={18} color={colors.disciplineCompleted} />
-                    <Text style={styles.activeProgramText}>Aktif program · Takvim bu programa göre işleniyor</Text>
-                  </View>
-                ) : (
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={() => activateProgram(program.id)}
-                    style={({ pressed }) => [styles.activateButton, pressed && styles.buttonPressed]}>
-                    <Ionicons name="radio-button-off-outline" size={17} color={colors.primaryIcon} />
-                    <Text style={styles.activateButtonText}>Aktif program yap</Text>
-                  </Pressable>
-                )}
+                <Pressable
+                  accessibilityLabel={`${program.name} seçenekleri`}
+                  accessibilityRole="button"
+                  disabled={deletingProgramId === program.id || activatingProgramId === program.id}
+                  hitSlop={8}
+                  onPress={() => openProgramMenu(program.id, program.name, isActive)}
+                  style={({ pressed }) => [styles.moreButton, pressed && styles.buttonPressed]}>
+                  {deletingProgramId === program.id || activatingProgramId === program.id ? (
+                    <ActivityIndicator color={colors.primaryIcon} size="small" />
+                  ) : (
+                    <Ionicons name="ellipsis-horizontal" size={22} color={colors.textSecondary} />
+                  )}
+                </Pressable>
               </View>
             );
           })}
         </View>
 
-        <View style={styles.memoryNotice}>
-          <Ionicons name="information-circle-outline" size={20} color={colors.infoIcon} />
-          <Text style={styles.memoryNoticeText}>
-            Bu aşamada programlar yalnızca uygulama açıkken saklanır. Kalıcı kayıt özelliğini daha sonra ekleyeceğiz.
-          </Text>
-        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -125,12 +234,14 @@ function CreateButton({ compact = false }: { compact?: boolean }) {
 function createStyles(colors: ThemeColors) {
   return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  content: { gap: 20, padding: 20 },
+  content: { gap: 24, padding: 20, paddingBottom: 40 },
   emptyState: { alignItems: 'center', flex: 1, justifyContent: 'center', padding: 32 },
+  loadingState: { alignItems: 'center', flex: 1, gap: 14, justifyContent: 'center', padding: 32 },
+  loadingText: { color: colors.textSecondary, fontSize: 14, fontWeight: '600' },
   iconCircle: {
     alignItems: 'center',
     backgroundColor: colors.primarySoft,
-    borderRadius: 32,
+    borderRadius: 12,
     height: 64,
     justifyContent: 'center',
     marginBottom: 18,
@@ -139,82 +250,68 @@ function createStyles(colors: ThemeColors) {
   emptyTitle: { color: colors.text, fontSize: 22, fontWeight: '800', marginBottom: 8 },
   description: { color: colors.textSecondary, fontSize: 15, lineHeight: 22, textAlign: 'center' },
   headerRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  title: { color: colors.text, fontSize: 25, fontWeight: '800' },
+  title: { color: colors.text, fontSize: 29, fontWeight: '900', lineHeight: 35 },
   subtitle: { color: colors.textSecondary, fontSize: 14, marginTop: 3 },
   button: {
     alignItems: 'center',
     backgroundColor: colors.primary,
-    borderRadius: 14,
+    borderRadius: 10,
     flexDirection: 'row',
     gap: 7,
     marginTop: 22,
     paddingHorizontal: 18,
-    paddingVertical: 13,
+    height: 50,
+    justifyContent: 'center',
+    paddingVertical: 0,
   },
-  compactButton: { height: 44, marginTop: 0, paddingHorizontal: 12, paddingVertical: 0 },
-  buttonPressed: { opacity: 0.78 },
-  buttonText: { color: colors.onPrimary, fontSize: 15, fontWeight: '700' },
-  programList: { gap: 12 },
-  programCard: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: 18,
+  compactButton: { height: 46, marginTop: 0, paddingHorizontal: 13, paddingVertical: 0 },
+  buttonPressed: { opacity: 0.8, transform: [{ scale: 0.97 }] },
+  buttonText: { color: colors.onPrimary, fontSize: 15, fontWeight: '900' },
+  programList: { gap: 10 },
+  successNotice: {
+    alignItems: 'center',
+    borderColor: colors.disciplineCompleted,
+    borderRadius: 9,
     borderWidth: 1,
-    overflow: 'hidden',
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
-  programCardActive: { borderColor: colors.disciplineCompleted },
+  successNoticeText: { color: colors.text, fontSize: 13, fontWeight: '800' },
+  programCard: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderBottomColor: colors.border,
+    borderColor: colors.border,
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+  },
+  programCardActive: { borderBottomColor: colors.primary },
   programCardMain: {
     alignItems: 'center',
+    flex: 1,
     flexDirection: 'row',
-    gap: 14,
-    padding: 16,
+    gap: 12,
+    paddingVertical: 15,
   },
   programCardPressed: { opacity: 0.72 },
   programIcon: {
     alignItems: 'center',
-    backgroundColor: colors.primarySoft,
-    borderRadius: 13,
-    height: 46,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    height: 43,
     justifyContent: 'center',
-    width: 46,
+    width: 43,
   },
-  programInfo: { flex: 1 },
-  programName: { color: colors.text, fontSize: 18, fontWeight: '800' },
-  programMeta: { color: colors.textSecondary, fontSize: 13, marginTop: 3 },
-  dayChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 12 },
-  dayChip: { backgroundColor: colors.surfaceMuted, borderRadius: 8, paddingHorizontal: 9, paddingVertical: 5 },
-  dayChipText: { color: colors.textSecondary, fontSize: 12, fontWeight: '600' },
-  offDayChip: { backgroundColor: colors.primarySoft },
-  offDayChipText: { color: colors.disciplineCompleted },
-  activeProgramRow: {
-    alignItems: 'center',
-    backgroundColor: colors.surfaceMuted,
-    borderTopColor: colors.border,
-    borderTopWidth: 1,
-    flexDirection: 'row',
-    gap: 7,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  activeProgramText: { color: colors.disciplineCompleted, flex: 1, fontSize: 11, fontWeight: '800' },
-  activateButton: {
-    alignItems: 'center',
-    borderTopColor: colors.border,
-    borderTopWidth: 1,
-    flexDirection: 'row',
-    gap: 6,
-    justifyContent: 'center',
-    paddingVertical: 10,
-  },
-  activateButtonText: { color: colors.primaryIcon, fontSize: 12, fontWeight: '800' },
-  memoryNotice: {
-    alignItems: 'flex-start',
-    backgroundColor: colors.infoSurface,
-    borderRadius: 14,
-    flexDirection: 'row',
-    gap: 9,
-    padding: 14,
-  },
-  memoryNoticeText: { color: colors.infoText, flex: 1, fontSize: 13, lineHeight: 19 },
+  programInfo: { flex: 1, minWidth: 0 },
+  programName: { color: colors.text, flexShrink: 1, fontSize: 17, fontWeight: '900' },
+  programMetaRow: { alignItems: 'center', flexDirection: 'row', gap: 10, marginTop: 3 },
+  programMeta: { color: colors.textSecondary, flex: 1, fontSize: 12 },
+  activeBadge: { alignItems: 'center', flexDirection: 'row', gap: 4 },
+  activeDot: { backgroundColor: colors.disciplineCompleted, borderRadius: 4, height: 7, width: 7 },
+  activeBadgeText: { color: colors.disciplineCompleted, fontSize: 9, fontWeight: '900', letterSpacing: 0.6 },
+  moreButton: { alignItems: 'center', height: 46, justifyContent: 'center', marginLeft: 8, width: 46 },
   });
 }

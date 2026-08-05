@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
@@ -24,7 +25,7 @@ import { DEFAULT_EXERCISE_VISUAL } from '@/utils/workout-visual';
 
 export default function AddExerciseScreen() {
   const { id, dayId } = useLocalSearchParams<{ id: string; dayId: string }>();
-  const { addExerciseToDay, programs } = useWorkout();
+  const { addExerciseToDay, isProgramsLoading, programs } = useWorkout();
   const { colors, isDark } = useAppTheme();
   const styles = createStyles(colors);
   const [search, setSearch] = useState('');
@@ -34,6 +35,7 @@ export default function AddExerciseScreen() {
   const [targetReps, setTargetReps] = useState('8-10');
   const [restSeconds, setRestSeconds] = useState('90');
   const [exerciseVisual, setExerciseVisual] = useState<WorkoutVisual>(DEFAULT_EXERCISE_VISUAL);
+  const [isSaving, setIsSaving] = useState(false);
 
   const program = programs.find((item) => item.id === id);
   const day = program?.days.find((item) => item.id === dayId);
@@ -48,6 +50,17 @@ export default function AddExerciseScreen() {
         .includes(normalizedSearch),
     );
   }, [search, selectedMuscleGroup]);
+
+  if (isProgramsLoading) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={['bottom']}>
+        <View style={styles.notFound}>
+          <ActivityIndicator color={colors.primary} size="large" />
+          <Text style={styles.notFoundTitle}>Program yükleniyor…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (!program || !day) {
     return (
@@ -66,7 +79,7 @@ export default function AddExerciseScreen() {
   const workoutDay = day;
   const selectedExercise = EXERCISES.find((exercise) => exercise.id === selectedExerciseId);
 
-  function handleSave() {
+  async function handleSave() {
     const customExerciseName = search.trim();
     const exerciseName = selectedExercise?.name ?? customExerciseName;
 
@@ -105,15 +118,25 @@ export default function AddExerciseScreen() {
       return;
     }
 
-    addExerciseToDay(programId, workoutDay.id, {
-      customExerciseName: selectedExercise ? undefined : customExerciseName,
-      exerciseId: selectedExercise?.id,
-      restSeconds: parsedRestSeconds,
-      targetReps: trimmedReps,
-      targetSets: parsedSets,
-      visual: exerciseVisual,
-    });
-    router.back();
+    setIsSaving(true);
+    try {
+      await addExerciseToDay(programId, workoutDay.id, {
+        customExerciseName: selectedExercise ? undefined : customExerciseName,
+        exerciseId: selectedExercise?.id,
+        restSeconds: parsedRestSeconds,
+        targetReps: trimmedReps,
+        targetSets: parsedSets,
+        visual: exerciseVisual,
+      });
+      router.back();
+    } catch (error) {
+      Alert.alert(
+        'Egzersiz eklenemedi',
+        error instanceof Error ? error.message : 'Lütfen internet bağlantını kontrol edip tekrar dene.',
+      );
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   return (
@@ -264,9 +287,14 @@ export default function AddExerciseScreen() {
 
         <Pressable
           accessibilityRole="button"
-          onPress={handleSave}
-          style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}>
-          <Text style={styles.saveButtonText}>Egzersizi ekle</Text>
+          disabled={isSaving}
+          onPress={() => void handleSave()}
+          style={({ pressed }) => [styles.saveButton, isSaving && styles.saveButtonDisabled, pressed && styles.pressed]}>
+          {isSaving ? (
+            <ActivityIndicator color={colors.onPrimary} />
+          ) : (
+            <Text style={styles.saveButtonText}>Egzersizi ekle</Text>
+          )}
         </Pressable>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -305,7 +333,7 @@ function createStyles(colors: ThemeColors) {
   return StyleSheet.create({
     safeArea: { backgroundColor: colors.background, flex: 1 },
     keyboardView: { flex: 1 },
-    content: { gap: 18, padding: 20, paddingBottom: 30 },
+    content: { gap: 15, padding: 18, paddingBottom: 30 },
     notFound: { alignItems: 'center', flex: 1, gap: 16, justifyContent: 'center', padding: 30 },
     notFoundTitle: { color: colors.text, fontSize: 18, fontWeight: '800', textAlign: 'center' },
     eyebrow: { color: colors.accentBright, fontSize: 12, fontWeight: '800', letterSpacing: 1.1 },
@@ -315,7 +343,7 @@ function createStyles(colors: ThemeColors) {
       alignItems: 'center',
       backgroundColor: colors.surface,
       borderColor: colors.inputBorder,
-      borderRadius: 14,
+      borderRadius: 9,
       borderWidth: 1,
       flexDirection: 'row',
       gap: 9,
@@ -326,7 +354,7 @@ function createStyles(colors: ThemeColors) {
       alignItems: 'center',
       backgroundColor: colors.accentSoft,
       borderColor: colors.accent,
-      borderRadius: 13,
+      borderRadius: 9,
       borderWidth: 1,
       flexDirection: 'row',
       gap: 9,
@@ -350,7 +378,7 @@ function createStyles(colors: ThemeColors) {
       alignItems: 'center',
       backgroundColor: colors.surface,
       borderColor: colors.border,
-      borderRadius: 14,
+      borderRadius: 9,
       borderWidth: 1,
       flexDirection: 'row',
       gap: 11,
@@ -370,12 +398,12 @@ function createStyles(colors: ThemeColors) {
     exerciseName: { color: colors.text, fontSize: 14, fontWeight: '800' },
     exerciseMeta: { color: colors.textSecondary, fontSize: 12, marginTop: 3 },
     pressed: { opacity: 0.72 },
-    noResults: { alignItems: 'center', backgroundColor: colors.surfaceMuted, borderRadius: 14, padding: 20 },
+    noResults: { alignItems: 'center', backgroundColor: colors.surfaceMuted, borderRadius: 9, padding: 20 },
     noResultsText: { color: colors.textSecondary, fontSize: 13, textAlign: 'center' },
     targetsCard: {
       backgroundColor: colors.surface,
       borderColor: colors.border,
-      borderRadius: 18,
+      borderRadius: 10,
       borderWidth: 1,
       padding: 16,
     },
@@ -384,7 +412,7 @@ function createStyles(colors: ThemeColors) {
     visualCard: {
       backgroundColor: colors.surface,
       borderColor: colors.border,
-      borderRadius: 18,
+      borderRadius: 10,
       borderWidth: 1,
       padding: 16,
     },
@@ -406,11 +434,12 @@ function createStyles(colors: ThemeColors) {
     saveButton: {
       alignItems: 'center',
       backgroundColor: colors.primary,
-      borderRadius: 14,
+      borderRadius: 9,
       margin: 20,
       marginTop: 8,
       paddingVertical: 15,
     },
     saveButtonText: { color: colors.onPrimary, fontSize: 16, fontWeight: '800' },
+    saveButtonDisabled: { opacity: 0.58 },
   });
 }

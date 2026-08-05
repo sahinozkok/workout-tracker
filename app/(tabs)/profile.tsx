@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
+import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useState } from 'react';
 import {
@@ -99,9 +100,13 @@ export default function ProfileScreen() {
     setIsSaving(true);
     try {
       await saveProfile(nextProfile);
-      Alert.alert('Profil kaydedildi', 'Değişikliklerin bu cihazda saklandı.');
-    } catch {
-      Alert.alert('Profil kaydedilemedi', 'Lütfen tekrar dene.');
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('Profil kaydedildi', 'Değişikliklerin hesabına kaydedildi.');
+    } catch (error) {
+      Alert.alert(
+        'Profil kaydedilemedi',
+        error instanceof Error ? error.message : 'Lütfen tekrar dene.',
+      );
     } finally {
       setIsSaving(false);
     }
@@ -437,11 +442,12 @@ function createStyles(colors: ThemeColors) {
   return StyleSheet.create({
     safeArea: { backgroundColor: colors.background, flex: 1 },
     container: { flex: 1 },
-    content: { gap: 16, padding: 20, paddingBottom: 36 },
+    content: { gap: 24, padding: 20, paddingBottom: 42 },
     profileCard: {
       alignItems: 'center',
-      backgroundColor: colors.primaryStrong,
-      borderRadius: 22,
+      backgroundColor: colors.surface,
+      borderColor: colors.border,
+      borderBottomWidth: 1,
       flexDirection: 'row',
       gap: 14,
       padding: 20,
@@ -458,15 +464,14 @@ function createStyles(colors: ThemeColors) {
     avatarImage: { height: '100%', width: '100%' },
     avatarLetter: { color: colors.onPrimary, fontSize: 28, fontWeight: '900' },
     profileText: { flex: 1, gap: 3 },
-    name: { color: colors.onPrimary, fontSize: 21, fontWeight: '800' },
+    name: { color: colors.onPrimary, fontSize: 23, fontWeight: '900' },
     username: { color: colors.heroText, fontSize: 13 },
     bio: { color: colors.heroText, fontSize: 13, lineHeight: 18, marginTop: 4 },
     statsRow: { flexDirection: 'row', gap: 10 },
     statCard: {
       backgroundColor: colors.surface,
       borderColor: colors.border,
-      borderRadius: 15,
-      borderWidth: 1,
+      borderBottomWidth: 1,
       flex: 1,
       gap: 3,
       padding: 14,
@@ -476,16 +481,16 @@ function createStyles(colors: ThemeColors) {
     settingsCard: {
       backgroundColor: colors.surface,
       borderColor: colors.border,
-      borderRadius: 20,
-      borderWidth: 1,
+      borderBottomWidth: 1,
+      borderTopWidth: 1,
       gap: 16,
       padding: 18,
     },
     settingHeader: { alignItems: 'center', flexDirection: 'row', gap: 12 },
     settingHeaderText: { flex: 1 },
-    settingTitle: { color: colors.text, fontSize: 17, fontWeight: '800' },
+    settingTitle: { color: colors.text, fontSize: 18, fontWeight: '900' },
     caption: { color: colors.textSecondary, fontSize: 13, lineHeight: 18, marginTop: 2 },
-    photoEditor: { alignItems: 'center', flexDirection: 'row', gap: 13 },
+    photoEditor: { alignItems: 'flex-start', flexDirection: 'row', gap: 13 },
     photoPreview: {
       alignItems: 'center',
       backgroundColor: colors.primarySoft,
@@ -520,26 +525,27 @@ function createStyles(colors: ThemeColors) {
     input: {
       backgroundColor: colors.surfaceMuted,
       borderColor: colors.inputBorder,
-      borderRadius: 13,
+      borderRadius: 9,
       borderWidth: 1,
       color: colors.text,
       fontSize: 15,
       paddingHorizontal: 14,
-      paddingVertical: 13,
+      height: 50,
+      paddingVertical: 0,
     },
     usernameInputRow: {
       alignItems: 'center',
       backgroundColor: colors.surfaceMuted,
       borderColor: colors.inputBorder,
-      borderRadius: 13,
+      borderRadius: 9,
       borderWidth: 1,
       flexDirection: 'row',
       paddingLeft: 14,
     },
     atSign: { color: colors.textSecondary, fontSize: 15, fontWeight: '700' },
     usernameInput: { color: colors.text, flex: 1, fontSize: 15, paddingHorizontal: 6, paddingVertical: 13 },
-    bioInput: { minHeight: 92 },
-    goalOptions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    bioInput: { height: 110, minHeight: 110, paddingVertical: 14 },
+    goalOptions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 3 },
     goalOption: {
       alignItems: 'center',
       backgroundColor: colors.surfaceMuted,
@@ -557,7 +563,7 @@ function createStyles(colors: ThemeColors) {
     saveButton: {
       alignItems: 'center',
       backgroundColor: colors.primary,
-      borderRadius: 13,
+      borderRadius: 9,
       flexDirection: 'row',
       gap: 8,
       justifyContent: 'center',
@@ -601,8 +607,8 @@ function createStyles(colors: ThemeColors) {
     accountCard: {
       backgroundColor: colors.surface,
       borderColor: colors.border,
-      borderRadius: 18,
-      borderWidth: 1,
+      borderBottomWidth: 1,
+      borderTopWidth: 1,
       gap: 13,
       padding: 15,
     },
@@ -618,6 +624,6 @@ function createStyles(colors: ThemeColors) {
       paddingVertical: 4,
     },
     signOutText: { color: colors.danger, fontSize: 12, fontWeight: '800' },
-    pressed: { opacity: 0.72 },
+    pressed: { opacity: 0.8, transform: [{ scale: 0.98 }] },
   });
 }

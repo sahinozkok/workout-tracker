@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ProgramDetailScroll } from '@/components/program-detail-scroll';
@@ -24,6 +25,7 @@ import {
 export default function ProgramDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const {
+    isProgramsLoading,
     programs,
     removeExerciseFromDay,
     reorderDays,
@@ -51,6 +53,17 @@ export default function ProgramDetailScreen() {
   const [restSecondsDraft, setRestSecondsDraft] = useState('90');
   const program = programs.find((item) => item.id === id);
 
+  if (isProgramsLoading) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={['bottom']}>
+        <View style={styles.notFound}>
+          <ActivityIndicator color={colors.primary} size="large" />
+          <Text style={styles.notFoundTitle}>Program yükleniyor…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   if (!program) {
     return (
       <SafeAreaView style={styles.safeArea} edges={['bottom']}>
@@ -75,15 +88,20 @@ export default function ProgramDetailScreen() {
     setIsProgramEditorOpen(true);
   }
 
-  function saveProgramChanges() {
+  async function saveProgramChanges() {
     const trimmedName = programNameDraft.trim();
     if (!trimmedName) {
       Alert.alert('Program adı gerekli', 'Programına kısa ve anlaşılır bir ad ver.');
       return;
     }
 
-    updateProgram(currentProgram.id, { name: trimmedName, visual: programVisualDraft });
-    setIsProgramEditorOpen(false);
+    try {
+      await updateProgram(currentProgram.id, { name: trimmedName, visual: programVisualDraft });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setIsProgramEditorOpen(false);
+    } catch (error) {
+      showDatabaseError('Program güncellenemedi', error);
+    }
   }
 
   function openDayEditor(day: WorkoutDay, index: number) {
@@ -94,7 +112,7 @@ export default function ProgramDetailScreen() {
     setEditingDayId(day.id);
   }
 
-  function saveDayChanges(dayId: string) {
+  async function saveDayChanges(dayId: string) {
     const trimmedName = dayNameDraft.trim();
     if (!trimmedName) {
       Alert.alert('Gün adı gerekli', 'Örneğin “Push”, “Pull” veya “Bacak” yazabilirsin.');
@@ -109,16 +127,21 @@ export default function ProgramDetailScreen() {
       return;
     }
 
-    updateDay(currentProgram.id, dayId, {
-      isOffDay: dayIsOffDraft,
-      name: trimmedName,
-      scheduledWeekday: dayWeekdayDraft,
-      visual: dayVisualDraft,
-    });
-    setEditingDayId(null);
+    try {
+      await updateDay(currentProgram.id, dayId, {
+        isOffDay: dayIsOffDraft,
+        name: trimmedName,
+        scheduledWeekday: dayWeekdayDraft,
+        visual: dayVisualDraft,
+      });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setEditingDayId(null);
+    } catch (error) {
+      showDatabaseError('Antrenman günü güncellenemedi', error);
+    }
   }
 
-  function moveDay(dayIndex: number, direction: -1 | 1) {
+  async function moveDay(dayIndex: number, direction: -1 | 1) {
     const targetIndex = dayIndex + direction;
     if (targetIndex < 0 || targetIndex >= currentProgram.days.length) return;
 
@@ -127,7 +150,11 @@ export default function ProgramDetailScreen() {
       reorderedDays[targetIndex],
       reorderedDays[dayIndex],
     ];
-    reorderDays(currentProgram.id, reorderedDays);
+    try {
+      await reorderDays(currentProgram.id, reorderedDays);
+    } catch (error) {
+      showDatabaseError('Günlerin sırası değiştirilemedi', error);
+    }
   }
 
   function openExerciseEditor(dayId: string, exercise: ProgramExercise, exerciseName: string) {
@@ -145,7 +172,7 @@ export default function ProgramDetailScreen() {
     setEditingExerciseId(null);
   }
 
-  function saveExerciseChanges() {
+  async function saveExerciseChanges() {
     if (!editingExerciseDayId || !editingExerciseId) return;
 
     const targetSets = Number(targetSetsDraft);
@@ -167,13 +194,18 @@ export default function ProgramDetailScreen() {
       return;
     }
 
-    updateExercise(currentProgram.id, editingExerciseDayId, editingExerciseId, {
-      restSeconds,
-      targetReps,
-      targetSets,
-      visual: exerciseVisualDraft,
-    });
-    closeExerciseEditor();
+    try {
+      await updateExercise(currentProgram.id, editingExerciseDayId, editingExerciseId, {
+        restSeconds,
+        targetReps,
+        targetSets,
+        visual: exerciseVisualDraft,
+      });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      closeExerciseEditor();
+    } catch (error) {
+      showDatabaseError('Egzersiz güncellenemedi', error);
+    }
   }
 
   function confirmRemoveExercise(dayId: string, exercise: ProgramExercise, exerciseName: string) {
@@ -182,7 +214,11 @@ export default function ProgramDetailScreen() {
       {
         text: 'Kaldır',
         style: 'destructive',
-        onPress: () => removeExerciseFromDay(currentProgram.id, dayId, exercise.id),
+        onPress: () => {
+          void removeExerciseFromDay(currentProgram.id, dayId, exercise.id).catch((error) =>
+            showDatabaseError('Egzersiz kaldırılamadı', error),
+          );
+        },
       },
     ]);
   }
@@ -234,6 +270,7 @@ export default function ProgramDetailScreen() {
                 value={programNameDraft}
               />
             </View>
+            <Text style={styles.editorSectionHeading}>Program simgesi</Text>
             <WorkoutVisualPicker onSelect={setProgramVisualDraft} selectedVisual={programVisualDraft} />
             <EditorActions
               onCancel={() => setIsProgramEditorOpen(false)}
@@ -283,13 +320,13 @@ export default function ProgramDetailScreen() {
                     disabled={dayIndex === 0}
                     icon="arrow-up-outline"
                     label="Yukarı"
-                    onPress={() => moveDay(dayIndex, -1)}
+                    onPress={() => void moveDay(dayIndex, -1)}
                   />
                   <ActionButton
                     disabled={dayIndex === program.days.length - 1}
                     icon="arrow-down-outline"
                     label="Aşağı"
-                    onPress={() => moveDay(dayIndex, 1)}
+                    onPress={() => void moveDay(dayIndex, 1)}
                   />
                   <ActionButton
                     icon="pencil-outline"
@@ -382,7 +419,7 @@ export default function ProgramDetailScreen() {
                       />
                     </View>
                     <WorkoutVisualPicker onSelect={setDayVisualDraft} selectedVisual={dayVisualDraft} />
-                    <EditorActions onCancel={() => setEditingDayId(null)} onSave={() => saveDayChanges(day.id)} />
+                    <EditorActions onCancel={() => setEditingDayId(null)} onSave={() => void saveDayChanges(day.id)} />
                   </View>
                 )}
 
@@ -438,7 +475,11 @@ export default function ProgramDetailScreen() {
                     exercises={day.exercises}
                     onEdit={(exercise, exerciseName) => openExerciseEditor(day.id, exercise, exerciseName)}
                     onRemove={(exercise, exerciseName) => confirmRemoveExercise(day.id, exercise, exerciseName)}
-                    onReorder={(exercises) => reorderExercisesInDay(program.id, day.id, exercises)}
+                    onReorder={(exercises) => {
+                      void reorderExercisesInDay(program.id, day.id, exercises).catch((error) =>
+                        showDatabaseError('Egzersizlerin sırası değiştirilemedi', error),
+                      );
+                    }}
                   />
                 ))}
 
@@ -456,6 +497,13 @@ export default function ProgramDetailScreen() {
         </View>
       </ProgramDetailScroll>
     </SafeAreaView>
+  );
+}
+
+function showDatabaseError(title: string, error: unknown) {
+  Alert.alert(
+    title,
+    error instanceof Error ? error.message : 'Lütfen internet bağlantını kontrol edip tekrar dene.',
   );
 }
 
@@ -543,56 +591,65 @@ function ExerciseTargetInput({
 function createStyles(colors: ThemeColors) {
   return StyleSheet.create({
     safeArea: { backgroundColor: colors.background, flex: 1 },
-    content: { gap: 18, padding: 20, paddingBottom: 40 },
+    content: { gap: 14, padding: 18, paddingBottom: 40 },
     notFound: { alignItems: 'center', flex: 1, gap: 16, justifyContent: 'center', padding: 30 },
     notFoundTitle: { color: colors.text, fontSize: 19, fontWeight: '800', textAlign: 'center' },
-    primaryButton: { backgroundColor: colors.primary, borderRadius: 13, paddingHorizontal: 18, paddingVertical: 12 },
+    primaryButton: { backgroundColor: colors.primary, borderRadius: 9, paddingHorizontal: 18, paddingVertical: 12 },
     primaryButtonText: { color: colors.onPrimary, fontSize: 14, fontWeight: '800' },
     summaryCard: {
       alignItems: 'center',
       backgroundColor: colors.surface,
       borderColor: colors.border,
-      borderRadius: 18,
+      borderRadius: 10,
       borderWidth: 1,
       flexDirection: 'row',
-      gap: 14,
-      padding: 16,
+      gap: 12,
+      padding: 13,
     },
     summaryIcon: {
       alignItems: 'center',
       backgroundColor: colors.primarySoft,
-      borderRadius: 14,
-      height: 52,
+      borderRadius: 9,
+      height: 46,
       justifyContent: 'center',
       overflow: 'hidden',
-      width: 52,
+      width: 46,
     },
     summaryText: { flex: 1 },
-    programName: { color: colors.text, fontSize: 21, fontWeight: '800' },
-    programMeta: { color: colors.textSecondary, fontSize: 13, marginTop: 4 },
+    programName: { color: colors.text, fontSize: 19, fontWeight: '900' },
+    programMeta: { color: colors.textSecondary, fontSize: 12, marginTop: 3 },
     editButton: {
       alignItems: 'center',
       backgroundColor: colors.surfaceMuted,
-      borderRadius: 11,
-      height: 40,
+      borderRadius: 8,
+      height: 38,
       justifyContent: 'center',
-      width: 40,
+      width: 38,
     },
     editorCard: {
       backgroundColor: colors.surface,
       borderColor: colors.primarySoftBorder,
-      borderRadius: 17,
+      borderRadius: 10,
       borderWidth: 1,
-      gap: 16,
-      padding: 15,
+      gap: 13,
+      padding: 13,
     },
-    editorTitle: { color: colors.text, fontSize: 16, fontWeight: '800' },
+    editorTitle: { color: colors.text, fontSize: 16, fontWeight: '900' },
+    editorSectionHeading: {
+      alignSelf: 'flex-start',
+      backgroundColor: colors.background,
+      color: colors.text,
+      fontSize: 15,
+      fontWeight: '900',
+      paddingHorizontal: 7,
+      paddingVertical: 4,
+    },
     fieldGroup: { gap: 7 },
     label: { color: colors.text, fontSize: 13, fontWeight: '700' },
     input: {
       backgroundColor: colors.surfaceMuted,
       borderColor: colors.inputBorder,
-      borderRadius: 12,
+      borderRadius: 9,
       borderWidth: 1,
       color: colors.text,
       fontSize: 15,
@@ -600,39 +657,47 @@ function createStyles(colors: ThemeColors) {
       paddingVertical: 12,
     },
     editorActions: { flexDirection: 'row', gap: 9, justifyContent: 'flex-end' },
-    cancelButton: { borderColor: colors.border, borderRadius: 11, borderWidth: 1, paddingHorizontal: 15, paddingVertical: 10 },
+    cancelButton: { borderColor: colors.border, borderRadius: 8, borderWidth: 1, paddingHorizontal: 15, paddingVertical: 10 },
     cancelButtonText: { color: colors.textSecondary, fontSize: 13, fontWeight: '700' },
     saveButton: {
       alignItems: 'center',
       backgroundColor: colors.primary,
-      borderRadius: 11,
+      borderRadius: 8,
       flexDirection: 'row',
       gap: 5,
       paddingHorizontal: 15,
       paddingVertical: 10,
     },
     saveButtonText: { color: colors.onPrimary, fontSize: 13, fontWeight: '800' },
-    sectionTitle: { color: colors.text, fontSize: 19, fontWeight: '800' },
-    dayList: { gap: 14 },
+    sectionTitle: {
+      alignSelf: 'flex-start',
+      backgroundColor: colors.surface,
+      color: colors.text,
+      fontSize: 18,
+      fontWeight: '900',
+      paddingHorizontal: 8,
+      paddingVertical: 5,
+    },
+    dayList: { gap: 10 },
     dayCard: {
       backgroundColor: colors.surface,
       borderColor: colors.border,
-      borderRadius: 18,
+      borderRadius: 10,
       borderWidth: 1,
       overflow: 'hidden',
     },
-    dayHeader: { alignItems: 'center', flexDirection: 'row', gap: 11, padding: 14 },
+    dayHeader: { alignItems: 'center', flexDirection: 'row', gap: 10, padding: 12 },
     dayVisual: {
       alignItems: 'center',
       backgroundColor: colors.accentSoft,
-      borderRadius: 11,
-      height: 42,
+      borderRadius: 8,
+      height: 39,
       justifyContent: 'center',
       overflow: 'hidden',
-      width: 42,
+      width: 39,
     },
     dayTitleArea: { flex: 1 },
-    dayName: { color: colors.text, fontSize: 16, fontWeight: '800' },
+    dayName: { color: colors.text, fontSize: 15, fontWeight: '900' },
     dayMeta: { color: colors.textSecondary, fontSize: 12, marginTop: 2 },
     dayActions: {
       borderTopColor: colors.border,

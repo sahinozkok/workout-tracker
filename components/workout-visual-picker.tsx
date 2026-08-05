@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useState } from 'react';
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { WorkoutVisualDisplay } from '@/components/workout-visual-display';
 import { PROGRAM_ICON_OPTIONS } from '@/constants/program-icons';
 import { ThemeColors } from '@/constants/theme';
 import { useAppTheme } from '@/hooks/use-app-theme';
@@ -17,6 +18,7 @@ export function WorkoutVisualPicker({ onSelect, selectedVisual }: WorkoutVisualP
   const { colors, isDark } = useAppTheme();
   const styles = createStyles(colors);
   const [textValue, setTextValue] = useState(selectedVisual.type === 'text' ? selectedVisual.text : '');
+  const [iconsOpen, setIconsOpen] = useState(false);
 
   useEffect(() => {
     if (selectedVisual.type === 'text') setTextValue(selectedVisual.text);
@@ -30,6 +32,7 @@ export function WorkoutVisualPicker({ onSelect, selectedVisual }: WorkoutVisualP
     }
 
     setTextValue(trimmedValue);
+    setIconsOpen(false);
     onSelect({ type: 'text', text: trimmedValue });
   }
 
@@ -50,44 +53,32 @@ export function WorkoutVisualPicker({ onSelect, selectedVisual }: WorkoutVisualP
     });
 
     if (!result.canceled && result.assets[0]) {
+      setIconsOpen(false);
       onSelect({ type: 'image', uri: result.assets[0].uri });
     }
   }
 
   return (
     <View style={styles.container}>
-      <View style={styles.section}>
-        <Text style={styles.sectionLabel}>İkon seç</Text>
-        <ScrollView
-          contentContainerStyle={styles.iconOptions}
-          horizontal
-          showsHorizontalScrollIndicator={false}>
-          {PROGRAM_ICON_OPTIONS.map((option) => {
-            const isSelected = selectedVisual.type === 'icon' && selectedVisual.icon === option.icon;
+      <View style={styles.mainRow}>
+        <Pressable
+          accessibilityLabel="Galeriden fotoğraf seç"
+          accessibilityRole="button"
+          onPress={() => void pickImage()}
+          style={({ pressed }) => [
+            styles.galleryButton,
+            selectedVisual.type === 'image' && styles.selectedControl,
+            pressed && styles.pressed,
+          ]}>
+          {selectedVisual.type === 'image' ? (
+            <WorkoutVisualDisplay color={colors.primaryIcon} size={32} visual={selectedVisual} />
+          ) : (
+            <Ionicons name="image-outline" size={31} color={colors.primaryIcon} />
+          )}
+        </Pressable>
 
-            return (
-              <Pressable
-                accessibilityLabel={`${option.label} simgesi`}
-                accessibilityRole="radio"
-                accessibilityState={{ checked: isSelected }}
-                key={option.icon}
-                onPress={() => onSelect({ type: 'icon', icon: option.icon })}
-                style={({ pressed }) => [
-                  styles.iconOption,
-                  isSelected && styles.iconOptionSelected,
-                  pressed && styles.pressed,
-                ]}>
-                <Ionicons name={option.icon} size={23} color={isSelected ? colors.onPrimary : colors.primaryIcon} />
-                <Text style={[styles.iconLabel, isSelected && styles.iconLabelSelected]}>{option.label}</Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionLabel}>Sayı veya emoji kullan</Text>
-        <View style={styles.textRow}>
+        <View style={styles.textArea}>
+          <Text style={styles.textLabel}>Sayı veya emoji kullan</Text>
           <TextInput
             autoCorrect={false}
             keyboardAppearance={isDark ? 'dark' : 'light'}
@@ -97,86 +88,140 @@ export function WorkoutVisualPicker({ onSelect, selectedVisual }: WorkoutVisualP
             placeholder="Örn. 1 veya 🔥"
             placeholderTextColor={colors.textTertiary}
             selectionColor={colors.primary}
-            style={styles.textInput}
+            style={[styles.textInput, selectedVisual.type === 'text' && styles.selectedInput]}
             value={textValue}
           />
-          <Pressable
-            accessibilityRole="button"
-            onPress={applyTextVisual}
-            style={({ pressed }) => [styles.applyButton, pressed && styles.pressed]}>
-            <Text style={styles.applyButtonText}>Uygula</Text>
-          </Pressable>
         </View>
+
+        <Pressable
+          accessibilityLabel="Hazır ikonları göster"
+          accessibilityRole="button"
+          accessibilityState={{ expanded: iconsOpen }}
+          onPress={() => setIconsOpen((currentValue) => !currentValue)}
+          style={({ pressed }) => [
+            styles.iconMenuButton,
+            (iconsOpen || selectedVisual.type === 'icon') && styles.iconMenuButtonSelected,
+            pressed && styles.pressed,
+          ]}>
+          <Ionicons name="ellipsis-horizontal" size={25} color={colors.textSecondary} />
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          onPress={applyTextVisual}
+          style={({ pressed }) => [styles.applyButton, pressed && styles.pressed]}>
+          <Text style={styles.applyButtonText}>Uygula</Text>
+        </Pressable>
       </View>
 
-      <Pressable
-        accessibilityRole="button"
-        onPress={pickImage}
-        style={({ pressed }) => [styles.galleryButton, pressed && styles.pressed]}>
-        <Ionicons name="images-outline" size={21} color={colors.primaryIcon} />
-        <View style={styles.galleryText}>
-          <Text style={styles.galleryTitle}>Galeriden fotoğraf seç</Text>
-          <Text style={styles.galleryCaption}>Fotoğraf kare olarak kırpılır.</Text>
+      {iconsOpen && (
+        <View style={styles.iconPanel}>
+          <Text style={styles.iconPanelTitle}>Hazır ikonlar</Text>
+          <View style={styles.iconGrid}>
+            {PROGRAM_ICON_OPTIONS.map((option) => {
+              const isSelected = selectedVisual.type === 'icon' && selectedVisual.icon === option.icon;
+
+              return (
+                <Pressable
+                  accessibilityLabel={`${option.label} simgesi`}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: isSelected }}
+                  key={option.icon}
+                  onPress={() => {
+                    onSelect({ type: 'icon', icon: option.icon });
+                    setIconsOpen(false);
+                  }}
+                  style={({ pressed }) => [
+                    styles.iconOption,
+                    isSelected && styles.iconOptionSelected,
+                    pressed && styles.pressed,
+                  ]}>
+                  <Ionicons
+                    name={option.icon}
+                    size={22}
+                    color={isSelected ? colors.onPrimary : colors.primaryIcon}
+                  />
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
-        <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
-      </Pressable>
+      )}
     </View>
   );
 }
 
 function createStyles(colors: ThemeColors) {
   return StyleSheet.create({
-    container: { gap: 16 },
-    section: { gap: 8 },
-    sectionLabel: { color: colors.text, fontSize: 13, fontWeight: '800' },
-    iconOptions: { gap: 8, paddingRight: 2 },
+    container: { gap: 10 },
+    mainRow: { alignItems: 'flex-end', flexDirection: 'row', gap: 7 },
+    galleryButton: {
+      alignItems: 'center',
+      backgroundColor: colors.surface,
+      borderColor: colors.primary,
+      borderRadius: 6,
+      borderWidth: 2,
+      height: 48,
+      justifyContent: 'center',
+      overflow: 'hidden',
+      width: 48,
+    },
+    selectedControl: { backgroundColor: colors.primarySoft },
+    textArea: { flex: 1, gap: 4, minWidth: 92 },
+    textLabel: { color: colors.text, fontSize: 9, fontWeight: '800' },
+    textInput: {
+      backgroundColor: colors.surfaceMuted,
+      borderColor: colors.border,
+      borderRadius: 5,
+      borderWidth: 1,
+      color: colors.text,
+      fontSize: 12,
+      height: 38,
+      paddingHorizontal: 9,
+      paddingVertical: 0,
+    },
+    selectedInput: { borderColor: colors.primary },
+    iconMenuButton: {
+      alignItems: 'center',
+      backgroundColor: colors.surfaceMuted,
+      borderColor: colors.inputBorder,
+      borderRadius: 7,
+      borderWidth: 1,
+      height: 41,
+      justifyContent: 'center',
+      width: 43,
+    },
+    iconMenuButtonSelected: { backgroundColor: colors.border, borderColor: colors.textTertiary },
+    applyButton: {
+      alignItems: 'center',
+      backgroundColor: colors.primary,
+      borderRadius: 8,
+      height: 41,
+      justifyContent: 'center',
+      paddingHorizontal: 12,
+    },
+    applyButtonText: { color: colors.onPrimary, fontSize: 11, fontWeight: '900' },
+    iconPanel: {
+      backgroundColor: colors.surface,
+      borderColor: colors.border,
+      borderRadius: 10,
+      borderWidth: 1,
+      gap: 10,
+      padding: 10,
+    },
+    iconPanelTitle: { color: colors.textSecondary, fontSize: 11, fontWeight: '800' },
+    iconGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
     iconOption: {
       alignItems: 'center',
       backgroundColor: colors.surfaceMuted,
       borderColor: colors.border,
-      borderRadius: 11,
+      borderRadius: 7,
       borderWidth: 1,
-      gap: 4,
-      minWidth: 68,
-      paddingHorizontal: 9,
-      paddingVertical: 9,
+      height: 39,
+      justifyContent: 'center',
+      width: 39,
     },
     iconOptionSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
-    iconLabel: { color: colors.textSecondary, fontSize: 10, fontWeight: '700' },
-    iconLabelSelected: { color: colors.onPrimary },
-    textRow: { flexDirection: 'row', gap: 8 },
-    textInput: {
-      backgroundColor: colors.surfaceMuted,
-      borderColor: colors.inputBorder,
-      borderRadius: 12,
-      borderWidth: 1,
-      color: colors.text,
-      flex: 1,
-      fontSize: 15,
-      paddingHorizontal: 13,
-      paddingVertical: 11,
-    },
-    applyButton: {
-      alignItems: 'center',
-      backgroundColor: colors.primary,
-      borderRadius: 12,
-      justifyContent: 'center',
-      paddingHorizontal: 14,
-    },
-    applyButtonText: { color: colors.onPrimary, fontSize: 12, fontWeight: '800' },
-    galleryButton: {
-      alignItems: 'center',
-      backgroundColor: colors.primarySoft,
-      borderColor: colors.primarySoftBorder,
-      borderRadius: 13,
-      borderWidth: 1,
-      flexDirection: 'row',
-      gap: 10,
-      padding: 12,
-    },
-    galleryText: { flex: 1 },
-    galleryTitle: { color: colors.primarySoftText, fontSize: 13, fontWeight: '800' },
-    galleryCaption: { color: colors.primarySoftText, fontSize: 11, marginTop: 2, opacity: 0.8 },
     pressed: { opacity: 0.7 },
   });
 }

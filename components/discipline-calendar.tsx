@@ -1,11 +1,13 @@
 import { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, AlertButton, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ThemeColors } from '@/constants/theme';
 import { useWorkout } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import { DisciplineStatus } from '@/types/workout';
 import { toDateKey } from '@/utils/discipline';
+import { getSetProgressKey } from '@/utils/workout-schedule';
+import { formatDuration } from '@/utils/workout-session';
 
 type CalendarPeriod = 'week' | 'month' | 'year';
 
@@ -25,12 +27,81 @@ const STATUS_LABELS: Record<DisciplineStatus, string> = {
 };
 
 export function DisciplineCalendar() {
-  const { disciplineStatuses, cycleDisciplineStatus, isDateScheduled } = useWorkout();
+  const {
+    activeProgramId,
+    completedSetCounts,
+    disciplineStatuses,
+    cycleDisciplineStatus,
+    isDateScheduled,
+    programs,
+    workoutSessions,
+  } = useWorkout();
   const { colors } = useAppTheme();
   const styles = createStyles(colors);
-  const [period, setPeriod] = useState<CalendarPeriod>('month');
+  const [period, setPeriod] = useState<CalendarPeriod>('week');
+  const [pendingDateKey, setPendingDateKey] = useState<string>();
   const today = useMemo(() => startOfDay(new Date()), []);
   const dates = useMemo(() => getPeriodDates(period, today), [period, today]);
+
+  async function cycleStatus(dateKey: string) {
+    if (pendingDateKey) return;
+
+    setPendingDateKey(dateKey);
+    try {
+      await cycleDisciplineStatus(dateKey);
+    } catch (error) {
+      Alert.alert(
+        'Takvim kaydedilemedi',
+        error instanceof Error ? error.message : 'Lütfen internet bağlantını kontrol edip tekrar dene.',
+      );
+    } finally {
+      setPendingDateKey(undefined);
+    }
+  }
+
+  function handleDayPress(dateKey: string) {
+    const date = dateFromKey(dateKey);
+    const status = disciplineStatuses[dateKey];
+    const isScheduled = isDateScheduled(dateKey);
+    const activeProgram = programs.find((program) => program.id === activeProgramId);
+    const scheduledDays = activeProgram?.days.filter((day) => day.scheduledWeekday === date.getDay()) ?? [];
+    const totalSets = scheduledDays
+      .filter((day) => !day.isOffDay)
+      .flatMap((day) => day.exercises)
+      .reduce((total, exercise) => total + exercise.targetSets, 0);
+    const completedSets = scheduledDays
+      .filter((day) => !day.isOffDay)
+      .flatMap((day) => day.exercises)
+      .reduce(
+        (total, exercise) =>
+          total + Math.min(completedSetCounts[getSetProgressKey(dateKey, exercise.id)] ?? 0, exercise.targetSets),
+        0,
+      );
+    const completedSession = workoutSessions.find(
+      (session) => session.dateKey === dateKey && session.status === 'completed',
+    );
+    const planLabel = scheduledDays.length
+      ? scheduledDays.map((day) => (day.isOffDay ? `${day.name} (dinlenme)` : day.name)).join(', ')
+      : 'Planlanmış antrenman yok';
+    const statusLabel = status ? STATUS_LABELS[status] : 'İşaretlenmedi';
+    const detailLines = [
+      `Durum: ${statusLabel}`,
+      `Plan: ${planLabel}`,
+      totalSets > 0 ? `İlerleme: ${completedSets}/${totalSets} set` : undefined,
+      completedSession ? `Süre: ${formatDuration(completedSession.accumulatedDurationSeconds)}` : undefined,
+    ].filter(Boolean);
+    const buttons: AlertButton[] = [{ text: 'Kapat', style: 'cancel' }];
+
+    if (!isScheduled) {
+      buttons.push({ text: 'Durumu değiştir', onPress: () => void cycleStatus(dateKey) });
+    }
+
+    Alert.alert(
+      date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' }),
+      detailLines.join('\n'),
+      buttons,
+    );
+  }
 
   return (
     <View style={styles.card}>
@@ -68,8 +139,7 @@ export function DisciplineCalendar() {
         <YearGrid
           colors={colors}
           dates={dates}
-          onDayPress={cycleDisciplineStatus}
-          isDateScheduled={isDateScheduled}
+          onDayPress={handleDayPress}
           statuses={disciplineStatuses}
           styles={styles}
           today={today}
@@ -79,8 +149,7 @@ export function DisciplineCalendar() {
           colors={colors}
           dates={dates}
           month={period === 'month' ? today.getMonth() : undefined}
-          onDayPress={cycleDisciplineStatus}
-          isDateScheduled={isDateScheduled}
+          onDayPress={handleDayPress}
           statuses={disciplineStatuses}
           styles={styles}
           today={today}
@@ -93,9 +162,6 @@ export function DisciplineCalendar() {
         <LegendItem color={colors.disciplineSkipped} label="Atlandı" styles={styles} />
       </View>
 
-      <Text style={styles.hint}>
-        Planlı program günleri setlerinden otomatik hesaplanır. Plansız günlere dokunarak durum ekleyebilirsin.
-      </Text>
     </View>
   );
 }
@@ -104,7 +170,6 @@ type GridProps = {
   colors: ThemeColors;
   dates: Date[];
   onDayPress: (dateKey: string) => void;
-  isDateScheduled: (dateKey: string) => boolean;
   statuses: Record<string, DisciplineStatus>;
   styles: ReturnType<typeof createStyles>;
   today: Date;
@@ -113,7 +178,6 @@ type GridProps = {
 function WeekOrMonthGrid({
   colors,
   dates,
-  isDateScheduled,
   month,
   onDayPress,
   statuses,
@@ -139,13 +203,12 @@ function WeekOrMonthGrid({
             const status = statuses[dateKey];
             const isFuture = date.getTime() > today.getTime();
             const isOutsideMonth = month !== undefined && date.getMonth() !== month;
-            const isScheduled = isDateScheduled(dateKey);
 
             return (
               <Pressable
                 accessibilityLabel={getAccessibilityLabel(date, status, isFuture)}
                 accessibilityRole="button"
-                disabled={isFuture || isOutsideMonth || isScheduled}
+                disabled={isFuture || isOutsideMonth}
                 key={dateKey}
                 onPress={() => onDayPress(dateKey)}
                 style={({ pressed }) => [
@@ -155,6 +218,7 @@ function WeekOrMonthGrid({
                       ? 'transparent'
                       : getStatusColor(colors, status, isFuture),
                   },
+                  date.getTime() === today.getTime() && styles.todayCell,
                   pressed && styles.pressed,
                 ]}>
                 {!isOutsideMonth && (
@@ -169,7 +233,7 @@ function WeekOrMonthGrid({
   );
 }
 
-function YearGrid({ colors, dates, isDateScheduled, onDayPress, statuses, styles, today }: GridProps) {
+function YearGrid({ colors, dates, onDayPress, statuses, styles, today }: GridProps) {
   const weeks = groupIntoWeeks(dates);
 
   return (
@@ -204,13 +268,12 @@ function YearGrid({ colors, dates, isDateScheduled, onDayPress, statuses, styles
                 const dateKey = toDateKey(date);
                 const status = statuses[dateKey];
                 const isFuture = date.getTime() > today.getTime();
-                const isScheduled = isDateScheduled(dateKey);
 
                 return (
                   <Pressable
                     accessibilityLabel={getAccessibilityLabel(date, status, isFuture)}
                     accessibilityRole="button"
-                    disabled={isFuture || isScheduled}
+                    disabled={isFuture}
                     key={dateKey}
                     onPress={() => onDayPress(dateKey)}
                     style={({ pressed }) => [
@@ -218,6 +281,7 @@ function YearGrid({ colors, dates, isDateScheduled, onDayPress, statuses, styles
                       {
                         backgroundColor: getStatusColor(colors, status, isFuture),
                       },
+                      date.getTime() === today.getTime() && styles.todayYearCell,
                       pressed && styles.pressed,
                     ]}
                   />
@@ -244,6 +308,11 @@ function startOfDay(date: Date) {
   const result = new Date(date);
   result.setHours(0, 0, 0, 0);
   return result;
+}
+
+function dateFromKey(dateKey: string) {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return new Date(year, month - 1, day);
 }
 
 function addDays(date: Date, amount: number) {
@@ -336,10 +405,10 @@ function createStyles(colors: ThemeColors) {
     card: {
       backgroundColor: colors.surface,
       borderColor: colors.border,
-      borderRadius: 20,
+      borderRadius: 10,
       borderWidth: 1,
-      gap: 16,
-      padding: 16,
+      gap: 14,
+      padding: 14,
     },
     header: { gap: 14 },
     headerText: { gap: 3 },
@@ -377,28 +446,29 @@ function createStyles(colors: ThemeColors) {
       flex: 1,
       justifyContent: 'center',
     },
+    todayCell: { borderColor: colors.primaryIcon, borderWidth: 2 },
     dayNumber: { color: colors.textSecondary, fontSize: 12, fontWeight: '700' },
     dayNumberMarked: { color: colors.onPrimary },
     yearGridRow: { flexDirection: 'row' },
-    yearWeekdayLabels: { marginRight: 6 },
-    yearMonthLabelSpacer: { height: 18 },
+    yearWeekdayLabels: { marginRight: 7 },
+    yearMonthLabelSpacer: { height: 20 },
     yearWeekdayLabel: {
       color: colors.textSecondary,
       fontSize: 8,
-      height: 14,
-      lineHeight: 11,
-      width: 18,
+      height: 16,
+      lineHeight: 13,
+      width: 20,
     },
     yearScrollContent: { paddingRight: 2 },
-    yearWeek: { gap: 3, marginRight: 3, width: 11 },
-    yearMonthLabelContainer: { height: 15, overflow: 'visible' },
-    yearMonthLabel: { color: colors.textSecondary, fontSize: 8, overflow: 'visible', width: 30 },
-    yearDayCell: { borderRadius: 3, height: 11, width: 11 },
+    yearWeek: { gap: 3, marginRight: 3, width: 14 },
+    yearMonthLabelContainer: { height: 17, overflow: 'visible' },
+    yearMonthLabel: { color: colors.textSecondary, fontSize: 9, overflow: 'visible', width: 34 },
+    yearDayCell: { borderRadius: 3, height: 14, width: 14 },
+    todayYearCell: { borderColor: colors.primaryIcon, borderWidth: 2 },
     legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
     legendItem: { alignItems: 'center', flexDirection: 'row', gap: 5 },
     legendDot: { borderRadius: 3, height: 10, width: 10 },
     legendText: { color: colors.textSecondary, fontSize: 11 },
-    hint: { color: colors.textTertiary, fontSize: 12, lineHeight: 17 },
     pressed: { opacity: 0.65 },
   });
 }

@@ -1,7 +1,9 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { WorkoutVisualDisplay } from '@/components/workout-visual-display';
@@ -11,7 +13,7 @@ import { useProfile } from '@/context/profile-context';
 import { useWorkout } from '@/context/workout-context';
 import { getProgramExerciseName } from '@/data/exercises';
 import { useAppTheme } from '@/hooks/use-app-theme';
-import { ProgramExercise } from '@/types/workout';
+import { ProgramExercise, WorkoutSetPerformance, WorkoutSetRecord } from '@/types/workout';
 import { toDateKey } from '@/utils/discipline';
 import { cancelRestNotification, scheduleRestNotification } from '@/utils/rest-notifications';
 import { getSetProgressKey } from '@/utils/workout-schedule';
@@ -25,6 +27,7 @@ export default function WorkoutDayScreen() {
     completedSetCounts,
     activeProgramId,
     finishWorkout,
+    isProgramsLoading,
     pauseWorkout,
     programs,
     resetCompletedSets,
@@ -32,6 +35,7 @@ export default function WorkoutDayScreen() {
     startWorkout,
     undoCompletedSet,
     workoutSessions,
+    workoutSets,
   } = useWorkout();
   const { restTimerEnabled } = useProfile();
   const { colors } = useAppTheme();
@@ -40,6 +44,7 @@ export default function WorkoutDayScreen() {
   const day = program?.days.find((item) => item.id === dayId);
   const today = new Date();
   const todayKey = toDateKey(today);
+  const restTimerStorageKey = `workout-rest-timer:${id}:${dayId}:${todayKey}`;
   const workoutSession = workoutSessions.find(
     (session) =>
       session.programId === id &&
@@ -49,6 +54,8 @@ export default function WorkoutDayScreen() {
   );
   const [clockNow, setClockNow] = useState(Date.now());
   const [restTimer, setRestTimer] = useState<{ endsAt: number; exerciseName: string }>();
+  const [isWorkoutActionPending, setIsWorkoutActionPending] = useState(false);
+  const [pendingExerciseId, setPendingExerciseId] = useState<string>();
 
   useEffect(() => {
     if (workoutSession?.status !== 'running' && !restTimer) return;
@@ -57,6 +64,46 @@ export default function WorkoutDayScreen() {
     const interval = setInterval(() => setClockNow(Date.now()), 1000);
     return () => clearInterval(interval);
   }, [restTimer, workoutSession?.status]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    AsyncStorage.getItem(restTimerStorageKey)
+      .then((storedValue) => {
+        if (!isMounted || !storedValue) return;
+
+        const parsedValue = JSON.parse(storedValue) as Partial<{
+          endsAt: number;
+          exerciseName: string;
+        }>;
+
+        if (typeof parsedValue.endsAt !== 'number' || typeof parsedValue.exerciseName !== 'string') {
+          void AsyncStorage.removeItem(restTimerStorageKey);
+          return;
+        }
+
+        setClockNow(Date.now());
+        setRestTimer({ endsAt: parsedValue.endsAt, exerciseName: parsedValue.exerciseName });
+      })
+      .catch(() => {
+        // Sayaç okunamazsa antrenman ekranı normal çalışmaya devam eder.
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [restTimerStorageKey]);
+
+  if (isProgramsLoading) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={['bottom']}>
+        <View style={styles.notFound}>
+          <ActivityIndicator color={colors.primary} size="large" />
+          <Text style={styles.notFoundTitle}>Antrenman günü yükleniyor…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (!program || !day) {
     return (
@@ -78,6 +125,7 @@ export default function WorkoutDayScreen() {
 
   const selectedProgramId = program.id;
   const selectedDayId = day.id;
+  const selectedDayExercises = day.exercises;
   const dayIndex = program.days.findIndex((item) => item.id === day.id);
   const isScheduledToday = day.scheduledWeekday === today.getDay();
   const isActiveProgram = program.id === activeProgramId;
@@ -92,27 +140,60 @@ export default function WorkoutDayScreen() {
   const isWorkoutComplete = totalTargetSets > 0 && totalCompletedSets === totalTargetSets;
   const hasProgress = totalCompletedSets > 0;
   const elapsedSeconds = workoutSession ? getWorkoutDurationSeconds(workoutSession, clockNow) : 0;
+  const previousSessions = workoutSessions.filter(
+    (session) =>
+      session.programId === program.id &&
+      session.dayId === day.id &&
+      session.dateKey !== todayKey &&
+      session.status === 'completed',
+  );
+  const averageDurationSeconds = previousSessions.length
+    ? Math.round(
+        previousSessions.reduce((total, session) => total + session.accumulatedDurationSeconds, 0) /
+          previousSessions.length,
+      )
+    : undefined;
   const restSecondsRemaining = restTimer ? Math.max(0, Math.ceil((restTimer.endsAt - clockNow) / 1000)) : 0;
   const canCompleteSets = canTrackToday && workoutSession?.status === 'running';
+  const currentExerciseId = day.exercises.find(
+    (exercise) =>
+      (completedSetCounts[getSetProgressKey(todayKey, exercise.id)] ?? 0) < exercise.targetSets,
+  )?.id;
+  const orderedExercises = [...day.exercises].sort((first, second) => {
+    const firstComplete = (completedSetCounts[getSetProgressKey(todayKey, first.id)] ?? 0) >= first.targetSets;
+    const secondComplete = (completedSetCounts[getSetProgressKey(todayKey, second.id)] ?? 0) >= second.targetSets;
+    return Number(firstComplete) - Number(secondComplete);
+  });
 
   async function clearRestTimer() {
     setRestTimer(undefined);
-    await cancelRestNotification();
+    await Promise.allSettled([
+      AsyncStorage.removeItem(restTimerStorageKey),
+      cancelRestNotification(),
+    ]);
   }
 
-  function handleWorkoutToggle() {
-    if (!workoutSession) {
-      startWorkout(selectedProgramId, selectedDayId, todayKey);
-      return;
-    }
+  async function handleWorkoutToggle() {
+    setIsWorkoutActionPending(true);
+    try {
+      void Haptics.selectionAsync();
+      if (!workoutSession) {
+        await startWorkout(selectedProgramId, selectedDayId, todayKey);
+        return;
+      }
 
-    if (workoutSession.status === 'running') {
-      pauseWorkout(workoutSession.id);
-      void clearRestTimer();
-      return;
-    }
+      if (workoutSession.status === 'running') {
+        await pauseWorkout(workoutSession.id);
+        void clearRestTimer();
+        return;
+      }
 
-    resumeWorkout(workoutSession.id);
+      await resumeWorkout(workoutSession.id);
+    } catch (error) {
+      showWorkoutError('Antrenman durumu kaydedilemedi', error);
+    } finally {
+      setIsWorkoutActionPending(false);
+    }
   }
 
   function handleFinishWorkout() {
@@ -123,28 +204,77 @@ export default function WorkoutDayScreen() {
       {
         text: 'Bitir',
         onPress: () => {
-          finishWorkout(workoutSession.id);
-          void clearRestTimer();
+          void finishCurrentWorkout(workoutSession.id);
         },
       },
     ]);
   }
 
-  function handleCompleteSet(exercise: ProgramExercise) {
-    completeSet(todayKey, exercise.id, exercise.targetSets);
-
-    const completesWholeWorkout = totalCompletedSets + 1 >= totalTargetSets;
-    if (completesWholeWorkout) {
-      if (workoutSession?.status === 'running') finishWorkout(workoutSession.id);
+  async function finishCurrentWorkout(sessionId: string) {
+    setIsWorkoutActionPending(true);
+    try {
+      await finishWorkout(sessionId);
       void clearRestTimer();
-      return;
+    } catch (error) {
+      showWorkoutError('Antrenman bitirilemedi', error);
+    } finally {
+      setIsWorkoutActionPending(false);
     }
+  }
 
-    if (!restTimerEnabled || exercise.restSeconds <= 0) return;
+  async function handleCompleteSet(exercise: ProgramExercise, performance: WorkoutSetPerformance) {
+    setPendingExerciseId(exercise.id);
+    try {
+      await completeSet(todayKey, exercise.id, exercise.targetSets, performance);
 
-    const exerciseName = getProgramExerciseName(exercise.exerciseId, exercise.customExerciseName);
-    setRestTimer({ endsAt: Date.now() + exercise.restSeconds * 1000, exerciseName });
-    void scheduleRestNotification(exerciseName, exercise.restSeconds);
+      const completesWholeWorkout = totalCompletedSets + 1 >= totalTargetSets;
+      if (completesWholeWorkout) {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        if (workoutSession?.status === 'running') await finishWorkout(workoutSession.id);
+        void clearRestTimer();
+        return;
+      }
+
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+      if (!restTimerEnabled || exercise.restSeconds <= 0) return;
+
+      const exerciseName = getProgramExerciseName(exercise.exerciseId, exercise.customExerciseName);
+      const nextRestTimer = { endsAt: Date.now() + exercise.restSeconds * 1000, exerciseName };
+      setRestTimer(nextRestTimer);
+      void AsyncStorage.setItem(restTimerStorageKey, JSON.stringify(nextRestTimer));
+      void scheduleRestNotification(exerciseName, exercise.restSeconds);
+    } catch (error) {
+      showWorkoutError('Set kaydedilemedi', error);
+    } finally {
+      setPendingExerciseId(undefined);
+    }
+  }
+
+  async function handleUndoSet(exercise: ProgramExercise) {
+    setPendingExerciseId(exercise.id);
+    try {
+      await undoCompletedSet(todayKey, exercise.id);
+    } catch (error) {
+      showWorkoutError('Set geri alınamadı', error);
+    } finally {
+      setPendingExerciseId(undefined);
+    }
+  }
+
+  async function handleResetSets() {
+    setIsWorkoutActionPending(true);
+    try {
+      await resetCompletedSets(
+        todayKey,
+        selectedDayExercises.map((exercise) => exercise.id),
+      );
+      void clearRestTimer();
+    } catch (error) {
+      showWorkoutError('Setler sıfırlanamadı', error);
+    } finally {
+      setIsWorkoutActionPending(false);
+    }
   }
 
   if (day.isOffDay) {
@@ -176,7 +306,10 @@ export default function WorkoutDayScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['bottom']}>
       <Stack.Screen options={{ title: day.name }} />
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <View style={styles.workoutScreen}>
+      <ScrollView
+        contentContainerStyle={[styles.content, restTimerEnabled && restTimer && styles.contentWithRestTimer]}
+        showsVerticalScrollIndicator={false}>
         <View style={styles.heroCard}>
           <View style={styles.heroTopRow}>
             <View style={styles.dayVisual}>
@@ -217,23 +350,30 @@ export default function WorkoutDayScreen() {
           <View style={styles.workoutControls}>
             <Pressable
               accessibilityRole="button"
-              disabled={!canTrackToday || day.exercises.length === 0}
-              onPress={handleWorkoutToggle}
+              disabled={!canTrackToday || day.exercises.length === 0 || isWorkoutActionPending}
+              onPress={() => void handleWorkoutToggle()}
               style={({ pressed }) => [
                 styles.workoutToggleButton,
                 workoutSession?.status === 'running' && styles.workoutPauseButton,
-                (!canTrackToday || day.exercises.length === 0) && styles.workoutButtonDisabled,
+                (!canTrackToday || day.exercises.length === 0 || isWorkoutActionPending) &&
+                  styles.workoutButtonDisabled,
                 pressed && styles.pressed,
               ]}>
-              <Ionicons
-                name={
-                  !workoutSession ? 'play' : workoutSession.status === 'running' ? 'pause' : 'play-forward'
-                }
-                size={18}
-                color={colors.onPrimary}
-              />
+              {isWorkoutActionPending ? (
+                <ActivityIndicator color={colors.onPrimary} size="small" />
+              ) : (
+                <Ionicons
+                  name={
+                    !workoutSession ? 'play' : workoutSession.status === 'running' ? 'pause' : 'play-forward'
+                  }
+                  size={18}
+                  color={colors.onPrimary}
+                />
+              )}
               <Text style={styles.workoutToggleText}>
-                {!workoutSession
+                {isWorkoutActionPending
+                  ? 'Kaydediliyor…'
+                  : !workoutSession
                   ? 'Programı başlat'
                   : workoutSession.status === 'running'
                     ? 'Programı durdur'
@@ -243,13 +383,19 @@ export default function WorkoutDayScreen() {
 
             <View style={styles.workoutStopwatch}>
               <Ionicons name="stopwatch-outline" size={16} color={colors.heroText} />
-              <Text style={styles.workoutStopwatchText}>{formatDuration(elapsedSeconds)}</Text>
+              <View style={styles.stopwatchTextArea}>
+                <Text style={styles.workoutStopwatchText}>{formatDuration(elapsedSeconds)}</Text>
+                {averageDurationSeconds !== undefined && (
+                  <Text style={styles.averageDuration}>Geçmiş ort. {formatDuration(averageDurationSeconds)}</Text>
+                )}
+              </View>
             </View>
           </View>
 
           {workoutSession && (
             <Pressable
               accessibilityRole="button"
+              disabled={isWorkoutActionPending}
               onPress={handleFinishWorkout}
               style={({ pressed }) => [styles.finishWorkoutButton, pressed && styles.pressed]}>
               <Ionicons name="flag-outline" size={15} color={colors.heroText} />
@@ -274,34 +420,6 @@ export default function WorkoutDayScreen() {
           </View>
         )}
 
-        {restTimerEnabled && restTimer && (
-          <View style={[styles.restTimerCard, restSecondsRemaining === 0 && styles.restTimerCardFinished]}>
-            <View style={styles.restTimerIcon}>
-              <Ionicons
-                name={restSecondsRemaining === 0 ? 'notifications' : 'timer-outline'}
-                size={21}
-                color={restSecondsRemaining === 0 ? colors.disciplineCompleted : colors.accentText}
-              />
-            </View>
-            <View style={styles.restTimerText}>
-              <Text style={styles.restTimerTitle}>
-                {restSecondsRemaining === 0 ? 'Mola bitti' : `${restTimer.exerciseName} molası`}
-              </Text>
-              <Text style={styles.restTimerCaption}>
-                {restSecondsRemaining === 0 ? 'Sıradaki sete hazırsın.' : 'Set tamamlanınca otomatik başladı.'}
-              </Text>
-            </View>
-            <Text style={styles.restTimerValue}>{formatDuration(restSecondsRemaining)}</Text>
-            <Pressable
-              accessibilityLabel="Mola sayacını kapat"
-              accessibilityRole="button"
-              onPress={() => void clearRestTimer()}
-              style={({ pressed }) => [styles.dismissRestTimer, pressed && styles.pressed]}>
-              <Ionicons name="close" size={18} color={colors.textSecondary} />
-            </Pressable>
-          </View>
-        )}
-
         {isWorkoutComplete && (
           <View style={styles.successCard}>
             <Ionicons name="checkmark-circle" size={28} color={colors.disciplineCompleted} />
@@ -315,12 +433,13 @@ export default function WorkoutDayScreen() {
         <View style={styles.sectionHeader}>
           <View>
             <Text style={styles.sectionTitle}>Egzersizler</Text>
-            <Text style={styles.sectionSubtitle}>Bitirdiğin her setten sonra düğmeye dokun.</Text>
+            <Text style={styles.sectionSubtitle}>Set değerlerini girerek ilerlemeni kaydet.</Text>
           </View>
           {hasProgress && canTrackToday && (
             <Pressable
               accessibilityRole="button"
-              onPress={() => resetCompletedSets(todayKey, day.exercises.map((exercise) => exercise.id))}
+              disabled={isWorkoutActionPending}
+              onPress={() => void handleResetSets()}
               style={({ pressed }) => [styles.resetButton, pressed && styles.pressed]}>
               <Ionicons name="refresh-outline" size={16} color={colors.danger} />
               <Text style={styles.resetButtonText}>Sıfırla</Text>
@@ -340,63 +459,157 @@ export default function WorkoutDayScreen() {
           </View>
         ) : (
           <View style={styles.exerciseList}>
-            {day.exercises.map((exercise, index) => (
-              <ExerciseSetCard
-                colors={colors}
-                completedSets={Math.min(
-                  completedSetCounts[getSetProgressKey(todayKey, exercise.id)] ?? 0,
-                  exercise.targetSets,
-                )}
-                disabled={!canCompleteSets}
-                disabledLabel={
-                  !canTrackToday
-                    ? 'Planlı gününde açılır'
-                    : !workoutSession
-                      ? 'Önce programı başlat'
-                      : workoutSession.status === 'paused'
-                        ? 'Program durduruldu'
-                        : undefined
-                }
-                exercise={exercise}
-                index={index}
-                key={exercise.id}
-                onCompleteSet={() => handleCompleteSet(exercise)}
-                onUndoSet={() => undoCompletedSet(todayKey, exercise.id)}
-              />
-            ))}
+            {orderedExercises.map((exercise) => {
+              const completedSets = Math.min(
+                completedSetCounts[getSetProgressKey(todayKey, exercise.id)] ?? 0,
+                exercise.targetSets,
+              );
+              const currentSetRecords = workoutSets
+                .filter((workoutSet) => workoutSet.dateKey === todayKey && workoutSet.programExerciseId === exercise.id)
+                .sort((first, second) => first.setNumber - second.setNumber);
+              const previousSetRecords = workoutSets
+                .filter((workoutSet) => workoutSet.dateKey !== todayKey && workoutSet.programExerciseId === exercise.id)
+                .sort((first, second) => second.dateKey.localeCompare(first.dateKey));
+              const latestPreviousDate = previousSetRecords[0]?.dateKey;
+              const previousSet = previousSetRecords.find(
+                (workoutSet) =>
+                  workoutSet.dateKey === latestPreviousDate && workoutSet.setNumber === completedSets + 1,
+              );
+
+              return (
+                <ExerciseSetCard
+                  colors={colors}
+                  completedSetRecords={currentSetRecords}
+                  completedSets={completedSets}
+                  disabled={!canCompleteSets || Boolean(pendingExerciseId)}
+                  disabledLabel={
+                    pendingExerciseId
+                      ? 'Kaydediliyor…'
+                      : !canTrackToday
+                      ? 'Planlı gününde açılır'
+                      : !workoutSession
+                        ? 'Önce programı başlat'
+                        : workoutSession.status === 'paused'
+                          ? 'Program durduruldu'
+                          : undefined
+                  }
+                  exercise={exercise}
+                  index={day.exercises.findIndex((item) => item.id === exercise.id)}
+                  isCurrent={exercise.id === currentExerciseId}
+                  key={exercise.id}
+                  onCompleteSet={(performance) => handleCompleteSet(exercise, performance)}
+                  onUndoSet={() => void handleUndoSet(exercise)}
+                  previousSet={previousSet}
+                />
+              );
+            })}
           </View>
         )}
       </ScrollView>
+      {restTimerEnabled && restTimer && (
+        <View style={[styles.restTimerCard, restSecondsRemaining === 0 && styles.restTimerCardFinished]}>
+          <View style={styles.restTimerIcon}>
+            <Ionicons
+              name={restSecondsRemaining === 0 ? 'notifications' : 'timer-outline'}
+              size={21}
+              color={restSecondsRemaining === 0 ? colors.disciplineCompleted : colors.accentText}
+            />
+          </View>
+          <View style={styles.restTimerText}>
+            <Text style={styles.restTimerTitle}>
+              {restSecondsRemaining === 0 ? 'Mola bitti' : `${restTimer.exerciseName} molası`}
+            </Text>
+            <Text style={styles.restTimerCaption}>
+              {restSecondsRemaining === 0 ? 'Sıradaki sete hazırsın.' : 'Set tamamlanınca otomatik başladı.'}
+            </Text>
+          </View>
+          <Text style={styles.restTimerValue}>{formatDuration(restSecondsRemaining)}</Text>
+          <Pressable
+            accessibilityLabel="Mola sayacını kapat"
+            accessibilityRole="button"
+            onPress={() => void clearRestTimer()}
+            style={({ pressed }) => [styles.dismissRestTimer, pressed && styles.pressed]}>
+            <Ionicons name="close" size={18} color={colors.textSecondary} />
+          </Pressable>
+        </View>
+      )}
+      </View>
     </SafeAreaView>
+  );
+}
+
+function showWorkoutError(title: string, error: unknown) {
+  Alert.alert(
+    title,
+    error instanceof Error ? error.message : 'Lütfen internet bağlantını kontrol edip tekrar dene.',
   );
 }
 
 function ExerciseSetCard({
   colors,
+  completedSetRecords,
   completedSets,
   disabled,
   disabledLabel,
   exercise,
   index,
+  isCurrent,
   onCompleteSet,
   onUndoSet,
+  previousSet,
 }: {
   colors: ThemeColors;
+  completedSetRecords: WorkoutSetRecord[];
   completedSets: number;
   disabled: boolean;
   disabledLabel?: string;
   exercise: ProgramExercise;
   index: number;
-  onCompleteSet: () => void;
+  isCurrent: boolean;
+  onCompleteSet: (performance: WorkoutSetPerformance) => Promise<void>;
   onUndoSet: () => void;
+  previousSet?: WorkoutSetRecord;
 }) {
   const styles = createStyles(colors);
   const exerciseName = getProgramExerciseName(exercise.exerciseId, exercise.customExerciseName);
   const isComplete = completedSets === exercise.targetSets;
   const progress = exercise.targetSets ? (completedSets / exercise.targetSets) * 100 : 0;
+  const suggestedRepetitions = previousSet?.repetitions ?? getFirstTargetRepetition(exercise.targetReps);
+  const [weightInput, setWeightInput] = useState(previousSet?.weightKg?.toString() ?? '');
+  const [repetitionsInput, setRepetitionsInput] = useState(suggestedRepetitions?.toString() ?? '');
+  const [rpeInput, setRpeInput] = useState('');
+  const [validationError, setValidationError] = useState<string>();
+
+  async function submitSet() {
+    const repetitions = parseNumberInput(repetitionsInput);
+    const weightKg = parseOptionalNumberInput(weightInput);
+    const rpe = parseOptionalNumberInput(rpeInput);
+
+    if (repetitions === undefined || !Number.isInteger(repetitions) || repetitions < 0 || repetitions > 1000) {
+      setValidationError('Tekrar sayısını 0–1000 arasında tam sayı olarak gir.');
+      return;
+    }
+
+    if (weightKg === null || (weightKg !== undefined && (weightKg < 0 || weightKg > 99999))) {
+      setValidationError('Ağırlık alanına geçerli bir değer gir veya boş bırak.');
+      return;
+    }
+
+    if (rpe === null || (rpe !== undefined && (rpe < 0 || rpe > 10))) {
+      setValidationError('RPE değerini 0–10 arasında gir veya boş bırak.');
+      return;
+    }
+
+    setValidationError(undefined);
+    await onCompleteSet({ repetitions, weightKg, rpe });
+  }
 
   return (
-    <View style={[styles.exerciseCard, isComplete && styles.exerciseCardComplete]}>
+    <View style={[
+      styles.exerciseCard,
+      isCurrent && styles.exerciseCardCurrent,
+      isComplete && styles.exerciseCardComplete,
+    ]}>
       <View style={styles.exerciseHeader}>
         <View style={[styles.exerciseVisual, isComplete && styles.exerciseVisualComplete]}>
           <WorkoutVisualDisplay
@@ -406,7 +619,7 @@ function ExerciseSetCard({
           />
         </View>
         <View style={styles.exerciseText}>
-          <Text style={styles.exerciseOrder}>{index + 1}. EGZERSİZ</Text>
+          <Text style={styles.exerciseOrder}>{isCurrent ? 'SIRADAKİ EGZERSİZ' : `${index + 1}. EGZERSİZ`}</Text>
           <Text style={styles.exerciseName}>{exerciseName}</Text>
           <Text style={styles.exerciseTarget}>
             {exercise.targetSets} set × {exercise.targetReps} tekrar · {exercise.restSeconds} sn dinlenme
@@ -424,6 +637,72 @@ function ExerciseSetCard({
           ]}
         />
       </View>
+
+      {completedSetRecords.length > 0 && (
+        <View style={styles.completedSetList}>
+          {completedSetRecords.map((workoutSet) => (
+            <View key={workoutSet.id} style={styles.completedSetRow}>
+              <View style={styles.completedSetNumber}>
+                <Ionicons name="checkmark" size={12} color={colors.onPrimary} />
+                <Text style={styles.completedSetNumberText}>SET {workoutSet.setNumber}</Text>
+              </View>
+              <Text style={styles.completedSetValue}>
+                {workoutSet.weightKg === undefined ? 'Vücut ağırlığı' : `${formatDecimal(workoutSet.weightKg)} kg`}
+              </Text>
+              <Text style={styles.completedSetValue}>
+                {workoutSet.repetitions === undefined ? 'Detay yok' : `${workoutSet.repetitions} tekrar`}
+              </Text>
+              {workoutSet.rpe !== undefined && (
+                <Text style={styles.completedSetRpe}>RPE {formatDecimal(workoutSet.rpe)}</Text>
+              )}
+            </View>
+          ))}
+        </View>
+      )}
+
+      {!isComplete && (
+        <View style={styles.setEntryArea}>
+          <View style={styles.nextSetRow}>
+            <Text style={styles.nextSetTitle}>SET {completedSets + 1}</Text>
+            {previousSet && (
+              <Text numberOfLines={1} style={styles.previousSetText}>
+                Önceki: {formatSetPerformance(previousSet)}
+              </Text>
+            )}
+          </View>
+
+          <View style={styles.setInputRow}>
+            <SetInput
+              colors={colors}
+              disabled={disabled}
+              keyboardType="decimal-pad"
+              label="KG"
+              onChangeText={setWeightInput}
+              placeholder="—"
+              value={weightInput}
+            />
+            <SetInput
+              colors={colors}
+              disabled={disabled}
+              keyboardType="number-pad"
+              label="TEKRAR"
+              onChangeText={setRepetitionsInput}
+              placeholder={exercise.targetReps}
+              value={repetitionsInput}
+            />
+            <SetInput
+              colors={colors}
+              disabled={disabled}
+              keyboardType="decimal-pad"
+              label="RPE"
+              onChangeText={setRpeInput}
+              placeholder="İsteğe bağlı"
+              value={rpeInput}
+            />
+          </View>
+          {validationError && <Text style={styles.validationError}>{validationError}</Text>}
+        </View>
+      )}
 
       <View style={styles.setControls}>
         <View style={styles.setCountArea}>
@@ -445,7 +724,7 @@ function ExerciseSetCard({
           accessibilityLabel={`${exerciseName} setini tamamla`}
           accessibilityRole="button"
           disabled={isComplete || disabled}
-          onPress={onCompleteSet}
+          onPress={() => void submitSet()}
           style={({ pressed }) => [
             styles.completeSetButton,
             isComplete && styles.completeSetButtonDone,
@@ -462,13 +741,83 @@ function ExerciseSetCard({
   );
 }
 
+function SetInput({
+  colors,
+  disabled,
+  keyboardType,
+  label,
+  onChangeText,
+  placeholder,
+  value,
+}: {
+  colors: ThemeColors;
+  disabled: boolean;
+  keyboardType: 'decimal-pad' | 'number-pad';
+  label: string;
+  onChangeText: (value: string) => void;
+  placeholder: string;
+  value: string;
+}) {
+  const styles = createStyles(colors);
+
+  return (
+    <View style={styles.setInputGroup}>
+      <Text style={styles.setInputLabel}>{label}</Text>
+      <TextInput
+        editable={!disabled}
+        keyboardType={keyboardType}
+        maxLength={8}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor={colors.textTertiary}
+        selectTextOnFocus
+        style={[styles.setInput, disabled && styles.setInputDisabled]}
+        value={value}
+      />
+    </View>
+  );
+}
+
+function getFirstTargetRepetition(targetReps: string) {
+  const match = targetReps.match(/\d+/);
+  return match ? Number(match[0]) : undefined;
+}
+
+function parseNumberInput(value: string) {
+  const normalizedValue = value.trim().replace(',', '.');
+  if (!normalizedValue) return undefined;
+  const parsedValue = Number(normalizedValue);
+  return Number.isFinite(parsedValue) ? parsedValue : undefined;
+}
+
+function parseOptionalNumberInput(value: string) {
+  if (!value.trim()) return undefined;
+  const parsedValue = parseNumberInput(value);
+  return parsedValue === undefined ? null : parsedValue;
+}
+
+function formatDecimal(value: number) {
+  return value.toLocaleString('tr-TR', { maximumFractionDigits: 2 });
+}
+
+function formatSetPerformance(workoutSet: WorkoutSetRecord) {
+  const parts = [
+    workoutSet.weightKg === undefined ? 'vücut ağırlığı' : `${formatDecimal(workoutSet.weightKg)} kg`,
+    workoutSet.repetitions === undefined ? undefined : `${workoutSet.repetitions} tekrar`,
+    workoutSet.rpe === undefined ? undefined : `RPE ${formatDecimal(workoutSet.rpe)}`,
+  ];
+  return parts.filter(Boolean).join(' · ');
+}
+
 function createStyles(colors: ThemeColors) {
   return StyleSheet.create({
     safeArea: { backgroundColor: colors.background, flex: 1 },
-    content: { gap: 18, padding: 20, paddingBottom: 42 },
+    workoutScreen: { flex: 1 },
+    content: { gap: 14, padding: 18, paddingBottom: 42 },
+    contentWithRestTimer: { paddingBottom: 128 },
     notFound: { alignItems: 'center', flex: 1, gap: 15, justifyContent: 'center', padding: 30 },
     notFoundTitle: { color: colors.text, fontSize: 18, fontWeight: '800', textAlign: 'center' },
-    primaryButton: { backgroundColor: colors.primary, borderRadius: 12, paddingHorizontal: 17, paddingVertical: 11 },
+    primaryButton: { backgroundColor: colors.primary, borderRadius: 9, paddingHorizontal: 17, paddingVertical: 11 },
     primaryButtonText: { color: colors.onPrimary, fontSize: 13, fontWeight: '800' },
     restDayContainer: {
       alignItems: 'center',
@@ -488,16 +837,23 @@ function createStyles(colors: ThemeColors) {
     restDayEyebrow: { color: colors.accent, fontSize: 11, fontWeight: '900', letterSpacing: 1 },
     restDayTitle: { color: colors.text, fontSize: 26, fontWeight: '900', marginTop: 6, textAlign: 'center' },
     restDayBody: { color: colors.textSecondary, fontSize: 14, lineHeight: 21, marginTop: 10, textAlign: 'center' },
-    heroCard: { backgroundColor: colors.primaryStrong, borderRadius: 22, gap: 18, padding: 20 },
+    heroCard: {
+      backgroundColor: colors.surface,
+      borderColor: colors.border,
+      borderRadius: 10,
+      borderWidth: 1,
+      gap: 16,
+      padding: 16,
+    },
     heroTopRow: { alignItems: 'center', flexDirection: 'row', gap: 14 },
     dayVisual: {
       alignItems: 'center',
       backgroundColor: colors.accentSoft,
-      borderRadius: 16,
-      height: 62,
+      borderRadius: 10,
+      height: 56,
       justifyContent: 'center',
       overflow: 'hidden',
-      width: 62,
+      width: 56,
     },
     heroText: { flex: 1 },
     eyebrow: { color: colors.accentBright, fontSize: 10, fontWeight: '900', letterSpacing: 1 },
@@ -513,7 +869,7 @@ function createStyles(colors: ThemeColors) {
     workoutToggleButton: {
       alignItems: 'center',
       backgroundColor: colors.primary,
-      borderRadius: 12,
+      borderRadius: 9,
       flexDirection: 'row',
       gap: 7,
       paddingHorizontal: 14,
@@ -529,19 +885,21 @@ function createStyles(colors: ThemeColors) {
       marginLeft: 'auto',
       opacity: 0.82,
     },
+    stopwatchTextArea: { alignItems: 'flex-end' },
     workoutStopwatchText: {
       color: colors.heroText,
       fontSize: 14,
       fontVariant: ['tabular-nums'],
       fontWeight: '800',
     },
+    averageDuration: { color: colors.textTertiary, fontSize: 9, marginTop: 1 },
     finishWorkoutButton: { alignItems: 'center', flexDirection: 'row', gap: 5, paddingTop: 1 },
     finishWorkoutText: { color: colors.heroText, fontSize: 11, fontWeight: '700' },
     scheduleNotice: {
       alignItems: 'center',
       backgroundColor: colors.accentSoft,
       borderColor: colors.accent,
-      borderRadius: 15,
+      borderRadius: 10,
       borderWidth: 1,
       flexDirection: 'row',
       gap: 10,
@@ -552,13 +910,21 @@ function createStyles(colors: ThemeColors) {
     scheduleNoticeBody: { color: colors.accentText, fontSize: 11, marginTop: 2 },
     restTimerCard: {
       alignItems: 'center',
-      backgroundColor: colors.accentSoft,
+      backgroundColor: colors.background,
       borderColor: colors.accent,
-      borderRadius: 15,
+      borderRadius: 10,
       borderWidth: 1,
+      bottom: 12,
       flexDirection: 'row',
       gap: 10,
+      left: 14,
       padding: 12,
+      position: 'absolute',
+      right: 14,
+      shadowColor: '#000000',
+      shadowOffset: { height: 5, width: 0 },
+      shadowOpacity: 0.35,
+      shadowRadius: 12,
     },
     restTimerCardFinished: { borderColor: colors.disciplineCompleted },
     restTimerIcon: {
@@ -583,7 +949,7 @@ function createStyles(colors: ThemeColors) {
       alignItems: 'center',
       backgroundColor: colors.surface,
       borderColor: colors.disciplineCompleted,
-      borderRadius: 16,
+      borderRadius: 10,
       borderWidth: 1,
       flexDirection: 'row',
       gap: 11,
@@ -601,7 +967,7 @@ function createStyles(colors: ThemeColors) {
       alignItems: 'center',
       backgroundColor: colors.surface,
       borderColor: colors.border,
-      borderRadius: 18,
+      borderRadius: 10,
       borderWidth: 1,
       gap: 9,
       padding: 28,
@@ -620,17 +986,18 @@ function createStyles(colors: ThemeColors) {
     exerciseCard: {
       backgroundColor: colors.surface,
       borderColor: colors.border,
-      borderRadius: 18,
+      borderRadius: 10,
       borderWidth: 1,
       gap: 14,
       padding: 15,
     },
-    exerciseCardComplete: { borderColor: colors.disciplineCompleted },
+    exerciseCardComplete: { borderColor: colors.disciplineCompleted, paddingVertical: 11 },
+    exerciseCardCurrent: { borderColor: colors.primary, borderWidth: 2 },
     exerciseHeader: { alignItems: 'center', flexDirection: 'row', gap: 11 },
     exerciseVisual: {
       alignItems: 'center',
       backgroundColor: colors.accentSoft,
-      borderRadius: 12,
+      borderRadius: 9,
       height: 46,
       justifyContent: 'center',
       overflow: 'hidden',
@@ -644,6 +1011,47 @@ function createStyles(colors: ThemeColors) {
     exerciseProgressTrack: { backgroundColor: colors.surfaceMuted, borderRadius: 999, height: 6, overflow: 'hidden' },
     exerciseProgressFill: { backgroundColor: colors.accentBright, borderRadius: 999, height: '100%' },
     exerciseProgressFillComplete: { backgroundColor: colors.disciplineCompleted },
+    completedSetList: { gap: 6 },
+    completedSetRow: {
+      alignItems: 'center',
+      borderBottomColor: colors.border,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row',
+      gap: 8,
+      minHeight: 34,
+      paddingBottom: 6,
+    },
+    completedSetNumber: {
+      alignItems: 'center',
+      backgroundColor: colors.disciplineCompleted,
+      borderRadius: 6,
+      flexDirection: 'row',
+      gap: 3,
+      paddingHorizontal: 7,
+      paddingVertical: 5,
+    },
+    completedSetNumberText: { color: colors.onPrimary, fontSize: 9, fontWeight: '900' },
+    completedSetValue: { color: colors.textSecondary, fontSize: 11, fontWeight: '700' },
+    completedSetRpe: { color: colors.accentText, fontSize: 10, fontWeight: '800', marginLeft: 'auto' },
+    setEntryArea: { gap: 8 },
+    nextSetRow: { alignItems: 'center', flexDirection: 'row', gap: 8 },
+    nextSetTitle: { color: colors.primaryIcon, fontSize: 11, fontWeight: '900', letterSpacing: 0.6 },
+    previousSetText: { color: colors.textTertiary, flex: 1, fontSize: 10, textAlign: 'right' },
+    setInputRow: { flexDirection: 'row', gap: 8 },
+    setInputGroup: { flex: 1, gap: 5 },
+    setInputLabel: { color: colors.textTertiary, fontSize: 9, fontWeight: '900', letterSpacing: 0.6 },
+    setInput: {
+      borderColor: colors.inputBorder,
+      borderRadius: 8,
+      borderWidth: 1,
+      color: colors.text,
+      fontSize: 14,
+      fontWeight: '800',
+      height: 43,
+      paddingHorizontal: 10,
+    },
+    setInputDisabled: { opacity: 0.5 },
+    validationError: { color: colors.danger, fontSize: 10, lineHeight: 14 },
     setControls: { alignItems: 'center', flexDirection: 'row', gap: 8 },
     setCountArea: { alignItems: 'baseline', flex: 1, flexDirection: 'row' },
     setCount: { color: colors.accent, fontSize: 25, fontWeight: '900' },
@@ -660,7 +1068,7 @@ function createStyles(colors: ThemeColors) {
     completeSetButton: {
       alignItems: 'center',
       backgroundColor: colors.primary,
-      borderRadius: 11,
+      borderRadius: 9,
       flexDirection: 'row',
       gap: 5,
       paddingHorizontal: 13,
@@ -669,6 +1077,6 @@ function createStyles(colors: ThemeColors) {
     completeSetButtonDone: { backgroundColor: colors.disciplineCompleted },
     completeSetButtonDisabled: { backgroundColor: colors.disciplineSkipped, opacity: 0.65 },
     completeSetButtonText: { color: colors.onPrimary, fontSize: 12, fontWeight: '900' },
-    pressed: { opacity: 0.7 },
+    pressed: { opacity: 0.78, transform: [{ scale: 0.98 }] },
   });
 }

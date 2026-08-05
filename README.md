@@ -79,10 +79,10 @@ Expo Router'da `app` klasöründeki her ekran dosyası bir sayfadır. `_layout.t
 - E-posta ve şifreyle hesap oluşturma, giriş yapma ve çıkış yapma
 - Oturum durumuna göre korunan uygulama ekranları
 
-Program verileri ve seçilen program/gün fotoğrafları şu anda yalnızca uygulama belleğinde tutulur. Uygulama tamamen kapatıldığında sıfırlanır. Kalıcı kayıt ve fotoğraf yükleme, ileride Supabase bağlantısıyla eklenecek.
+Programlar, program günleri, egzersiz hedefleri ve aktif program seçimi Supabase hesabında kalıcı olarak saklanır. Galeriden seçilen fotoğraflar henüz Supabase Storage'a yüklenmediği için yalnızca seçildikleri cihazda görüntülenebilir.
 
 Disiplin takvimindeki planlı program günleri tamamlanan setlerden otomatik hesaplanır. Plansız günler kutulara dokunularak elle işaretlenebilir.
 
-Profil bilgileri ve tema seçimi cihazda saklanır. Programlar ve disiplin takvimi ise Supabase bağlantısı eklenene kadar yalnızca uygulama belleğinde tutulur.
+Profil metinleri, antrenman hedefi, mola sayacı ayarı, program yapısı, antrenman süreleri, tamamlanan setler ve elle işaretlenen disiplin günleri Supabase hesabında saklanır. Tema seçimi, aktif mola sayacı ve henüz Storage'a yüklenmeyen yerel fotoğraflar cihazda kalıcı olarak tutulur.
 
 Tema, Profil ekranındaki Görünüm bölümünden değiştirilebilir. `Sistem` seçeneği telefonun açık/koyu tema ayarını otomatik takip eder. Seçilen görünüm cihazda saklanır ve uygulama yeniden açıldığında korunur.
