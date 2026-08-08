@@ -1,13 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import * as Haptics from 'expo-haptics';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   FlatList,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -15,8 +18,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { ThemeColors } from '@/constants/theme';
+import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
+import { useTranslation } from '@/context/language-context';
+import { useProfile } from '@/context/profile-context';
+import { useWorkout } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import {
   clearCoachMessages,
@@ -24,26 +30,31 @@ import {
   loadCoachMessages,
   sendCoachMessage,
 } from '@/services/ai/coach-chat';
-import { CoachChatMessage } from '@/types/ai';
-
-const QUICK_QUESTIONS = [
-  'Bu haftaki gelişimimi özetle',
-  'Hangi egzersizde en çok geliştim?',
-  'Antrenman düzenimi nasıl iyileştirebilirim?',
-  'Son antrenmanımı yorumla',
-];
+import {
+  generateExerciseProgressInsight,
+  generateWeeklyWorkoutInsight,
+} from '@/services/ai/workout-insights';
+import { CoachChatMessage, WeeklyWorkoutInsight } from '@/types/ai';
+import { buildExerciseProgressMetrics } from '@/utils/exercise-ai-metrics';
+import { buildWeeklyWorkoutMetrics } from '@/utils/weekly-workout-metrics';
+import { buildExerciseAnalytics } from '@/utils/workout-analytics';
 
 export default function CoachScreen() {
   const { user } = useAuth();
   const { colors } = useAppTheme();
+  const { t, tList } = useTranslation();
   const styles = createStyles(colors);
   const listRef = useRef<FlatList<CoachChatMessage>>(null);
+  // Klavye açıldığında sekme çubuğu da kapandığı için ofset, sabit bir sayı
+  // yerine sekme çubuğunun gerçek yüksekliğinden (güvenli alan dahil) alınır.
+  const bottomTabBarHeight = useBottomTabBarHeight();
 
   const [messages, setMessages] = useState<CoachChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string>();
+  const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
 
   const scrollToEnd = useCallback(() => {
     requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
@@ -57,7 +68,7 @@ export default function CoachScreen() {
       })
       .catch((loadError) => {
         if (isMounted) {
-          setError(loadError instanceof Error ? loadError.message : 'Sohbet geçmişi yüklenemedi.');
+          setError(loadError instanceof Error ? loadError.message : t('coach.loadFailed'));
         }
       })
       .finally(() => {
@@ -67,41 +78,38 @@ export default function CoachScreen() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (messages.length > 0 || isSending) scrollToEnd();
   }, [messages, isSending, scrollToEnd]);
 
-  const deliverMessage = useCallback(
-    async (content: string, clientMessageId: string) => {
-      setError(undefined);
-      setIsSending(true);
-      try {
-        const reply = await sendCoachMessage(content, clientMessageId);
-        setMessages((current) => [
-          ...current.map((message) =>
-            message.clientMessageId === clientMessageId && message.role === 'user'
-              ? { ...message, status: 'sent' as const }
-              : message,
-          ),
-          reply,
-        ]);
-      } catch (sendError) {
-        setMessages((current) =>
-          current.map((message) =>
-            message.clientMessageId === clientMessageId && message.role === 'user'
-              ? { ...message, status: 'failed' as const }
-              : message,
-          ),
-        );
-        setError(sendError instanceof Error ? sendError.message : 'Mesaj gönderilemedi.');
-      } finally {
-        setIsSending(false);
-      }
-    },
-    [],
-  );
+  const deliverMessage = useCallback(async (content: string, clientMessageId: string) => {
+    setError(undefined);
+    setIsSending(true);
+    try {
+      const reply = await sendCoachMessage(content, clientMessageId);
+      setMessages((current) => [
+        ...current.map((message) =>
+          message.clientMessageId === clientMessageId && message.role === 'user'
+            ? { ...message, status: 'sent' as const }
+            : message,
+        ),
+        reply,
+      ]);
+    } catch (sendError) {
+      setMessages((current) =>
+        current.map((message) =>
+          message.clientMessageId === clientMessageId && message.role === 'user'
+            ? { ...message, status: 'failed' as const }
+            : message,
+        ),
+      );
+      setError(sendError instanceof Error ? sendError.message : t('coach.sendFailed'));
+    } finally {
+      setIsSending(false);
+    }
+  }, [t]);
 
   const submit = useCallback(
     (rawText: string) => {
@@ -143,18 +151,18 @@ export default function CoachScreen() {
 
   function confirmClear() {
     if (!user || messages.length === 0 || isSending) return;
-    Alert.alert('Sohbeti temizle', 'Tüm sohbet geçmişin kalıcı olarak silinsin mi?', [
-      { style: 'cancel', text: 'Vazgeç' },
+    Alert.alert(t('coach.clear'), t('coach.clearBody'), [
+      { style: 'cancel', text: t('common.cancel') },
       {
         style: 'destructive',
-        text: 'Temizle',
+        text: t('coach.clearConfirm'),
         onPress: () => {
           const previous = messages;
           setMessages([]);
           setError(undefined);
           clearCoachMessages(user.id).catch((clearError) => {
             setMessages(previous);
-            setError(clearError instanceof Error ? clearError.message : 'Sohbet temizlenemedi.');
+            setError(clearError instanceof Error ? clearError.message : t('coach.clearFailed'));
           });
         },
       },
@@ -162,30 +170,40 @@ export default function CoachScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.safeArea} edges={['top']}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>AI Koç</Text>
-        {messages.length > 0 && (
+        <Text style={styles.headerTitle}>{t('coach.title')}</Text>
+        <View style={styles.headerActions}>
           <Pressable
-            accessibilityLabel="Sohbeti temizle"
+            accessibilityLabel={t('coach.analysisLabel')}
             accessibilityRole="button"
-            disabled={isSending}
             hitSlop={10}
-            onPress={confirmClear}
-            style={({ pressed }) => [styles.clearButton, pressed && styles.pressed]}>
-            <Ionicons name="trash-outline" size={20} color={colors.textSecondary} />
+            onPress={() => setIsAnalysisOpen(true)}
+            style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}>
+            <Ionicons name="stats-chart-outline" size={19} color={colors.textSecondary} />
           </Pressable>
-        )}
+          {messages.length > 0 && (
+            <Pressable
+              accessibilityLabel={t('coach.clear')}
+              accessibilityRole="button"
+              disabled={isSending}
+              hitSlop={10}
+              onPress={confirmClear}
+              style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}>
+              <Ionicons name="trash-outline" size={19} color={colors.textSecondary} />
+            </Pressable>
+          )}
+        </View>
       </View>
 
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? bottomTabBarHeight : 0}
         style={styles.flex}>
         {isLoading ? (
-          <View style={styles.loadingState}>
-            <ActivityIndicator color={colors.primaryIcon} size="large" />
-            <Text style={styles.mutedText}>Sohbet yükleniyor…</Text>
+          <View style={styles.centerState}>
+            <ActivityIndicator color={colors.primary} size="large" />
+            <Text style={styles.centerStateText}>{t('coach.loading')}</Text>
           </View>
         ) : (
           <FlatList
@@ -196,35 +214,70 @@ export default function CoachScreen() {
             onContentSizeChange={scrollToEnd}
             ref={listRef}
             renderItem={({ item }) => (
-              <MessageBubble colors={colors} message={item} onRetry={retry} styles={styles} />
+              <MessageBubble
+                colors={colors}
+                message={item}
+                onRetry={retry}
+                retryLabel={t('coach.retry')}
+                styles={styles}
+              />
             )}
             ListEmptyComponent={
-              <WelcomeState colors={colors} disabled={isSending} onPick={submit} styles={styles} />
+              <WelcomeState
+                colors={colors}
+                disabled={isSending}
+                onPick={submit}
+                questions={tList('coach.welcomeQuestions')}
+                styles={styles}
+                subtitle={t('coach.welcomeBody')}
+                title={t('coach.welcomeTitle')}
+              />
             }
-            ListFooterComponent={isSending ? <TypingIndicator colors={colors} styles={styles} /> : null}
+            ListFooterComponent={
+              isSending ? <TypingIndicator colors={colors} label={t('coach.typing')} styles={styles} /> : null
+            }
             showsVerticalScrollIndicator={false}
           />
         )}
 
         {error && (
           <View style={styles.errorBar}>
-            <Ionicons name="alert-circle-outline" size={16} color={colors.danger} />
+            <Ionicons name="alert-circle-outline" size={15} color={colors.danger} />
             <Text style={styles.errorText}>{error}</Text>
           </View>
         )}
 
-        <View style={styles.inputBar}>
+        {!isLoading && messages.length > 0 && (
+          <View style={styles.quickRow}>
+            {tList('coach.quickQuestions').map((question) => (
+              <Pressable
+                accessibilityRole="button"
+                disabled={isSending}
+                key={question}
+                onPress={() => submit(question)}
+                style={({ pressed }) => [
+                  styles.quickChip,
+                  isSending && styles.quickChipDisabled,
+                  pressed && styles.pressed,
+                ]}>
+                <Text style={styles.quickChipText}>{question}</Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
+
+        <View style={styles.composer}>
           <TextInput
             editable={!isSending}
             multiline
             onChangeText={setInput}
-            placeholder="Koçuna bir şey sor…"
+            placeholder={t('coach.placeholder')}
             placeholderTextColor={colors.textTertiary}
             style={styles.input}
             value={input}
           />
           <Pressable
-            accessibilityLabel="Gönder"
+            accessibilityLabel={t('coach.send')}
             accessibilityRole="button"
             disabled={isSending || input.trim().length === 0}
             onPress={() => submit(input)}
@@ -236,11 +289,18 @@ export default function CoachScreen() {
             {isSending ? (
               <ActivityIndicator color={colors.onPrimary} size="small" />
             ) : (
-              <Ionicons name="arrow-up" size={20} color={colors.onPrimary} />
+              <Ionicons name="arrow-up" size={18} color={colors.onPrimary} />
             )}
           </Pressable>
         </View>
       </KeyboardAvoidingView>
+
+      <AnalysisSheet
+        colors={colors}
+        onClose={() => setIsAnalysisOpen(false)}
+        styles={styles}
+        visible={isAnalysisOpen}
+      />
     </SafeAreaView>
   );
 }
@@ -249,10 +309,11 @@ type BubbleProps = {
   colors: ThemeColors;
   message: CoachChatMessage;
   onRetry: (message: CoachChatMessage) => void;
+  retryLabel: string;
   styles: ReturnType<typeof createStyles>;
 };
 
-function MessageBubble({ colors, message, onRetry, styles }: BubbleProps) {
+function MessageBubble({ colors, message, onRetry, retryLabel, styles }: BubbleProps) {
   const isUser = message.role === 'user';
   const isFailed = message.status === 'failed';
 
@@ -260,7 +321,7 @@ function MessageBubble({ colors, message, onRetry, styles }: BubbleProps) {
     <View style={[styles.bubbleRow, isUser ? styles.bubbleRowUser : styles.bubbleRowAssistant]}>
       {!isUser && (
         <View style={styles.assistantMark}>
-          <Ionicons name="sparkles" size={13} color={colors.primaryIcon} />
+          <View style={styles.assistantMarkDot} />
         </View>
       )}
       <View style={styles.bubbleColumn}>
@@ -273,8 +334,8 @@ function MessageBubble({ colors, message, onRetry, styles }: BubbleProps) {
             hitSlop={8}
             onPress={() => onRetry(message)}
             style={({ pressed }) => [styles.retryRow, pressed && styles.pressed]}>
-            <Ionicons name="refresh" size={13} color={colors.danger} />
-            <Text style={styles.retryText}>Gönderilemedi · Tekrar dene</Text>
+            <Ionicons name="refresh" size={12} color={colors.danger} />
+            <Text style={styles.retryText}>{retryLabel}</Text>
           </Pressable>
         )}
       </View>
@@ -282,15 +343,23 @@ function MessageBubble({ colors, message, onRetry, styles }: BubbleProps) {
   );
 }
 
-function TypingIndicator({ colors, styles }: { colors: ThemeColors; styles: ReturnType<typeof createStyles> }) {
+function TypingIndicator({
+  colors,
+  label,
+  styles,
+}: {
+  colors: ThemeColors;
+  label: string;
+  styles: ReturnType<typeof createStyles>;
+}) {
   return (
     <View style={[styles.bubbleRow, styles.bubbleRowAssistant]}>
       <View style={styles.assistantMark}>
-        <Ionicons name="sparkles" size={13} color={colors.primaryIcon} />
+        <View style={styles.assistantMarkDot} />
       </View>
       <View style={[styles.bubble, styles.bubbleAssistant, styles.typingBubble]}>
         <ActivityIndicator color={colors.textSecondary} size="small" />
-        <Text style={styles.typingText}>Koç yazıyor…</Text>
+        <Text style={styles.typingText}>{label}</Text>
       </View>
     </View>
   );
@@ -300,33 +369,229 @@ type WelcomeProps = {
   colors: ThemeColors;
   disabled: boolean;
   onPick: (text: string) => void;
+  questions: string[];
   styles: ReturnType<typeof createStyles>;
+  subtitle: string;
+  title: string;
 };
 
-function WelcomeState({ colors, disabled, onPick, styles }: WelcomeProps) {
+function WelcomeState({ colors, disabled, onPick, questions, styles, subtitle, title }: WelcomeProps) {
   return (
     <View style={styles.welcome}>
       <View style={styles.welcomeMark}>
-        <Ionicons name="sparkles" size={28} color={colors.primaryIcon} />
+        <Ionicons name="sparkles-outline" size={22} color={colors.primary} />
       </View>
-      <Text style={styles.welcomeTitle}>AI Koçuna hoş geldin</Text>
-      <Text style={styles.welcomeText}>
-        Antrenman kayıtlarına dayanarak sorularını yanıtlar. Aşağıdaki hızlı sorulardan biriyle başlayabilirsin.
-      </Text>
-      <View style={styles.quickList}>
-        {QUICK_QUESTIONS.map((question) => (
+      <Text style={styles.welcomeTitle}>{title}</Text>
+      <Text style={styles.welcomeText}>{subtitle}</Text>
+      <View style={styles.welcomeList}>
+        {questions.map((question) => (
           <Pressable
             accessibilityRole="button"
             disabled={disabled}
             key={question}
             onPress={() => onPick(question)}
-            style={({ pressed }) => [styles.quickChip, pressed && styles.pressed, disabled && styles.quickChipDisabled]}>
+            style={({ pressed }) => [
+              styles.quickChip,
+              disabled && styles.quickChipDisabled,
+              pressed && styles.pressed,
+            ]}>
             <Text style={styles.quickChipText}>{question}</Text>
-            <Ionicons name="arrow-forward" size={15} color={colors.primaryIcon} />
           </Pressable>
         ))}
       </View>
     </View>
+  );
+}
+
+/**
+ * Haftalık özet ve egzersiz analizi, sohbet düzenini bozmadan başlıktaki
+ * eylemden açılan panelde çalışmaya devam eder. Aynı servis fonksiyonlarını
+ * ve aynı Edge Function özelliklerini kullanır.
+ */
+function AnalysisSheet({
+  colors,
+  onClose,
+  styles,
+  visible,
+}: {
+  colors: ThemeColors;
+  onClose: () => void;
+  styles: ReturnType<typeof createStyles>;
+  visible: boolean;
+}) {
+  const { profile } = useProfile();
+  const { t } = useTranslation();
+  const { activeProgramId, completedSetCounts, disciplineStatuses, programs, workoutSessions, workoutSets } =
+    useWorkout();
+  const [mode, setMode] = useState<'weekly' | 'exercise'>('weekly');
+  const [selectedExerciseKey, setSelectedExerciseKey] = useState<string>();
+  const [insight, setInsight] = useState<WeeklyWorkoutInsight>();
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [error, setError] = useState<string>();
+
+  const activeProgram = programs.find((program) => program.id === activeProgramId);
+  const metrics = useMemo(
+    () =>
+      buildWeeklyWorkoutMetrics({
+        activeProgramName: activeProgram?.name,
+        completedSetCounts,
+        disciplineStatuses,
+        trainingGoal: profile.trainingGoal,
+        workoutSessions,
+      }),
+    [activeProgram?.name, completedSetCounts, disciplineStatuses, profile.trainingGoal, workoutSessions],
+  );
+  const completedSessionIds = useMemo(
+    () => new Set(workoutSessions.filter((session) => session.status === 'completed').map((session) => session.id)),
+    [workoutSessions],
+  );
+  const exerciseAnalytics = useMemo(
+    () => buildExerciseAnalytics(workoutSets.filter((workoutSet) => completedSessionIds.has(workoutSet.sessionId))),
+    [completedSessionIds, workoutSets],
+  );
+  const selectedExercise =
+    exerciseAnalytics.find((exercise) => exercise.exerciseKey === selectedExerciseKey) ?? exerciseAnalytics[0];
+  const exerciseMetrics = selectedExercise ? buildExerciseProgressMetrics(selectedExercise) : undefined;
+
+  async function generate() {
+    setIsGenerating(true);
+    setError(undefined);
+    try {
+      if (mode === 'exercise') {
+        if (!exerciseMetrics) throw new Error(t('coach.noExerciseMetrics'));
+        setInsight(await generateExerciseProgressInsight(exerciseMetrics));
+      } else {
+        setInsight(await generateWeeklyWorkoutInsight(metrics));
+      }
+    } catch (generationError) {
+      setError(
+        generationError instanceof Error ? generationError.message : t('coach.analysisFailed'),
+      );
+    } finally {
+      setIsGenerating(false);
+    }
+  }
+
+  function changeMode(nextMode: 'weekly' | 'exercise') {
+    setMode(nextMode);
+    setInsight(undefined);
+    setError(undefined);
+  }
+
+  return (
+    <Modal animationType="slide" onRequestClose={onClose} presentationStyle="pageSheet" visible={visible}>
+      <SafeAreaView style={styles.sheetSafeArea} edges={['top', 'bottom']}>
+        <View style={styles.sheetHeader}>
+          <Text style={styles.sheetTitle}>{t('coach.analysisTitle')}</Text>
+          <Pressable
+            accessibilityLabel={t('common.close')}
+            accessibilityRole="button"
+            hitSlop={10}
+            onPress={onClose}
+            style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}>
+            <Ionicons name="close" size={20} color={colors.textSecondary} />
+          </Pressable>
+        </View>
+
+        <ScrollView contentContainerStyle={styles.sheetContent} showsVerticalScrollIndicator={false}>
+          <View style={styles.sheetTabs}>
+            {(['weekly', 'exercise'] as const).map((option) => (
+              <Pressable
+                accessibilityRole="tab"
+                accessibilityState={{ selected: mode === option }}
+                hitSlop={8}
+                key={option}
+                onPress={() => changeMode(option)}
+                style={({ pressed }) => [styles.sheetTab, pressed && styles.pressed]}>
+                <Text style={[styles.sheetTabText, mode === option && styles.sheetTabTextSelected]}>
+                  {option === 'weekly' ? t('coach.weeklySummary') : t('coach.exerciseAnalysis')}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {mode === 'weekly' ? (
+            <Text style={styles.sheetCaption}>
+              {t('coach.weeklyMeta', {
+                end: metrics.periodEnd,
+                sets: metrics.completedSets,
+                start: metrics.periodStart,
+                workouts: metrics.completedWorkouts,
+              })}
+            </Text>
+          ) : exerciseAnalytics.length > 0 ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.sheetChipRow}>
+              {exerciseAnalytics.map((exercise) => {
+                const isSelected = exercise.exerciseKey === selectedExercise?.exerciseKey;
+                return (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: isSelected }}
+                    key={exercise.exerciseKey}
+                    onPress={() => {
+                      setSelectedExerciseKey(exercise.exerciseKey);
+                      setInsight(undefined);
+                    }}
+                    style={({ pressed }) => [
+                      styles.sheetChip,
+                      isSelected && styles.sheetChipSelected,
+                      pressed && styles.pressed,
+                    ]}>
+                    <Text
+                      numberOfLines={1}
+                      style={[styles.sheetChipText, isSelected && styles.sheetChipTextSelected]}>
+                      {exercise.exerciseName}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          ) : (
+            <Text style={styles.sheetCaption}>{t('coach.noExerciseData')}</Text>
+          )}
+
+          {insight && (
+            <View style={styles.insightBlock}>
+              <Text style={styles.insightTitle}>{insight.headline}</Text>
+              <Text style={styles.insightSummary}>{insight.summary}</Text>
+              {insight.highlights.map((item) => (
+                <View key={item} style={styles.insightItem}>
+                  <View style={styles.insightBullet} />
+                  <Text style={styles.insightItemText}>{item}</Text>
+                </View>
+              ))}
+              {insight.nextSteps.map((item) => (
+                <View key={item} style={styles.insightItem}>
+                  <Ionicons name="arrow-forward" size={13} color={colors.primary} />
+                  <Text style={styles.insightItemText}>{item}</Text>
+                </View>
+              ))}
+              <Text style={styles.insightNotice}>{t('coach.medicalNotice')}</Text>
+            </View>
+          )}
+
+          {error && <Text style={styles.sheetError}>{error}</Text>}
+
+          <Pressable
+            accessibilityRole="button"
+            disabled={isGenerating || (mode === 'exercise' && !exerciseMetrics)}
+            onPress={() => void generate()}
+            style={({ pressed }) => [
+              styles.sheetButton,
+              (isGenerating || (mode === 'exercise' && !exerciseMetrics)) && styles.sheetButtonDisabled,
+              pressed && styles.pressed,
+            ]}>
+            {isGenerating ? (
+              <ActivityIndicator color={colors.onPrimary} size="small" />
+            ) : (
+              <Text style={styles.sheetButtonText}>
+                {insight ? t('coach.regenerate') : t('coach.generate')}
+              </Text>
+            )}
+          </Pressable>
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
   );
 }
 
@@ -336,120 +601,165 @@ function createStyles(colors: ThemeColors) {
     flex: { flex: 1 },
     header: {
       alignItems: 'center',
-      borderBottomColor: colors.border,
-      borderBottomWidth: 1,
       flexDirection: 'row',
       justifyContent: 'space-between',
-      paddingHorizontal: 20,
-      paddingVertical: 14,
+      paddingHorizontal: Layout.screenPadding,
+      paddingVertical: 12,
     },
-    headerTitle: { color: colors.text, fontSize: 20, fontWeight: '900' },
-    clearButton: { alignItems: 'center', height: 32, justifyContent: 'center', width: 32 },
-    loadingState: { alignItems: 'center', flex: 1, gap: 12, justifyContent: 'center' },
-    mutedText: { color: colors.textSecondary, fontSize: 13, fontWeight: '600' },
-    listContent: { gap: 14, paddingHorizontal: 16, paddingVertical: 18 },
+    headerTitle: { color: colors.text, fontSize: 20, fontWeight: '600' },
+    headerActions: { flexDirection: 'row', gap: 4 },
+    headerButton: { alignItems: 'center', height: 34, justifyContent: 'center', width: 34 },
+    centerState: { alignItems: 'center', flex: 1, gap: 12, justifyContent: 'center' },
+    centerStateText: { color: colors.textSecondary, ...Type.caption },
+    listContent: { gap: 14, paddingHorizontal: Layout.screenPadding, paddingVertical: 14 },
     listContentEmpty: { flexGrow: 1, justifyContent: 'center' },
-    bubbleRow: { flexDirection: 'row', gap: 8, maxWidth: '100%' },
-    bubbleRowUser: { justifyContent: 'flex-end', paddingLeft: 48 },
+    bubbleRow: { flexDirection: 'row', gap: 8 },
+    bubbleRowUser: { justifyContent: 'flex-end', paddingLeft: 56 },
     bubbleRowAssistant: { justifyContent: 'flex-start', paddingRight: 40 },
     assistantMark: {
       alignItems: 'center',
-      borderColor: colors.primarySoftBorder,
-      borderRadius: 14,
-      borderWidth: 1,
-      height: 28,
+      borderColor: colors.primary,
+      borderRadius: 11,
+      borderWidth: StyleSheet.hairlineWidth,
+      height: 22,
       justifyContent: 'center',
-      marginTop: 2,
-      width: 28,
+      marginTop: 4,
+      width: 22,
     },
-    bubbleColumn: { flexShrink: 1, gap: 5 },
-    bubble: { borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10 },
-    bubbleUser: { backgroundColor: colors.primary, borderTopRightRadius: 4 },
+    assistantMarkDot: { backgroundColor: colors.primary, borderRadius: 2.5, height: 5, width: 5 },
+    bubbleColumn: { flexShrink: 1, gap: 6 },
+    bubble: { borderRadius: 18, paddingHorizontal: 15, paddingVertical: 11 },
+    bubbleUser: { backgroundColor: colors.primary, borderBottomRightRadius: 6 },
     bubbleAssistant: {
-      backgroundColor: colors.surfaceMuted,
-      borderColor: colors.border,
-      borderTopLeftRadius: 4,
-      borderWidth: 1,
+      backgroundColor: colors.background,
+      borderColor: colors.separator,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderBottomLeftRadius: 6,
     },
     bubbleText: { color: colors.text, fontSize: 15, lineHeight: 21 },
     bubbleTextUser: { color: colors.onPrimary },
     typingBubble: { alignItems: 'center', flexDirection: 'row', gap: 8 },
-    typingText: { color: colors.textSecondary, fontSize: 13, fontWeight: '600' },
-    retryRow: { alignItems: 'center', flexDirection: 'row', gap: 5, paddingHorizontal: 2 },
-    retryText: { color: colors.danger, fontSize: 12, fontWeight: '700' },
-    welcome: { alignItems: 'center', gap: 12, paddingHorizontal: 12 },
+    typingText: { color: colors.textSecondary, fontSize: 14 },
+    retryRow: { alignItems: 'center', flexDirection: 'row', gap: 5 },
+    retryText: { color: colors.danger, fontSize: 12, fontWeight: '500' },
+    welcome: { alignItems: 'center', gap: 10, paddingHorizontal: 8 },
     welcomeMark: {
       alignItems: 'center',
-      borderColor: colors.primarySoftBorder,
-      borderRadius: 18,
-      borderWidth: 1,
-      height: 60,
+      borderColor: colors.primary,
+      borderRadius: 24,
+      borderWidth: StyleSheet.hairlineWidth,
+      height: 48,
       justifyContent: 'center',
-      width: 60,
+      width: 48,
     },
-    welcomeTitle: { color: colors.text, fontSize: 20, fontWeight: '900' },
+    welcomeTitle: { color: colors.text, fontSize: 19, fontWeight: '600' },
     welcomeText: {
       color: colors.textSecondary,
-      fontSize: 13,
+      ...Type.caption,
       lineHeight: 19,
-      paddingHorizontal: 12,
+      paddingHorizontal: 16,
       textAlign: 'center',
     },
-    quickList: { alignSelf: 'stretch', gap: 10, marginTop: 8 },
+    welcomeList: { alignItems: 'flex-start', alignSelf: 'stretch', gap: 8, marginTop: 8 },
+    quickRow: { gap: 8, paddingBottom: 4, paddingHorizontal: Layout.screenPadding, paddingTop: 4 },
     quickChip: {
-      alignItems: 'center',
-      backgroundColor: colors.surface,
-      borderColor: colors.border,
-      borderRadius: 12,
-      borderWidth: 1,
-      flexDirection: 'row',
-      gap: 10,
-      justifyContent: 'space-between',
-      paddingHorizontal: 16,
-      paddingVertical: 14,
+      alignSelf: 'flex-start',
+      borderColor: colors.primary,
+      borderRadius: Layout.radiusPill,
+      borderWidth: StyleSheet.hairlineWidth,
+      justifyContent: 'center',
+      minHeight: 34,
+      paddingHorizontal: 14,
+      paddingVertical: 7,
     },
     quickChipDisabled: { opacity: 0.5 },
-    quickChipText: { color: colors.text, flexShrink: 1, fontSize: 14, fontWeight: '700' },
+    quickChipText: { color: colors.primary, fontSize: 13, fontWeight: '500' },
     errorBar: {
       alignItems: 'center',
-      backgroundColor: colors.surfaceMuted,
       flexDirection: 'row',
       gap: 8,
-      paddingHorizontal: 16,
-      paddingVertical: 10,
+      paddingHorizontal: Layout.screenPadding,
+      paddingVertical: 8,
     },
-    errorText: { color: colors.danger, flex: 1, fontSize: 12, fontWeight: '600' },
-    inputBar: {
+    errorText: { color: colors.danger, flex: 1, fontSize: 12 },
+    composer: {
       alignItems: 'flex-end',
-      borderTopColor: colors.border,
-      borderTopWidth: 1,
       flexDirection: 'row',
       gap: 10,
-      paddingHorizontal: 16,
-      paddingVertical: 12,
+      paddingBottom: 8,
+      paddingHorizontal: Layout.screenPadding,
+      paddingTop: 8,
     },
     input: {
-      backgroundColor: colors.surfaceMuted,
+      backgroundColor: colors.background,
       borderColor: colors.inputBorder,
-      borderRadius: 20,
-      borderWidth: 1,
+      borderRadius: Layout.radiusPill,
+      borderWidth: StyleSheet.hairlineWidth,
       color: colors.text,
       flex: 1,
       fontSize: 15,
       maxHeight: 120,
-      paddingHorizontal: 16,
-      paddingTop: Platform.OS === 'ios' ? 12 : 8,
-      paddingBottom: Platform.OS === 'ios' ? 12 : 8,
+      minHeight: 44,
+      paddingHorizontal: 18,
+      paddingVertical: Platform.OS === 'ios' ? 12 : 8,
     },
     sendButton: {
       alignItems: 'center',
       backgroundColor: colors.primary,
-      borderRadius: 20,
-      height: 40,
+      borderRadius: 22,
+      height: 44,
       justifyContent: 'center',
-      width: 40,
+      width: 44,
     },
-    sendButtonDisabled: { opacity: 0.5 },
-    pressed: { opacity: 0.7 },
+    sendButtonDisabled: { opacity: 0.4 },
+    sheetSafeArea: { backgroundColor: colors.background, flex: 1 },
+    sheetHeader: {
+      alignItems: 'center',
+      borderBottomColor: colors.separator,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      paddingHorizontal: Layout.screenPadding,
+      paddingVertical: 12,
+    },
+    sheetTitle: { color: colors.text, fontSize: 18, fontWeight: '600' },
+    sheetContent: { gap: 18, padding: Layout.screenPadding },
+    sheetTabs: { flexDirection: 'row', gap: 20 },
+    sheetTab: { justifyContent: 'center', minHeight: 30 },
+    sheetTabText: { color: colors.textSecondary, fontSize: 14 },
+    sheetTabTextSelected: { color: colors.text, fontWeight: '600' },
+    sheetCaption: { color: colors.textSecondary, ...Type.caption, lineHeight: 19 },
+    sheetChipRow: { flexGrow: 0 },
+    sheetChip: {
+      borderColor: colors.separator,
+      borderRadius: Layout.radiusPill,
+      borderWidth: StyleSheet.hairlineWidth,
+      justifyContent: 'center',
+      marginRight: 8,
+      maxWidth: 200,
+      minHeight: 34,
+      paddingHorizontal: 14,
+    },
+    sheetChipSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
+    sheetChipText: { color: colors.textSecondary, fontSize: 13 },
+    sheetChipTextSelected: { color: colors.onPrimary, fontWeight: '500' },
+    insightBlock: { gap: 12 },
+    insightTitle: { color: colors.text, fontSize: 18, fontWeight: '600' },
+    insightSummary: { color: colors.textSecondary, fontSize: 14, lineHeight: 20 },
+    insightItem: { alignItems: 'flex-start', flexDirection: 'row', gap: 9 },
+    insightBullet: { backgroundColor: colors.textTertiary, borderRadius: 2, height: 4, marginTop: 8, width: 4 },
+    insightItemText: { color: colors.textSecondary, flex: 1, fontSize: 14, lineHeight: 20 },
+    insightNotice: { color: colors.textTertiary, ...Type.footnote, lineHeight: 15 },
+    sheetError: { color: colors.danger, fontSize: 13 },
+    sheetButton: {
+      alignItems: 'center',
+      backgroundColor: colors.primary,
+      borderRadius: Layout.radiusPill,
+      justifyContent: 'center',
+      minHeight: 50,
+    },
+    sheetButtonDisabled: { opacity: 0.5 },
+    sheetButtonText: { color: colors.onPrimary, fontSize: 16, fontWeight: '600' },
+    pressed: { opacity: 0.6 },
   });
 }

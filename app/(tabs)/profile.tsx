@@ -2,8 +2,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
@@ -17,32 +18,66 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { ThemeColors } from '@/constants/theme';
+import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
+import { useLanguage } from '@/context/language-context';
 import { useProfile } from '@/context/profile-context';
 import { ThemePreference } from '@/context/theme-context';
-import { useWorkout } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
-import { TrainingGoal, UserProfile } from '@/types/profile';
-import { calculateDisciplineStreak } from '@/utils/discipline';
-import { cancelRestNotification } from '@/utils/rest-notifications';
+import {
+  getStoragePathFromUrl,
+  ProfileImageKind,
+  ProfileMediaError,
+  removeProfileImagePaths,
+} from '@/services/profile-media';
+import { AppLanguage, TrainingGoal, UserProfile } from '@/types/profile';
+import { cancelAllRestNotifications } from '@/utils/rest-notifications';
+import { clearAllRestTimers } from '@/utils/rest-timer-storage';
 
-const GOAL_OPTIONS: { icon: keyof typeof Ionicons.glyphMap; label: string; value: TrainingGoal }[] = [
-  { icon: 'calendar-outline', label: 'Düzen', value: 'consistency' },
-  { icon: 'flash-outline', label: 'Güç', value: 'strength' },
-  { icon: 'barbell-outline', label: 'Kas', value: 'muscle' },
-  { icon: 'heart-outline', label: 'Form', value: 'fitness' },
+const GOAL_OPTIONS: { glyph: string; labelKey: string; value: TrainingGoal }[] = [
+  { glyph: '📅', labelKey: 'profile.goalConsistency', value: 'consistency' },
+  { glyph: '⚡', labelKey: 'profile.goalStrength', value: 'strength' },
+  { glyph: '🏋️', labelKey: 'profile.goalMuscle', value: 'muscle' },
+  { glyph: '♡', labelKey: 'profile.goalFitness', value: 'fitness' },
+];
+
+const LANGUAGE_OPTIONS: { labelKey: string; value: AppLanguage }[] = [
+  { labelKey: 'profile.languageTurkish', value: 'tr' },
+  { labelKey: 'profile.languageEnglish', value: 'en' },
 ];
 
 export default function ProfileScreen() {
   const { signOut, user } = useAuth();
-  const { profile, restTimerEnabled, saveProfile, setRestTimerEnabled } = useProfile();
-  const { disciplineStatuses, programs } = useWorkout();
+  const { profile, restTimerEnabled, saveProfile, savePreferredLanguage, setRestTimerEnabled, uploadProfileMedia } =
+    useProfile();
   const { colors, isDark, preference, setPreference } = useAppTheme();
+  const { language, setLanguage, t } = useLanguage();
   const styles = createStyles(colors);
   const [draft, setDraft] = useState<UserProfile>(profile);
   const [isSaving, setIsSaving] = useState(false);
-  const disciplineStreak = calculateDisciplineStreak(disciplineStatuses);
+  const [uploadingKind, setUploadingKind] = useState<ProfileImageKind>();
+  // Yüklenmiş ama henüz "Profili kaydet" ile kalıcılaşmamış dosyalar.
+  // Ref kullanılır; unmount temizliği her zaman en güncel değeri görür.
+  const stagedPathsRef = useRef<Partial<Record<ProfileImageKind, string>>>({});
+  const userIdRef = useRef<string | undefined>(user?.id);
+
+  useEffect(() => {
+    userIdRef.current = user?.id;
+  }, [user?.id]);
+
+  useEffect(
+    () => () => {
+      // Kaydetmeden ekrandan çıkıldıysa yalnızca staged dosyalar silinir;
+      // kalıcı olarak kaydedilmiş avatar/banner asla bu listeye girmez.
+      const ownerId = userIdRef.current;
+      const pendingPaths = Object.values(stagedPathsRef.current).filter(Boolean) as string[];
+      stagedPathsRef.current = {};
+      if (ownerId && pendingPaths.length > 0) {
+        void removeProfileImagePaths(pendingPaths, ownerId);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     setDraft(profile);
@@ -52,24 +87,82 @@ export default function ProfileScreen() {
     setDraft((currentDraft) => ({ ...currentDraft, [key]: value }));
   }
 
-  async function pickProfilePhoto() {
+  async function pickProfileImage(kind: ProfileImageKind) {
+    if (uploadingKind) return;
+
     if (Platform.OS !== 'web') {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Galeri izni gerekli', 'Profil fotoğrafı seçebilmek için galeri erişimine izin vermelisin.');
+        Alert.alert(t('profile.permissionTitle'), t('profile.permissionBody'));
         return;
       }
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      allowsEditing: true,
-      aspect: [1, 1],
+      // GIF'in hareketi korunması için kırpma/düzenleme ve yeniden kodlama yok.
+      allowsEditing: false,
       mediaTypes: ['images'],
-      quality: 0.8,
+      // iOS'un GIF'i JPEG gibi uyumlu bir biçime dönüştürmesini engeller.
+      preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
+      quality: 1,
     });
 
-    if (!result.canceled && result.assets[0]) {
-      updateDraft('avatarUri', result.assets[0].uri);
+    if (result.canceled || !result.assets[0]) return;
+    const asset = result.assets[0];
+
+    setUploadingKind(kind);
+    try {
+      // Kalıcı URL yalnızca yükleme tamamlandıktan sonra profile yazılır.
+      const publicUrl = await uploadProfileMedia(kind, {
+        fileName: asset.fileName,
+        fileSize: asset.fileSize,
+        mimeType: asset.mimeType,
+        uri: asset.uri,
+      });
+
+      // Aynı tür için daha önce yüklenip kaydedilmemiş dosya varsa silinir.
+      const previousStagedPath = stagedPathsRef.current[kind];
+      if (previousStagedPath && user?.id) {
+        await removeProfileImagePaths([previousStagedPath], user.id);
+      }
+
+      const stagedPath = user?.id ? getStoragePathFromUrl(publicUrl, user.id) : undefined;
+      stagedPathsRef.current = { ...stagedPathsRef.current, [kind]: stagedPath };
+      updateDraft(kind === 'avatar' ? 'avatarUri' : 'bannerUri', publicUrl);
+    } catch (error) {
+      // Yükleme başarısızsa mevcut çalışan görsel korunur.
+      const code = error instanceof ProfileMediaError ? error.code : 'uploadFailed';
+      Alert.alert(t('profile.uploadFailedTitle'), t(`profile.mediaErrors.${code}`));
+    } finally {
+      setUploadingKind(undefined);
+    }
+  }
+
+  /**
+   * Avatar ve kapak için ortak kaldırma akışı. Yalnızca bu oturumda yüklenip
+   * henüz kaydedilmemiş (staged) dosya hemen Storage'dan silinir; kalıcı
+   * görsel, kullanıcı "Profili kaydet" dediğinde DB güncellemesi başarılı
+   * olduktan sonra context tarafından temizlenir.
+   */
+  async function handleRemoveProfileImage(kind: ProfileImageKind) {
+    const stagedPath = stagedPathsRef.current[kind];
+    // Ref önce temizlenir: unmount temizliği aynı dosyayı ikinci kez silmeye çalışmaz.
+    if (stagedPath) stagedPathsRef.current = { ...stagedPathsRef.current, [kind]: undefined };
+    updateDraft(kind === 'avatar' ? 'avatarUri' : 'bannerUri', undefined);
+
+    const ownerId = user?.id;
+    if (stagedPath && ownerId) {
+      // removeProfileImagePaths yolun kullanıcıya ait olduğunu ayrıca doğrular.
+      await removeProfileImagePaths([stagedPath], ownerId);
+    }
+  }
+
+  async function handleLanguageChange(nextLanguage: AppLanguage) {
+    setLanguage(nextLanguage);
+    try {
+      await savePreferredLanguage(nextLanguage);
+    } catch {
+      Alert.alert(t('profile.languageFailed'), t('common.networkError'));
     }
   }
 
@@ -78,15 +171,12 @@ export default function ProfileScreen() {
     const username = draft.username.trim().replace(/^@/, '').toLocaleLowerCase('tr-TR');
 
     if (!displayName) {
-      Alert.alert('Ad gerekli', 'Profilinde görünecek bir ad yazmalısın.');
+      Alert.alert(t('profile.nameRequiredTitle'), t('profile.nameRequiredBody'));
       return;
     }
 
     if (username && !/^[a-z0-9_]{3,24}$/.test(username)) {
-      Alert.alert(
-        'Kullanıcı adını kontrol et',
-        'Kullanıcı adı 3-24 karakter olmalı; yalnızca küçük harf, sayı ve alt çizgi içerebilir.',
-      );
+      Alert.alert(t('profile.usernameInvalidTitle'), t('profile.usernameInvalidBody'));
       return;
     }
 
@@ -100,13 +190,20 @@ export default function ProfileScreen() {
     setIsSaving(true);
     try {
       await saveProfile(nextProfile);
+      // Dosyalar artık kalıcı: temizlik listesinden çıkarılır ki unmount
+      // sırasında yanlışlıkla silinmesinler.
+      stagedPathsRef.current = {};
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('Profil kaydedildi', 'Değişikliklerin hesabına kaydedildi.');
+      Alert.alert(t('profile.saved'), t('profile.savedBody'));
     } catch (error) {
-      Alert.alert(
-        'Profil kaydedilemedi',
-        error instanceof Error ? error.message : 'Lütfen tekrar dene.',
-      );
+      // Başarısız kayıtta context yeni dosyaları sildi; işaretler tekrar
+      // silmeye çalışılmaması için temizlenir.
+      stagedPathsRef.current = {};
+      if (error instanceof Error && error.message === 'bannerColumnMissing') {
+        Alert.alert(t('profile.bannerNotSupported'), t('profile.bannerNotSupportedBody'));
+        return;
+      }
+      Alert.alert(t('profile.saveFailed'), error instanceof Error ? error.message : t('common.networkError'));
     } finally {
       setIsSaving(false);
     }
@@ -115,21 +212,23 @@ export default function ProfileScreen() {
   async function handleRestTimerToggle(enabled: boolean) {
     try {
       await setRestTimerEnabled(enabled);
-      if (!enabled) await cancelRestNotification();
+      // Ayar kapatılınca planlanmış mola bildirimleri ve yalnızca rest-timer
+      // ön ekine sahip AsyncStorage kayıtları temizlenir; başka veri silinmez.
+      if (!enabled) await Promise.all([cancelAllRestNotifications(), clearAllRestTimers()]);
     } catch {
-      Alert.alert('Ayar kaydedilemedi', 'Mola sayacı ayarını tekrar değiştirmeyi dene.');
+      Alert.alert(t('profile.restTimerFailed'), t('profile.restTimerFailedBody'));
     }
   }
 
   function handleSignOut() {
-    Alert.alert('Çıkış yap', 'Bu cihazdaki Supabase oturumun kapatılacak. Devam etmek istiyor musun?', [
-      { text: 'Vazgeç', style: 'cancel' },
+    Alert.alert(t('profile.signOut'), t('profile.signOutBody'), [
+      { text: t('common.cancel'), style: 'cancel' },
       {
-        text: 'Çıkış yap',
+        text: t('profile.signOut'),
         style: 'destructive',
         onPress: async () => {
           const result = await signOut();
-          if (result.error) Alert.alert('Çıkış yapılamadı', result.error);
+          if (result.error) Alert.alert(t('profile.signOutFailed'), result.error);
         },
       },
     ]);
@@ -138,302 +237,321 @@ export default function ProfileScreen() {
   const avatarLetter = draft.displayName.trim().charAt(0).toLocaleUpperCase('tr-TR') || 'S';
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['bottom']}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.container}>
+    <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
         <ScrollView
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}>
-          <View style={styles.profileCard}>
-            <View style={styles.avatar}>
-              {draft.avatarUri ? (
-                <Image contentFit="cover" source={{ uri: draft.avatarUri }} style={styles.avatarImage} />
+          <View style={styles.bannerSection}>
+            <View style={styles.banner}>
+              {draft.bannerUri ? (
+                <Image autoplay contentFit="cover" source={{ uri: draft.bannerUri }} style={styles.bannerImage} />
               ) : (
-                <Text style={styles.avatarLetter}>{avatarLetter}</Text>
+                <View style={styles.bannerPlaceholder} />
               )}
-            </View>
-            <View style={styles.profileText}>
-              <Text style={styles.name}>{draft.displayName || 'Sporcu'}</Text>
-              <Text style={styles.username}>{draft.username ? `@${draft.username}` : 'Kullanıcı adı eklenmedi'}</Text>
-              {!!draft.bio && <Text style={styles.bio}>{draft.bio}</Text>}
-            </View>
-          </View>
-
-          <View style={styles.statsRow}>
-            <ProfileStat icon="barbell-outline" label="Program" value={String(programs.length)} />
-            <ProfileStat icon="flame-outline" label="Seri" value={`${disciplineStreak} gün`} accent />
-          </View>
-
-          <View style={styles.settingsCard}>
-            <SectionHeader
-              caption="Profilinde görünecek bilgileri düzenle."
-              icon="person-circle-outline"
-              title="Profil bilgileri"
-            />
-
-            <View style={styles.photoEditor}>
-              <View style={styles.photoPreview}>
-                {draft.avatarUri ? (
-                  <Image contentFit="cover" source={{ uri: draft.avatarUri }} style={styles.photoPreviewImage} />
+              <Pressable
+                accessibilityLabel={draft.bannerUri ? t('profile.changeBanner') : t('profile.addBanner')}
+                accessibilityRole="button"
+                disabled={uploadingKind !== undefined}
+                onPress={() => void pickProfileImage('banner')}
+                style={({ pressed }) => [styles.bannerButton, pressed && styles.pressed]}>
+                {uploadingKind === 'banner' ? (
+                  <ActivityIndicator color={colors.text} size="small" />
                 ) : (
-                  <Text style={styles.photoPreviewLetter}>{avatarLetter}</Text>
+                  <Ionicons name="camera-outline" size={18} color={colors.text} />
                 )}
-              </View>
-              <View style={styles.photoEditorText}>
-                <Text style={styles.label}>Profil fotoğrafı</Text>
-                <Text style={styles.caption}>Galeriden kare bir fotoğraf seçebilirsin.</Text>
-                <View style={styles.photoActions}>
+              </Pressable>
+            </View>
+
+            <View style={styles.avatarWrapper}>
+              <Pressable
+                accessibilityLabel={draft.avatarUri ? t('profile.changePhoto') : t('profile.choosePhoto')}
+                accessibilityRole="button"
+                disabled={uploadingKind !== undefined}
+                onPress={() => void pickProfileImage('avatar')}
+                style={({ pressed }) => [styles.avatar, pressed && styles.pressed]}>
+                {draft.avatarUri ? (
+                  <Image autoplay contentFit="cover" source={{ uri: draft.avatarUri }} style={styles.avatarImage} />
+                ) : (
+                  <Text style={styles.avatarLetter}>{avatarLetter}</Text>
+                )}
+                {uploadingKind === 'avatar' && (
+                  <View style={styles.avatarOverlay}>
+                    <ActivityIndicator color={colors.onPrimary} size="small" />
+                  </View>
+                )}
+              </Pressable>
+            </View>
+          </View>
+
+          <Text style={styles.introText}>{t('profile.intro')}</Text>
+
+          <View style={styles.photoRow}>
+            <View style={styles.photoText}>
+              <Text style={styles.photoTitle}>{t('profile.avatar')}</Text>
+              <Text style={styles.caption}>{t('profile.avatarCaption')}</Text>
+              <View style={styles.photoActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={uploadingKind !== undefined}
+                  onPress={() => void pickProfileImage('avatar')}
+                  style={({ pressed }) => [styles.photoButton, pressed && styles.pressed]}>
+                  <Text style={styles.photoButtonGlyph}>🖼</Text>
+                  <Text style={styles.photoButtonText}>
+                    {uploadingKind === 'avatar'
+                      ? t('profile.uploading')
+                      : draft.avatarUri
+                        ? t('profile.changePhoto')
+                        : t('profile.choosePhoto')}
+                  </Text>
+                </Pressable>
+                {draft.avatarUri && (
                   <Pressable
                     accessibilityRole="button"
-                    onPress={pickProfilePhoto}
-                    style={({ pressed }) => [styles.photoButton, pressed && styles.pressed]}>
-                    <Ionicons name="images-outline" size={17} color={colors.primaryIcon} />
-                    <Text style={styles.photoButtonText}>{draft.avatarUri ? 'Değiştir' : 'Fotoğraf seç'}</Text>
+                    onPress={() => void handleRemoveProfileImage('avatar')}
+                    style={({ pressed }) => [styles.removePhotoButton, pressed && styles.pressed]}>
+                    <Text style={styles.removePhotoText}>{t('common.remove')}</Text>
                   </Pressable>
-                  {draft.avatarUri && (
-                    <Pressable
-                      accessibilityRole="button"
-                      onPress={() => updateDraft('avatarUri', undefined)}
-                      style={({ pressed }) => [styles.removePhotoButton, pressed && styles.pressed]}>
-                      <Text style={styles.removePhotoButtonText}>Kaldır</Text>
-                    </Pressable>
-                  )}
-                </View>
+                )}
+                {draft.bannerUri && (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => void handleRemoveProfileImage('banner')}
+                    style={({ pressed }) => [styles.removePhotoButton, pressed && styles.pressed]}>
+                    <Text style={styles.removePhotoText}>{t('profile.removeBanner')}</Text>
+                  </Pressable>
+                )}
               </View>
             </View>
-
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Görünen ad</Text>
-              <TextInput
-                keyboardAppearance={isDark ? 'dark' : 'light'}
-                maxLength={40}
-                onChangeText={(value) => updateDraft('displayName', value)}
-                placeholder="Adın"
-                placeholderTextColor={colors.textTertiary}
-                selectionColor={colors.primary}
-                style={styles.input}
-                value={draft.displayName}
-              />
-            </View>
-
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Kullanıcı adı</Text>
-              <View style={styles.usernameInputRow}>
-                <Text style={styles.atSign}>@</Text>
-                <TextInput
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  keyboardAppearance={isDark ? 'dark' : 'light'}
-                  maxLength={24}
-                  onChangeText={(value) => updateDraft('username', value.replace(/^@/, ''))}
-                  placeholder="kullanici_adi"
-                  placeholderTextColor={colors.textTertiary}
-                  selectionColor={colors.primary}
-                  style={styles.usernameInput}
-                  value={draft.username}
-                />
-              </View>
-            </View>
-
-            <View style={styles.fieldGroup}>
-              <View style={styles.labelRow}>
-                <Text style={styles.label}>Kısa biyografi</Text>
-                <Text style={styles.counter}>{draft.bio.length}/140</Text>
-              </View>
-              <TextInput
-                keyboardAppearance={isDark ? 'dark' : 'light'}
-                maxLength={140}
-                multiline
-                onChangeText={(value) => updateDraft('bio', value)}
-                placeholder="Antrenman hedeflerinden kısaca bahset."
-                placeholderTextColor={colors.textTertiary}
-                selectionColor={colors.primary}
-                style={[styles.input, styles.bioInput]}
-                textAlignVertical="top"
-                value={draft.bio}
-              />
-            </View>
-
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Ana hedefin</Text>
-              <View style={styles.goalOptions}>
-                {GOAL_OPTIONS.map((option) => {
-                  const isSelected = draft.trainingGoal === option.value;
-                  return (
-                    <Pressable
-                      accessibilityRole="radio"
-                      accessibilityState={{ checked: isSelected }}
-                      key={option.value}
-                      onPress={() => updateDraft('trainingGoal', option.value)}
-                      style={({ pressed }) => [
-                        styles.goalOption,
-                        isSelected && styles.goalOptionSelected,
-                        pressed && styles.pressed,
-                      ]}>
-                      <Ionicons
-                        name={option.icon}
-                        size={20}
-                        color={isSelected ? colors.onPrimary : colors.primaryIcon}
-                      />
-                      <Text style={[styles.goalOptionText, isSelected && styles.goalOptionTextSelected]}>
-                        {option.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
-
-            <Pressable
-              accessibilityRole="button"
-              disabled={isSaving}
-              onPress={handleSave}
-              style={({ pressed }) => [styles.saveButton, (pressed || isSaving) && styles.pressed]}>
-              <Ionicons name="checkmark-circle-outline" size={21} color={colors.onPrimary} />
-              <Text style={styles.saveButtonText}>{isSaving ? 'Kaydediliyor…' : 'Profili kaydet'}</Text>
-            </Pressable>
           </View>
 
-          <View style={[styles.settingsCard, styles.appearanceCard]}>
-            <View style={styles.appearanceText}>
-              <Text style={styles.settingTitle}>Görünüm</Text>
-              <Text style={styles.caption}>Uygulamanın renk temasını seç.</Text>
-            </View>
+          <View style={styles.field}>
+            <Text style={styles.label}>{t('profile.displayName')}</Text>
+            <TextInput
+              keyboardAppearance={isDark ? 'dark' : 'light'}
+              maxLength={40}
+              onChangeText={(value) => updateDraft('displayName', value)}
+              placeholder={t('profile.displayNamePlaceholder')}
+              placeholderTextColor={colors.textTertiary}
+              selectionColor={colors.primary}
+              style={styles.input}
+              value={draft.displayName}
+            />
+          </View>
 
-            <View accessibilityRole="radiogroup" style={styles.compactThemeToggle}>
-              <CompactThemeButton
+          <View style={styles.field}>
+            <Text style={styles.label}>{t('profile.username')}</Text>
+            <View style={styles.usernameRow}>
+              <Text style={styles.atSign}>@</Text>
+              <TextInput
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardAppearance={isDark ? 'dark' : 'light'}
+                maxLength={24}
+                onChangeText={(value) => updateDraft('username', value.replace(/^@/, ''))}
+                placeholder={t('profile.usernamePlaceholder')}
+                placeholderTextColor={colors.textTertiary}
+                selectionColor={colors.primary}
+                style={styles.usernameInput}
+                value={draft.username}
+              />
+            </View>
+          </View>
+
+          <View style={styles.field}>
+            <View style={styles.labelRow}>
+              <Text style={styles.label}>{t('profile.bio')}</Text>
+              <Text style={styles.counter}>{draft.bio.length}/140</Text>
+            </View>
+            <TextInput
+              keyboardAppearance={isDark ? 'dark' : 'light'}
+              maxLength={140}
+              multiline
+              onChangeText={(value) => updateDraft('bio', value)}
+              placeholder={t('profile.bioPlaceholder')}
+              placeholderTextColor={colors.textTertiary}
+              selectionColor={colors.primary}
+              style={[styles.input, styles.bioInput]}
+              textAlignVertical="top"
+              value={draft.bio}
+            />
+          </View>
+
+          <View style={styles.field}>
+            <Text style={styles.label}>{t('profile.goal')}</Text>
+            <View accessibilityRole="radiogroup" style={styles.goalOptions}>
+              {GOAL_OPTIONS.map((option) => {
+                const isSelected = draft.trainingGoal === option.value;
+
+                return (
+                  <Pressable
+                    accessibilityLabel={t(option.labelKey)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: isSelected }}
+                    key={option.value}
+                    onPress={() => updateDraft('trainingGoal', option.value)}
+                    style={({ pressed }) => [
+                      styles.goalOption,
+                      isSelected && styles.goalOptionSelected,
+                      pressed && styles.pressed,
+                    ]}>
+                    <Text style={styles.goalGlyph}>{option.glyph}</Text>
+                    <Text style={[styles.goalText, isSelected && styles.goalTextSelected]}>{t(option.labelKey)}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          <Pressable
+            accessibilityRole="button"
+            disabled={isSaving}
+            onPress={handleSave}
+            style={({ pressed }) => [styles.saveButton, (pressed || isSaving) && styles.pressed]}>
+            <Ionicons name="checkmark" size={18} color={colors.onPrimary} />
+            <Text style={styles.saveButtonText}>{isSaving ? t('common.saving') : t('profile.save')}</Text>
+          </Pressable>
+
+          <View style={styles.divider} />
+
+          <View style={styles.settingRow}>
+            <View style={styles.settingText}>
+              <Text style={styles.settingTitle}>{t('profile.language')}</Text>
+              <Text style={styles.caption}>{t('profile.languageCaption')}</Text>
+            </View>
+            <View accessibilityRole="radiogroup" style={styles.languageToggle}>
+              {LANGUAGE_OPTIONS.map((option) => {
+                const isSelected = language === option.value;
+
+                return (
+                  <Pressable
+                    accessibilityLabel={t(option.labelKey)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: isSelected }}
+                    key={option.value}
+                    onPress={() => void handleLanguageChange(option.value)}
+                    style={({ pressed }) => [
+                      styles.languageButton,
+                      isSelected && styles.languageButtonSelected,
+                      pressed && styles.pressed,
+                    ]}>
+                    <Text style={[styles.languageText, isSelected && styles.languageTextSelected]}>
+                      {option.value.toLocaleUpperCase('en-US')}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          <View style={styles.divider} />
+
+          <View style={styles.settingRow}>
+            <View style={styles.settingText}>
+              <Text style={styles.settingTitle}>{t('profile.appearance')}</Text>
+              <Text style={styles.caption}>{t('profile.appearanceCaption')}</Text>
+            </View>
+            <View accessibilityRole="radiogroup" style={styles.themeToggle}>
+              <ThemeButton
+                colors={colors}
                 icon="sunny-outline"
-                label="Açık tema"
+                label={t('profile.themeLight')}
+                onSelect={setPreference}
                 selected={preference === 'light'}
+                styles={styles}
                 value="light"
-                onSelect={setPreference}
               />
-              <CompactThemeButton
+              <ThemeButton
+                colors={colors}
                 icon="phone-portrait-outline"
-                label="Telefonun temasını kullan"
+                label={t('profile.themeSystem')}
+                onSelect={setPreference}
                 selected={preference === 'system'}
+                styles={styles}
                 value="system"
-                onSelect={setPreference}
               />
-              <CompactThemeButton
-                icon="moon-outline"
-                label="Koyu tema"
-                selected={preference === 'dark'}
-                value="dark"
+              <ThemeButton
+                colors={colors}
+                icon="moon"
+                label={t('profile.themeDark')}
                 onSelect={setPreference}
+                selected={preference === 'dark'}
+                styles={styles}
+                value="dark"
               />
             </View>
           </View>
 
-          <View style={[styles.settingsCard, styles.appearanceCard]}>
-            <View style={styles.settingIconCircle}>
-              <Ionicons name="timer-outline" size={20} color={colors.accentText} />
+          <View style={styles.divider} />
+
+          <View style={styles.settingRow}>
+            <View style={styles.settingIcon}>
+              <Ionicons name="time-outline" size={18} color={colors.accent} />
             </View>
-            <View style={styles.appearanceText}>
-              <Text style={styles.settingTitle}>Mola sayacı</Text>
-              <Text style={styles.caption}>Setten sonra dinlenme süresini sayar ve telefonda hatırlatır.</Text>
+            <View style={styles.settingText}>
+              <Text style={styles.settingTitle}>{t('profile.restTimer')}</Text>
+              <Text style={styles.caption}>{t('profile.restTimerCaption')}</Text>
             </View>
             <Switch
-              accessibilityLabel="Mola sayacını aç veya kapat"
+              accessibilityLabel={t('profile.restTimerLabel')}
               onValueChange={(enabled) => void handleRestTimerToggle(enabled)}
-              thumbColor={restTimerEnabled ? colors.onPrimary : colors.textTertiary}
+              thumbColor={Platform.OS === 'android' ? colors.onPrimary : undefined}
               trackColor={{ false: colors.surfaceMuted, true: colors.primary }}
               value={restTimerEnabled}
             />
           </View>
 
-          <View style={styles.accountCard}>
-            <View style={styles.accountInfo}>
-              <Ionicons name="shield-checkmark-outline" size={20} color={colors.disciplineCompleted} />
-              <View style={styles.accountText}>
-                <Text style={styles.accountTitle}>Supabase hesabı bağlı</Text>
-                <Text numberOfLines={1} style={styles.accountEmail}>{user?.email}</Text>
-              </View>
+          <View style={styles.divider} />
+
+          <View style={styles.accountRow}>
+            <Ionicons name="shield-checkmark-outline" size={18} color={colors.disciplineCompleted} />
+            <View style={styles.settingText}>
+              <Text style={styles.settingTitle}>{t('profile.accountConnected')}</Text>
+              <Text numberOfLines={1} style={styles.caption}>
+                {user?.email}
+              </Text>
             </View>
-            <Pressable
-              accessibilityRole="button"
-              onPress={handleSignOut}
-              style={({ pressed }) => [styles.signOutButton, pressed && styles.pressed]}>
-              <Ionicons name="log-out-outline" size={18} color={colors.danger} />
-              <Text style={styles.signOutText}>Çıkış yap</Text>
-            </Pressable>
           </View>
+
+          <Pressable
+            accessibilityRole="button"
+            onPress={handleSignOut}
+            style={({ pressed }) => [styles.signOutButton, pressed && styles.pressed]}>
+            <Ionicons name="log-out-outline" size={18} color={colors.danger} />
+            <Text style={styles.signOutText}>{t('profile.signOut')}</Text>
+          </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
-function ProfileStat({
-  accent = false,
+function ThemeButton({
+  colors,
   icon,
   label,
+  onSelect,
+  selected,
+  styles,
   value,
 }: {
-  accent?: boolean;
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  value: string;
-}) {
-  const { colors } = useAppTheme();
-  const styles = createStyles(colors);
-
-  return (
-    <View style={styles.statCard}>
-      <Ionicons name={icon} size={20} color={accent ? colors.accent : colors.primary} />
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
-    </View>
-  );
-}
-
-function SectionHeader({
-  caption,
-  icon,
-  title,
-}: {
-  caption: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  title: string;
-}) {
-  const { colors } = useAppTheme();
-  const styles = createStyles(colors);
-
-  return (
-    <View style={styles.settingHeader}>
-      <Ionicons name={icon} size={23} color={colors.accent} />
-      <View style={styles.settingHeaderText}>
-        <Text style={styles.settingTitle}>{title}</Text>
-        <Text style={styles.caption}>{caption}</Text>
-      </View>
-    </View>
-  );
-}
-
-type CompactThemeButtonProps = {
+  colors: ThemeColors;
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   onSelect: (preference: ThemePreference) => void;
   selected: boolean;
+  styles: ReturnType<typeof createStyles>;
   value: ThemePreference;
-};
-
-function CompactThemeButton({ icon, label, onSelect, selected, value }: CompactThemeButtonProps) {
-  const { colors } = useAppTheme();
-  const styles = createStyles(colors);
-
+}) {
   return (
     <Pressable
-      accessibilityRole="radio"
       accessibilityLabel={label}
+      accessibilityRole="radio"
       accessibilityState={{ checked: selected }}
       onPress={() => onSelect(value)}
-      style={({ pressed }) => [
-        styles.compactThemeButton,
-        selected && styles.compactThemeButtonSelected,
-        pressed && styles.pressed,
-      ]}>
-      <Ionicons name={icon} size={19} color={selected ? colors.onPrimary : colors.icon} />
+      style={({ pressed }) => [styles.themeButton, selected && styles.themeButtonSelected, pressed && styles.pressed]}>
+      <Ionicons name={icon} size={15} color={selected ? colors.onPrimary : colors.textTertiary} />
     </Pressable>
   );
 }
@@ -441,189 +559,184 @@ function CompactThemeButton({ icon, label, onSelect, selected, value }: CompactT
 function createStyles(colors: ThemeColors) {
   return StyleSheet.create({
     safeArea: { backgroundColor: colors.background, flex: 1 },
-    container: { flex: 1 },
-    content: { gap: 24, padding: 20, paddingBottom: 42 },
-    profileCard: {
-      alignItems: 'center',
-      backgroundColor: colors.surface,
-      borderColor: colors.border,
-      borderBottomWidth: 1,
-      flexDirection: 'row',
-      gap: 14,
-      padding: 20,
+    flex: { flex: 1 },
+    content: { paddingBottom: 40, paddingTop: 0 },
+    introText: {
+      color: colors.textSecondary,
+      ...Type.caption,
+      marginBottom: 22,
+      paddingHorizontal: Layout.screenPadding,
     },
+    bannerSection: { marginBottom: 12 },
+    banner: {
+      aspectRatio: 3,
+      backgroundColor: colors.surfaceMuted,
+      overflow: 'hidden',
+      width: '100%',
+    },
+    bannerImage: { height: '100%', width: '100%' },
+    bannerPlaceholder: { backgroundColor: colors.surfaceMuted, flex: 1 },
+    bannerButton: {
+      alignItems: 'center',
+      backgroundColor: colors.background,
+      borderRadius: 22,
+      height: Layout.minTouchSize,
+      justifyContent: 'center',
+      opacity: 0.9,
+      position: 'absolute',
+      right: 12,
+      top: 12,
+      width: Layout.minTouchSize,
+    },
+    avatarWrapper: { marginTop: -36, paddingHorizontal: Layout.screenPadding },
+    avatarOverlay: {
+      alignItems: 'center',
+      backgroundColor: '#00000099',
+      bottom: 0,
+      justifyContent: 'center',
+      left: 0,
+      position: 'absolute',
+      right: 0,
+      top: 0,
+    },
+    photoRow: { flexDirection: 'row', gap: 14, marginBottom: 24, paddingHorizontal: Layout.screenPadding },
     avatar: {
       alignItems: 'center',
-      backgroundColor: colors.primary,
-      borderRadius: 34,
-      height: 68,
+      backgroundColor: colors.primarySoft,
+      borderColor: colors.background,
+      borderRadius: 40,
+      borderWidth: 4,
+      height: 80,
       justifyContent: 'center',
       overflow: 'hidden',
-      width: 68,
+      width: 80,
     },
     avatarImage: { height: '100%', width: '100%' },
-    avatarLetter: { color: colors.onPrimary, fontSize: 28, fontWeight: '900' },
-    profileText: { flex: 1, gap: 3 },
-    name: { color: colors.onPrimary, fontSize: 23, fontWeight: '900' },
-    username: { color: colors.heroText, fontSize: 13 },
-    bio: { color: colors.heroText, fontSize: 13, lineHeight: 18, marginTop: 4 },
-    statsRow: { flexDirection: 'row', gap: 10 },
-    statCard: {
-      backgroundColor: colors.surface,
-      borderColor: colors.border,
-      borderBottomWidth: 1,
-      flex: 1,
-      gap: 3,
-      padding: 14,
+    avatarLetter: { color: colors.primarySoftText, fontSize: 28, fontWeight: '500' },
+    languageToggle: {
+      backgroundColor: colors.surfaceMuted,
+      borderRadius: Layout.radiusSmall,
+      flexDirection: 'row',
+      gap: 2,
+      padding: 3,
     },
-    statValue: { color: colors.text, fontSize: 19, fontWeight: '800' },
-    statLabel: { color: colors.textSecondary, fontSize: 12 },
-    settingsCard: {
-      backgroundColor: colors.surface,
-      borderColor: colors.border,
-      borderBottomWidth: 1,
-      borderTopWidth: 1,
-      gap: 16,
-      padding: 18,
-    },
-    settingHeader: { alignItems: 'center', flexDirection: 'row', gap: 12 },
-    settingHeaderText: { flex: 1 },
-    settingTitle: { color: colors.text, fontSize: 18, fontWeight: '900' },
-    caption: { color: colors.textSecondary, fontSize: 13, lineHeight: 18, marginTop: 2 },
-    photoEditor: { alignItems: 'flex-start', flexDirection: 'row', gap: 13 },
-    photoPreview: {
+    languageButton: {
       alignItems: 'center',
-      backgroundColor: colors.primarySoft,
-      borderRadius: 28,
-      height: 56,
+      borderRadius: 6,
+      height: 28,
       justifyContent: 'center',
-      overflow: 'hidden',
-      width: 56,
+      paddingHorizontal: 10,
     },
-    photoPreviewImage: { height: '100%', width: '100%' },
-    photoPreviewLetter: { color: colors.primarySoftText, fontSize: 21, fontWeight: '900' },
-    photoEditorText: { flex: 1 },
-    photoActions: { flexDirection: 'row', gap: 8, marginTop: 8 },
+    languageButtonSelected: { backgroundColor: colors.primary },
+    languageText: { color: colors.textTertiary, fontSize: 12, fontWeight: '600' },
+    languageTextSelected: { color: colors.onPrimary },
+    photoText: { flex: 1, gap: 2 },
+    photoTitle: { color: colors.text, fontSize: 15, fontWeight: '600' },
+    caption: { color: colors.textSecondary, fontSize: 12, lineHeight: 17 },
+    photoActions: { alignItems: 'center', flexDirection: 'row', gap: 10, marginTop: 10 },
     photoButton: {
       alignItems: 'center',
-      backgroundColor: colors.primarySoft,
-      borderColor: colors.primarySoftBorder,
-      borderRadius: 9,
-      borderWidth: 1,
-      flexDirection: 'row',
-      gap: 5,
-      paddingHorizontal: 10,
-      paddingVertical: 7,
-    },
-    photoButtonText: { color: colors.primarySoftText, fontSize: 11, fontWeight: '800' },
-    removePhotoButton: { justifyContent: 'center', paddingHorizontal: 6 },
-    removePhotoButtonText: { color: colors.danger, fontSize: 11, fontWeight: '800' },
-    fieldGroup: { gap: 7 },
-    labelRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-    label: { color: colors.text, fontSize: 13, fontWeight: '700' },
-    counter: { color: colors.textTertiary, fontSize: 11 },
-    input: {
-      backgroundColor: colors.surfaceMuted,
-      borderColor: colors.inputBorder,
-      borderRadius: 9,
-      borderWidth: 1,
-      color: colors.text,
-      fontSize: 15,
-      paddingHorizontal: 14,
-      height: 50,
-      paddingVertical: 0,
-    },
-    usernameInputRow: {
-      alignItems: 'center',
-      backgroundColor: colors.surfaceMuted,
-      borderColor: colors.inputBorder,
-      borderRadius: 9,
-      borderWidth: 1,
-      flexDirection: 'row',
-      paddingLeft: 14,
-    },
-    atSign: { color: colors.textSecondary, fontSize: 15, fontWeight: '700' },
-    usernameInput: { color: colors.text, flex: 1, fontSize: 15, paddingHorizontal: 6, paddingVertical: 13 },
-    bioInput: { height: 110, minHeight: 110, paddingVertical: 14 },
-    goalOptions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 3 },
-    goalOption: {
-      alignItems: 'center',
-      backgroundColor: colors.surfaceMuted,
-      borderColor: colors.border,
-      borderRadius: 11,
-      borderWidth: 1,
+      borderColor: colors.primary,
+      borderRadius: Layout.radiusSmall,
+      borderWidth: StyleSheet.hairlineWidth,
       flexDirection: 'row',
       gap: 6,
+      minHeight: 32,
       paddingHorizontal: 12,
-      paddingVertical: 10,
+    },
+    photoButtonGlyph: { fontSize: 12 },
+    photoButtonText: { color: colors.primary, fontSize: 13, fontWeight: '500' },
+    removePhotoButton: { justifyContent: 'center', minHeight: 32 },
+    removePhotoText: { color: colors.danger, fontSize: 13, fontWeight: '500' },
+    field: { paddingHorizontal: Layout.screenPadding, gap: 8, marginBottom: 18 },
+    labelRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+    label: { color: colors.textSecondary, fontSize: 13 },
+    counter: { color: colors.textTertiary, fontSize: 12 },
+    input: {
+      backgroundColor: colors.background,
+      borderColor: colors.inputBorder,
+      borderRadius: Layout.radiusMedium,
+      borderWidth: StyleSheet.hairlineWidth,
+      color: colors.text,
+      fontSize: 15,
+      minHeight: 48,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+    },
+    usernameRow: {
+      alignItems: 'center',
+      backgroundColor: colors.background,
+      borderColor: colors.inputBorder,
+      borderRadius: Layout.radiusMedium,
+      borderWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row',
+      minHeight: 48,
+      paddingHorizontal: 16,
+    },
+    atSign: { color: colors.textSecondary, fontSize: 15 },
+    usernameInput: { color: colors.text, flex: 1, fontSize: 15, paddingHorizontal: 6, paddingVertical: 12 },
+    bioInput: { minHeight: 48 },
+    goalOptions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    goalOption: {
+      alignItems: 'center',
+      borderColor: colors.separator,
+      borderRadius: Layout.radiusPill,
+      borderWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row',
+      gap: 6,
+      minHeight: Layout.minTouchSize,
+      paddingHorizontal: 16,
     },
     goalOptionSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
-    goalOptionText: { color: colors.textSecondary, fontSize: 12, fontWeight: '700' },
-    goalOptionTextSelected: { color: colors.onPrimary },
-    saveButton: {
+    goalGlyph: { fontSize: 13 },
+    goalText: { color: colors.text, fontSize: 14, fontWeight: '400' },
+    goalTextSelected: { color: colors.onPrimary, fontWeight: '500' },
+    saveButton: { marginHorizontal: Layout.screenPadding,
       alignItems: 'center',
       backgroundColor: colors.primary,
-      borderRadius: 9,
+      borderRadius: Layout.radiusPill,
       flexDirection: 'row',
       gap: 8,
       justifyContent: 'center',
-      paddingVertical: 13,
+      marginTop: 8,
+      minHeight: 52,
     },
-    saveButtonText: { color: colors.onPrimary, fontSize: 14, fontWeight: '800' },
-    appearanceCard: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      gap: 12,
-      justifyContent: 'space-between',
-      paddingVertical: 14,
+    saveButtonText: { color: colors.onPrimary, fontSize: 16, fontWeight: '600' },
+    divider: { marginHorizontal: Layout.screenPadding,
+      backgroundColor: colors.separator,
+      height: StyleSheet.hairlineWidth,
+      marginVertical: 22,
     },
-    appearanceText: { flex: 1 },
-    settingIconCircle: {
+    settingRow: { paddingHorizontal: Layout.screenPadding, alignItems: 'center', flexDirection: 'row', gap: 12 },
+    settingIcon: {
       alignItems: 'center',
       backgroundColor: colors.accentSoft,
-      borderRadius: 10,
-      height: 38,
-      justifyContent: 'center',
-      width: 38,
-    },
-    compactThemeToggle: {
-      alignItems: 'center',
-      backgroundColor: colors.surfaceMuted,
-      borderColor: colors.border,
-      borderRadius: 12,
-      borderWidth: 1,
-      flexDirection: 'row',
-      gap: 3,
-      padding: 3,
-    },
-    compactThemeButton: {
-      alignItems: 'center',
-      borderRadius: 8,
+      borderRadius: Layout.radiusSmall,
       height: 34,
       justifyContent: 'center',
       width: 34,
     },
-    compactThemeButtonSelected: { backgroundColor: colors.primary },
-    accountCard: {
-      backgroundColor: colors.surface,
-      borderColor: colors.border,
-      borderBottomWidth: 1,
-      borderTopWidth: 1,
-      gap: 13,
-      padding: 15,
+    settingText: { flex: 1, gap: 2 },
+    settingTitle: { color: colors.text, fontSize: 15, fontWeight: '600' },
+    themeToggle: {
+      backgroundColor: colors.surfaceMuted,
+      borderRadius: Layout.radiusSmall,
+      flexDirection: 'row',
+      gap: 2,
+      padding: 3,
     },
-    accountInfo: { alignItems: 'center', flexDirection: 'row', gap: 10 },
-    accountText: { flex: 1 },
-    accountTitle: { color: colors.text, fontSize: 13, fontWeight: '800' },
-    accountEmail: { color: colors.textSecondary, fontSize: 11, marginTop: 2 },
-    signOutButton: {
+    themeButton: { alignItems: 'center', borderRadius: 6, height: 28, justifyContent: 'center', width: 30 },
+    themeButtonSelected: { backgroundColor: colors.primary },
+    accountRow: { paddingHorizontal: Layout.screenPadding, alignItems: 'center', flexDirection: 'row', gap: 12 },
+    signOutButton: { marginHorizontal: Layout.screenPadding,
       alignItems: 'center',
       alignSelf: 'flex-start',
       flexDirection: 'row',
-      gap: 6,
-      paddingVertical: 4,
+      gap: 8,
+      marginTop: 18,
+      minHeight: Layout.minTouchSize,
     },
-    signOutText: { color: colors.danger, fontSize: 12, fontWeight: '800' },
-    pressed: { opacity: 0.8, transform: [{ scale: 0.98 }] },
+    signOutText: { color: colors.danger, fontSize: 15, fontWeight: '500' },
+    pressed: { opacity: 0.6 },
   });
 }

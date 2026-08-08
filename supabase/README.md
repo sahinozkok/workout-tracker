@@ -1,112 +1,89 @@
-# Supabase veritabanı
+# Supabase Setup
 
-Migration dosyaları `migrations/` klasöründe tarih sırasıyla tutulur. Bu dosyalar veritabanının
-hangi tablolar ve güvenlik kurallarıyla oluşturulduğunun Git geçmişidir.
+This directory contains the PostgreSQL migrations and Edge Function source used by the workout tracker.
 
-## İlk migration'ı Dashboard üzerinden çalıştırma
+## Database Migrations
 
-1. Supabase Dashboard'da projeyi aç.
-2. Sol menüden **SQL Editor** bölümüne gir.
-3. **New query** seç.
-4. `migrations/20260803195000_initial_schema.sql` dosyasının tamamını kopyala.
-5. SQL Editor'a yapıştır ve **Run** düğmesine bas.
-6. Başarı mesajından sonra **Table Editor** bölümünde tabloları kontrol et.
+Migration files in `migrations/` are the versioned history of the database schema and security policies. Apply them in filename order and do not edit a migration after it has been applied remotely.
 
-Beklenen tablolar:
+### Apply migrations through the Dashboard
 
-- `profiles`
-- `programs`
-- `program_days`
-- `program_exercises`
-- `workout_sessions`
-- `workout_sets`
-- `manual_discipline_statuses`
+1. Open the project in the Supabase Dashboard.
+2. Select **SQL Editor** from the left sidebar.
+3. Create a **New query**.
+4. Copy the complete contents of the next migration file into the editor.
+5. Select **Run**.
+6. Confirm that the query succeeds before continuing to the next migration.
 
-Migration dosyalarını dosya adındaki tarih sırasına göre ve yalnızca birer defa çalıştır. Yeni bir
-değişiklik gerektiğinde yeni tarihli migration dosyası oluşturulur; daha önce çalıştırılan migration
-dosyası değiştirilmez.
+The migrations currently cover:
 
-## Profil fotoğrafları
+- Core profile, program, workout, set, and discipline tables
+- Active-program schedule tracking
+- Profile avatar and banner Storage
+- AI request usage records
+- Persistent AI coach messages
+- Turkish and English profile language preferences
+- Animated GIF media support and a 20 MB profile-media limit
 
-Profil fotoğraflarının web ve telefon arasında görünmesi için
-`migrations/20260805093000_add_avatar_storage.sql` dosyasını Supabase SQL Editor'da bir kez çalıştır.
-Bu migration, `avatars` Storage alanını ve kullanıcıların yalnızca kendi fotoğraflarını
-değiştirebilmesini sağlayan güvenlik kurallarını oluşturur.
+## Storage
 
-## Güvenlik
-
-Tüm uygulama tablolarında Row Level Security (RLS) açıktır. `anon` rolünün tablo erişimi kapalıdır.
-Giriş yapan kullanıcılar yalnızca kendi satırlarını okuyabilir ve değiştirebilir.
-
-`service_role` veya database password mobil uygulamaya ve `.env` dosyasına eklenmemelidir.
-
-## Gemini AI Koç kurulumu
-
-Uygulama Gemini anahtarını doğrudan telefonda tutmaz. Akış şu şekildedir:
+Profile avatars and banners are stored in the public `avatars` bucket. Public reads allow profile media to render across devices, while authenticated write policies restrict each user to these paths:
 
 ```text
-Giriş yapmış kullanıcı
-        ↓
-Supabase Edge Function (kullanıcıyı doğrular)
-        ↓
-Kullanıcının kendi antrenman kayıtlarını RLS ile okur
-        ↓
-Gemini API
-        ↓
-Biçimi doğrulanan Türkçe koç yorumu
+<user-id>/avatar/<unique-file-name>
+<user-id>/banner/<unique-file-name>
 ```
 
-### 1. AI kullanım tablosunu oluştur
+The application supports JPEG, PNG, WebP, GIF, HEIC, and HEIF files up to 20 MB. The project-wide Supabase Storage limit must also be at least 20 MB.
 
-Supabase Dashboard içindeki **SQL Editor** bölümünde
-`migrations/20260805153000_add_ai_requests.sql` dosyasını bir kez çalıştır. Bu tablo kullanıcı başına
-günlük istek sınırı ve token kullanım kaydı için kullanılır.
+## Row Level Security
 
-### 2. Gemini anahtarı oluştur
+Row Level Security is enabled on user-owned application tables. The anonymous role does not receive direct table access, and authenticated users can only access their own private records.
 
-Google AI Studio üzerinden bir Gemini API anahtarı oluştur. Anahtarı Expo `.env` dosyasına veya
-GitHub'a koyma.
+Never place a `service_role` key or database password in the Expo `.env` file. Only the publishable Supabase key belongs in the client application.
 
-Supabase Dashboard içinde **Edge Functions → Secrets** bölümüne şu değerleri ekle:
+## Gemini AI Coach
+
+The Gemini API key is stored only in Supabase Edge Function secrets:
 
 ```text
-GEMINI_API_KEY=Google AI Studio anahtarın
-GEMINI_MODEL=gemini-3.6-flash
+GEMINI_API_KEY=your-google-ai-studio-key
+GEMINI_MODEL=your-supported-gemini-model
 AI_DAILY_LIMIT=10
 ```
 
-`GEMINI_MODEL` ve `AI_DAILY_LIMIT` isteğe bağlıdır; yazılmazsa uygulama aynı varsayılan değerleri
-kullanır.
+`GEMINI_MODEL` and `AI_DAILY_LIMIT` are optional. The function uses its configured defaults when they are omitted.
 
-### 3. Edge Function'ı yayınla
+### Deploy through the Dashboard
 
-Supabase CLI ile giriş yapıp projeyi bağladıktan sonra:
+1. Open **Edge Functions** in the Supabase Dashboard.
+2. Select the `workout-coach` function.
+3. Open its **Code** editor.
+4. Replace the deployed source with `functions/workout-coach/index.ts`.
+5. Select **Deploy updates**.
+
+### Deploy with the CLI
 
 ```bash
 npx supabase login
-npx supabase link --project-ref PROJE_KODUN
+npx supabase link --project-ref YOUR_PROJECT_REF
 npx supabase functions deploy workout-coach
 ```
 
-Fonksiyon dosyası `functions/workout-coach/index.ts` konumundadır. Dashboard'daki eski
-**Verify JWT with legacy secret** ayarı kapalıdır. Kimlik doğrulaması fonksiyonun içinde
-`withSupabase({ auth: 'user' })` ile yapılır; giriş yapmamış istekler reddedilir.
-
-### 4. Uygulamada gerçek AI'ı aç
-
-Fonksiyon başarıyla yayınlandıktan sonra Expo `.env` dosyasına yalnızca şu güvenli ayarı ekle:
+After deployment, enable the real provider in the Expo `.env` file:
 
 ```text
 EXPO_PUBLIC_AI_PROVIDER=gemini
 ```
 
-Ardından Expo'yu önbelleği temizleyerek yeniden başlat. Bu ayar yalnızca sağlayıcı seçer; Gemini API
-anahtarını içermez. Kurulum tamamlanana kadar değer `mock` olarak kalabilir.
+Restart Expo with `npx expo start -c` after changing environment variables.
 
-### Koruma önlemleri
+## AI Security Model
 
-- Edge Function yalnızca giriş yapmış kullanıcılar tarafından çağrılabilir.
-- Metrikler telefondan kabul edilmez; kullanıcının Supabase kayıtlarından sunucuda yeniden hesaplanır.
-- Model yanıtı tanımlı JSON biçimine göre doğrulanır.
-- Varsayılan sınır kullanıcı başına son 24 saatte 10 başarılı AI isteğidir.
-- AI yalnızca antrenman verilerini açıklar; tıbbi teşhis veya sakatlık tedavisi sunmaz.
+- The Edge Function requires an authenticated user.
+- Workout metrics are recalculated from the user's Supabase records.
+- Client-provided totals are not trusted.
+- Structured model responses are validated before use.
+- Successful requests are recorded for daily usage limits.
+- Conversation messages are linked with idempotency identifiers to prevent duplicate replies.
+- The AI is instructed not to diagnose injuries or provide medical treatment.

@@ -1,7 +1,8 @@
 import { Platform } from 'react-native';
 
 const REST_NOTIFICATION_CHANNEL = 'rest-timer';
-let pendingRestNotificationId: string | undefined;
+/** Yalnızca bu uygulamanın mola bildirimlerini hedeflemek için kullanılır. */
+export const REST_NOTIFICATION_TYPE = 'workout-tracker/rest-timer';
 
 async function getNotifications() {
   if (Platform.OS === 'web') return undefined;
@@ -28,7 +29,7 @@ async function ensureNotificationPermission() {
 
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync(REST_NOTIFICATION_CHANNEL, {
-      name: 'Mola hatırlatıcıları',
+      name: 'Rest timer',
       importance: Notifications.AndroidImportance.HIGH,
       vibrationPattern: [0, 250, 150, 250],
     });
@@ -41,18 +42,23 @@ async function ensureNotificationPermission() {
   return requestedPermission.status === 'granted' ? Notifications : undefined;
 }
 
-export async function scheduleRestNotification(exerciseName: string, restSeconds: number) {
+/**
+ * Mola bitişi için tek bir bildirim planlar ve kimliğini döndürür. Kimlik,
+ * aktif mola kaydıyla birlikte saklanır; böylece uygulama kapanıp açılsa da
+ * bildirim iptal edilebilir durumda kalır.
+ */
+export async function scheduleRestNotification(
+  restSeconds: number,
+  content: { body: string; title: string },
+): Promise<string | undefined> {
   const Notifications = await ensureNotificationPermission();
-  if (!Notifications) return false;
+  if (!Notifications) return undefined;
 
-  if (pendingRestNotificationId) {
-    await Notifications.cancelScheduledNotificationAsync(pendingRestNotificationId).catch(() => undefined);
-  }
-
-  pendingRestNotificationId = await Notifications.scheduleNotificationAsync({
+  return await Notifications.scheduleNotificationAsync({
     content: {
-      title: 'Mola süren bitti',
-      body: `${exerciseName}: sıradaki sete hazırsın.`,
+      title: content.title,
+      body: content.body,
+      data: { type: REST_NOTIFICATION_TYPE },
       sound: 'default',
     },
     trigger: {
@@ -61,14 +67,39 @@ export async function scheduleRestNotification(exerciseName: string, restSeconds
       channelId: REST_NOTIFICATION_CHANNEL,
     },
   });
-
-  return true;
 }
 
-export async function cancelRestNotification() {
+/** Belirli bir mola bildirimini iptal eder. */
+export async function cancelRestNotification(notificationId?: string) {
   const Notifications = await getNotifications();
-  if (!Notifications || !pendingRestNotificationId) return;
+  if (!Notifications || !notificationId) return;
 
-  await Notifications.cancelScheduledNotificationAsync(pendingRestNotificationId).catch(() => undefined);
-  pendingRestNotificationId = undefined;
+  await Notifications.cancelScheduledNotificationAsync(notificationId).catch(() => undefined);
+}
+
+/**
+ * Yalnızca bu uygulamanın mola bildirimlerini iptal eder; başka türdeki
+ * bildirimler etkilenmez.
+ */
+export async function cancelAllRestNotifications() {
+  const Notifications = await getNotifications();
+  if (!Notifications) return;
+
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync().catch(() => []);
+  await Promise.all(
+    scheduled
+      .filter((notification) => notification.content?.data?.type === REST_NOTIFICATION_TYPE)
+      .map((notification) =>
+        Notifications.cancelScheduledNotificationAsync(notification.identifier).catch(() => undefined),
+      ),
+  );
+}
+
+/** Kaydedilmiş bildirimin işletim sisteminde hâlâ planlı olup olmadığını söyler. */
+export async function isRestNotificationScheduled(notificationId?: string) {
+  const Notifications = await getNotifications();
+  if (!Notifications || !notificationId) return false;
+
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync().catch(() => []);
+  return scheduled.some((notification) => notification.identifier === notificationId);
 }

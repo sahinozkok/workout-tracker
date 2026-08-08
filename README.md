@@ -1,88 +1,156 @@
-# Set Günlüğü
+# Set Gunlugu — Workout Tracker
 
-React Native, Expo ve TypeScript ile geliştirilen bir workout tracker uygulaması.
+A cross-platform workout planning and progress-tracking application built with React Native, Expo, TypeScript, and Supabase. It combines structured workout programming, live session tracking, discipline analytics, persistent profiles, and a Gemini-powered conversational AI coach.
 
-## Çalıştırma
+> This project is under active development and is being built as a production-minded portfolio project.
 
-Gerekenler:
+## Highlights
 
-- Node.js LTS
-- Telefonda Expo Go veya bilgisayarda iOS/Android simülatörü
+- Email and password authentication with persistent Supabase sessions
+- Multi-day workout programs with one active program driving the schedule
+- Exercise library, custom exercises, and bulk exercise selection
+- Long-press drag-and-drop exercise ordering
+- Editable sets, rep ranges, rest periods, icons, emojis, and images
+- Start, pause, resume, and finish workout sessions
+- Persistent workout timer and rest timer with overtime tracking
+- Local rest notifications after completed sets
+- Weekly, monthly, and yearly discipline calendar
+- Completed, partial, skipped, and scheduled rest-day states
+- Workout history, set details, duration, volume, and exercise progress
+- Turkish and English interface localization
+- Light, dark, and system theme preferences
+- Persistent profile avatars and banners, including animated GIF support
+- Conversational AI coach grounded in verified Supabase workout data
+- AI weekly summaries and exercise progress analysis
 
-Projeyi başlat:
+## Tech Stack
 
-```bash
-npm start
-```
+| Area | Technology |
+| --- | --- |
+| Mobile and web | React Native, Expo, React Native Web |
+| Language | TypeScript |
+| Navigation | Expo Router |
+| Backend | Supabase |
+| Database | PostgreSQL |
+| Authentication | Supabase Auth |
+| Media | Supabase Storage, Expo Image, Expo Image Picker |
+| Server logic | Supabase Edge Functions |
+| AI | Google Gemini API |
+| Local persistence | AsyncStorage |
+| Notifications | Expo Notifications |
 
-Terminalde QR kod göründüğünde telefonundaki Expo Go ile okutabilirsin. Bilgisayarda web sürümünü açmak için `w`, iOS simülatörü için `i`, Android emülatörü için `a` tuşuna bas.
-
-## İlk klasör yapısı
+## Architecture
 
 ```text
-app/
-  _layout.tsx          # Uygulamanın ana navigasyon çerçevesi
-  (tabs)/              # Alt menüde görünen ekranlar
-    _layout.tsx        # Alt menünün ayarları
-    index.tsx          # Ana Sayfa
-    programs.tsx       # Programlar
-    history.tsx        # Geçmiş
-    profile.tsx        # Profil
-  program/
-    create.tsx         # Yeni program oluşturma ekranı
-    [id].tsx            # Seçilen programın detay ekranı
-    [id]/day/[dayId]/
-      add-exercise.tsx  # Bir antrenman gününe egzersiz ekleme
+Expo application
+    |
+    +-- Supabase Auth
+    +-- PostgreSQL + Row Level Security
+    +-- Supabase Storage (avatars and profile banners)
+    +-- Supabase Edge Function: workout-coach
+            |
+            +-- Validates the authenticated user
+            +-- Reads verified workout data
+            +-- Applies usage limits
+            +-- Calls the Gemini API
+            +-- Validates and persists the response
 ```
 
-Expo Router'da `app` klasöründeki her ekran dosyası bir sayfadır. `_layout.tsx` dosyaları ise bu sayfaların nasıl gezileceğini belirler.
+The Gemini API key is never included in the Expo application. AI requests are sent through an authenticated Supabase Edge Function.
 
-## Şu anda çalışanlar
+## Getting Started
 
-- Dört sekmeli temel navigasyon
-- İlk çalışan ana ekran
-- Programlar, geçmiş ve profil için başlangıç ekranları
-- Program adı ve antrenman günlerini alan form
-- Oluşturulan programları ekranlar arasında paylaşan React Context yapısı
-- Programları listeleyen ve antrenman günlerini gösteren Programlar ekranı
-- Göğüs, sırt, omuz, kol, bacak, core, tüm vücut ve kardiyo kategorilerini içeren geniş egzersiz kataloğu
-- Egzersiz adına, kas grubuna veya ekipmana göre arama
-- Katalogdan seçim yapmadan kullanıcının kendi egzersiz adını ekleyebilmesi
-- Program günlerine hedef set, tekrar ve dinlenme süresiyle egzersiz ekleme
-- Program detayında egzersizleri görüntüleme ve kaldırma
-- Egzersizleri tutup sürükleyerek istenen sıraya yerleştirme
-- Program ve gün adlarını sonradan düzenleme
-- Farklı günlerde aynı antrenman gün adını kullanabilme (örneğin haftada iki Push Day)
-- Antrenman günlerini Yukarı/Aşağı kontrolleriyle yeniden sıralama
-- Programlar ve günler için 24 ikon, sayı/emoji veya galeri fotoğrafı seçme
-- Program detayından bir güne girerek yalnızca o günün egzersizlerini görüntüleme
-- Egzersizler için ikon, sayı/emoji veya galeri fotoğrafı seçme ve sonradan değiştirme
-- Gün ekranında egzersiz başına tamamlanan set sayacı ve toplam ilerleme çubuğu
-- Antrenmanı başlatma, durdurma, devam ettirme ve bitirme akışı
-- Duraklatıldığında duran, devam edildiğinde kaldığı yerden süren antrenman kronometresi
-- Tamamlanan antrenman sürelerini Geçmiş ekranında görüntüleme
-- Set tamamlandıktan sonra egzersizin dinlenme süresine göre çalışan mola sayacı ve yerel bildirim
-- Egzersiz set/tekrar/dinlenme, görsel, sıra ve silme kontrollerini program detayından yönetme
-- Program günlerini gerçek Pazartesi-Pazar takvimine bağlama
-- Program günlerini Off day olarak işaretleme
-- Set ilerlemesinden otomatik yeşil, turuncu veya gri disiplin durumu hesaplama
-- Off day geldiğinde disiplin takvimini otomatik yeşil işaretleme
-- Birden fazla program arasından takvim ve seri hesabında kullanılacak aktif programı seçme
-- Aktif programın takvim otomasyonunu yalnızca etkinleştirildiği tarihten itibaren uygulama
-- Galeriden profil fotoğrafı seçme, değiştirme ve kaldırma
-- Ana sayfada hafta, ay ve yıl arasında geçiş yapılabilen disiplin takvimi
-- Tamamlandı, eksik tamamlandı ve atlandı durumlarını renkle işaretleme
-- Ad, kullanıcı adı, biyografi ve antrenman hedefi düzenlenebilen profil
-- Güneş, telefon ve ay simgeli küçük görünüm seçiciyle açık, sistem ve koyu tema seçenekleri
-- Profil ekranından mola sayacını açma veya kapatma
-- Supabase bağlantısı ve cihazda saklanan kullanıcı oturumu
-- E-posta ve şifreyle hesap oluşturma, giriş yapma ve çıkış yapma
-- Oturum durumuna göre korunan uygulama ekranları
+### Prerequisites
 
-Programlar, program günleri, egzersiz hedefleri ve aktif program seçimi Supabase hesabında kalıcı olarak saklanır. Galeriden seçilen fotoğraflar henüz Supabase Storage'a yüklenmediği için yalnızca seçildikleri cihazda görüntülenebilir.
+- Node.js LTS
+- npm
+- Expo Go on a physical device, or an iOS/Android simulator
+- A Supabase project
 
-Disiplin takvimindeki planlı program günleri tamamlanan setlerden otomatik hesaplanır. Plansız günler kutulara dokunularak elle işaretlenebilir.
+### Installation
 
-Profil metinleri, antrenman hedefi, mola sayacı ayarı, program yapısı, antrenman süreleri, tamamlanan setler ve elle işaretlenen disiplin günleri Supabase hesabında saklanır. Tema seçimi, aktif mola sayacı ve henüz Storage'a yüklenmeyen yerel fotoğraflar cihazda kalıcı olarak tutulur.
+```bash
+git clone https://github.com/sahinozkok/workout-tracker.git
+cd workout-tracker
+npm install
+cp .env.example .env
+```
 
-Tema, Profil ekranındaki Görünüm bölümünden değiştirilebilir. `Sistem` seçeneği telefonun açık/koyu tema ayarını otomatik takip eder. Seçilen görünüm cihazda saklanır ve uygulama yeniden açıldığında korunur.
+Add your public Supabase project values to `.env`:
+
+```env
+EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
+EXPO_PUBLIC_AI_PROVIDER=mock
+```
+
+Start Expo with a clean development cache:
+
+```bash
+npx expo start -c
+```
+
+Use the QR code with Expo Go, or press `w`, `i`, or `a` to open the web, iOS, or Android target.
+
+## Supabase Setup
+
+Database migrations are stored in [`supabase/migrations`](./supabase/migrations) and must be applied in filename order. They create the workout schema, Row Level Security policies, AI usage records, persistent coach chat, profile localization fields, and the profile media bucket.
+
+See [`supabase/README.md`](./supabase/README.md) for the complete database, Storage, and Edge Function setup.
+
+## AI Coach
+
+The application supports a mock provider for local UI development and Gemini for real responses.
+
+For Gemini:
+
+1. Create a Gemini API key in Google AI Studio.
+2. Store it as `GEMINI_API_KEY` in Supabase Edge Function secrets.
+3. Optionally configure `GEMINI_MODEL` and `AI_DAILY_LIMIT`.
+4. Deploy `supabase/functions/workout-coach/index.ts` as `workout-coach`.
+5. Set `EXPO_PUBLIC_AI_PROVIDER=gemini` in the local `.env` file.
+
+The coach calculates metrics on the server and uses the model to explain them. The mobile client cannot provide trusted workout totals directly.
+
+## Security
+
+- Row Level Security is enabled for user-owned tables.
+- Users can only read and modify their own private workout data.
+- Storage policies restrict uploads and deletion to each user's own folder.
+- The public Expo application only receives the Supabase publishable key.
+- Gemini and Supabase privileged keys stay in server-side secrets.
+- AI messages use idempotency keys to prevent duplicate replies.
+- AI output is validated before it is returned or stored.
+
+## Quality Checks
+
+```bash
+npx tsc --noEmit
+npm run lint
+git diff --check
+```
+
+## Project Structure
+
+```text
+app/                    Expo Router screens
+components/             Reusable interface components
+constants/              Theme, icon, and schedule constants
+context/                Auth, workout, profile, language, and theme state
+data/                   Exercise catalog
+hooks/                  Shared React hooks
+locales/                Turkish and English translations
+services/               Supabase, AI, and profile media services
+supabase/functions/     Authenticated server-side functions
+supabase/migrations/    Database and Storage migrations
+types/                  Shared TypeScript models
+utils/                  Analytics, scheduling, timers, and formatting
+```
+
+## Current Status
+
+The primary workout flow, Supabase persistence, profile media, localization, discipline tracking, workout history, rest timers, and AI coach are functional. Upcoming work includes broader automated testing, offline workout synchronization, accessibility review, and release preparation.
+
+## Disclaimer
+
+The AI coach provides general workout-data explanations and is not a medical professional. It does not diagnose injuries or replace qualified medical or training advice.

@@ -36,5 +36,5 @@ export function WorkoutVisualDisplay({ color, size = 24, visual }: WorkoutVisual
 }
 
 const styles = StyleSheet.create({
-  textVisual: { fontWeight: '900', maxWidth: 46, minWidth: 24, textAlign: 'center' },
+  textVisual: { fontWeight: '600', maxWidth: 46, minWidth: 24, textAlign: 'center' },
 });

@@ -14,8 +14,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { ThemeColors } from '@/constants/theme';
+import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
+import { useTranslation } from '@/context/language-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
 
 type AuthMode = 'login' | 'register';
@@ -23,30 +24,35 @@ type AuthMode = 'login' | 'register';
 export function AuthForm({ mode }: { mode: AuthMode }) {
   const { signIn, signUp } = useAuth();
   const { colors, isDark } = useAppTheme();
+  const { t } = useTranslation();
   const styles = createStyles(colors);
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Kayıt sonrası doğrulama ekranı: kullanıcı yanlışlıkla tekrar kayıt olamaz.
+  const [verificationEmail, setVerificationEmail] = useState<string>();
   const isRegister = mode === 'register';
 
   async function handleSubmit() {
     const normalizedEmail = email.trim().toLocaleLowerCase('tr-TR');
     const normalizedName = displayName.trim();
 
+    if (isSubmitting) return;
+
     if (isRegister && normalizedName.length < 2) {
-      Alert.alert('Adını kontrol et', 'Görünen ad en az 2 karakter olmalı.');
+      Alert.alert(t('auth.invalidNameTitle'), t('auth.invalidNameBody'));
       return;
     }
 
     if (!normalizedEmail.includes('@')) {
-      Alert.alert('E-postanı kontrol et', 'Geçerli bir e-posta adresi yazmalısın.');
+      Alert.alert(t('auth.invalidEmailTitle'), t('auth.invalidEmailBody'));
       return;
     }
 
     if (password.length < 8) {
-      Alert.alert('Şifreni kontrol et', 'Şifren en az 8 karakter olmalı.');
+      Alert.alert(t('auth.invalidPasswordTitle'), t('auth.invalidPasswordBody'));
       return;
     }
 
@@ -55,26 +61,49 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
       if (isRegister) {
         const result = await signUp(normalizedName, normalizedEmail, password);
         if (result.error) {
-          Alert.alert('Hesap oluşturulamadı', getFriendlyAuthError(result.error));
+          Alert.alert(t('auth.registerFailed'), getFriendlyAuthError(result.error, t));
           return;
         }
 
+        // Doğrulama gerekiyorsa kullanıcı uygulamaya alınmaz; bilgi ekranı açılır.
         if (result.needsEmailConfirmation) {
-          Alert.alert(
-            'E-postanı kontrol et',
-            'Hesabını etkinleştirmek için gönderdiğimiz bağlantıya dokun. Sonra giriş yapabilirsin.',
-            [{ text: 'Tamam', onPress: () => router.replace('./login') }],
-          );
+          setVerificationEmail(normalizedEmail);
+          setPassword('');
         }
       } else {
         const result = await signIn(normalizedEmail, password);
-        if (result.error) Alert.alert('Giriş yapılamadı', getFriendlyAuthError(result.error));
+        if (result.error) Alert.alert(t('auth.loginFailed'), getFriendlyAuthError(result.error, t));
       }
     } catch {
-      Alert.alert('Bağlantı kurulamadı', 'İnternet bağlantını kontrol edip tekrar dene.');
+      Alert.alert(t('auth.connectionFailed'), t('auth.connectionFailedBody'));
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  if (verificationEmail) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          <View style={styles.brandIcon}>
+            <Ionicons name="mail-outline" size={30} color={colors.onPrimary} />
+          </View>
+          <View style={styles.heading}>
+            <Text style={styles.eyebrow}>{t('auth.brand')}</Text>
+            <Text style={styles.title}>{t('auth.verifyTitle')}</Text>
+            <Text style={styles.subtitle}>{t('auth.verifyBody', { email: verificationEmail })}</Text>
+            <Text style={styles.subtitle}>{t('auth.verifyHint')}</Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => router.replace('./login')}
+            style={({ pressed }) => [styles.submitButton, pressed && styles.pressed]}>
+            <Text style={styles.submitButtonText}>{t('auth.backToLogin')}</Text>
+            <Ionicons name="arrow-forward" size={18} color={colors.onPrimary} />
+          </Pressable>
+        </ScrollView>
+      </SafeAreaView>
+    );
   }
 
   return (
@@ -89,25 +118,25 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
           </View>
 
           <View style={styles.heading}>
-            <Text style={styles.eyebrow}>SET GÜNLÜĞÜ</Text>
-            <Text style={styles.title}>{isRegister ? 'Hesabını oluştur' : 'Tekrar hoş geldin'}</Text>
+            <Text style={styles.eyebrow}>{t('auth.brand')}</Text>
+            <Text style={styles.title}>{isRegister ? t('auth.registerTitle') : t('auth.loginTitle')}</Text>
             <Text style={styles.subtitle}>
               {isRegister
-                ? 'Programlarını ve antrenman geçmişini hesabında güvenle sakla.'
-                : 'Programlarına ve antrenman geçmişine devam etmek için giriş yap.'}
+                ? t('auth.registerSubtitle')
+                : t('auth.loginSubtitle')}
             </Text>
           </View>
 
           <View style={styles.formCard}>
             {isRegister && (
               <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Görünen ad</Text>
+                <Text style={styles.label}>{t('auth.displayName')}</Text>
                 <TextInput
                   autoComplete="name"
                   keyboardAppearance={isDark ? 'dark' : 'light'}
                   maxLength={40}
                   onChangeText={setDisplayName}
-                  placeholder="Adın"
+                  placeholder={t('auth.displayNamePlaceholder')}
                   placeholderTextColor={colors.textTertiary}
                   selectionColor={colors.primary}
                   style={styles.input}
@@ -117,7 +146,7 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
             )}
 
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>E-posta</Text>
+              <Text style={styles.label}>{t('auth.email')}</Text>
               <TextInput
                 autoCapitalize="none"
                 autoComplete="email"
@@ -125,7 +154,7 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
                 keyboardAppearance={isDark ? 'dark' : 'light'}
                 keyboardType="email-address"
                 onChangeText={setEmail}
-                placeholder="ornek@email.com"
+                placeholder={t('auth.emailPlaceholder')}
                 placeholderTextColor={colors.textTertiary}
                 selectionColor={colors.primary}
                 style={styles.input}
@@ -134,14 +163,14 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
             </View>
 
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Şifre</Text>
+              <Text style={styles.label}>{t('auth.password')}</Text>
               <View style={styles.passwordRow}>
                 <TextInput
                   autoCapitalize="none"
                   autoComplete={isRegister ? 'new-password' : 'current-password'}
                   keyboardAppearance={isDark ? 'dark' : 'light'}
                   onChangeText={setPassword}
-                  placeholder="En az 8 karakter"
+                  placeholder={t('auth.passwordPlaceholder')}
                   placeholderTextColor={colors.textTertiary}
                   secureTextEntry={!showPassword}
                   selectionColor={colors.primary}
@@ -149,7 +178,7 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
                   value={password}
                 />
                 <Pressable
-                  accessibilityLabel={showPassword ? 'Şifreyi gizle' : 'Şifreyi göster'}
+                  accessibilityLabel={showPassword ? t('auth.hidePassword') : t('auth.showPassword')}
                   accessibilityRole="button"
                   onPress={() => setShowPassword((current) => !current)}
                   style={styles.showPasswordButton}>
@@ -164,7 +193,7 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
               onPress={() => void handleSubmit()}
               style={({ pressed }) => [styles.submitButton, (pressed || isSubmitting) && styles.pressed]}>
               <Text style={styles.submitButtonText}>
-                {isSubmitting ? 'Lütfen bekle…' : isRegister ? 'Hesap oluştur' : 'Giriş yap'}
+                {isSubmitting ? t('common.loading') : isRegister ? t('auth.register') : t('auth.login')}
               </Text>
               <Ionicons name="arrow-forward" size={19} color={colors.onPrimary} />
             </Pressable>
@@ -172,12 +201,12 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
 
           <View style={styles.switchModeRow}>
             <Text style={styles.switchModeText}>
-              {isRegister ? 'Zaten hesabın var mı?' : 'Henüz hesabın yok mu?'}
+              {isRegister ? t('auth.hasAccount') : t('auth.noAccount')}
             </Text>
             <Pressable
               accessibilityRole="link"
               onPress={() => router.replace(isRegister ? './login' : './register')}>
-              <Text style={styles.switchModeLink}>{isRegister ? 'Giriş yap' : 'Hesap oluştur'}</Text>
+              <Text style={styles.switchModeLink}>{isRegister ? t('auth.goLogin') : t('auth.goRegister')}</Text>
             </Pressable>
           </View>
         </ScrollView>
@@ -186,78 +215,76 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
   );
 }
 
-function getFriendlyAuthError(message: string) {
+/** Ham Supabase mesajları kullanıcıya gösterilmez; seçilen dile çevrilir. */
+function getFriendlyAuthError(message: string, t: (key: string) => string) {
   const normalizedMessage = message.toLocaleLowerCase('en-US');
-  if (normalizedMessage.includes('invalid login credentials')) return 'E-posta veya şifre hatalı.';
-  if (normalizedMessage.includes('email not confirmed')) return 'Önce e-posta adresini doğrulamalısın.';
-  if (normalizedMessage.includes('already registered')) return 'Bu e-posta adresiyle daha önce hesap oluşturulmuş.';
-  if (normalizedMessage.includes('password')) return 'Şifre güvenlik koşullarını karşılamıyor.';
-  if (normalizedMessage.includes('rate limit')) return 'Çok fazla deneme yapıldı. Biraz bekleyip tekrar dene.';
-  return message;
+  if (normalizedMessage.includes('invalid login credentials')) return t('auth.errors.invalidCredentials');
+  if (normalizedMessage.includes('email not confirmed')) return t('auth.errors.emailNotConfirmed');
+  if (normalizedMessage.includes('already registered') || normalizedMessage.includes('already exists')) {
+    return t('auth.errors.userExists');
+  }
+  if (normalizedMessage.includes('password')) return t('auth.errors.weakPassword');
+  if (normalizedMessage.includes('rate limit')) return t('auth.errors.rateLimited');
+  return t('auth.errors.generic');
 }
 
 function createStyles(colors: ThemeColors) {
   return StyleSheet.create({
     flex: { flex: 1 },
     safeArea: { backgroundColor: colors.background, flex: 1 },
-    content: { flexGrow: 1, justifyContent: 'center', padding: 24, paddingBottom: 40 },
+    content: { flexGrow: 1, justifyContent: 'center', padding: Layout.screenPadding, paddingBottom: 40 },
     brandIcon: {
       alignItems: 'center',
       backgroundColor: colors.primary,
-      borderRadius: 20,
-      height: 64,
+      borderRadius: 16,
+      height: 56,
       justifyContent: 'center',
       marginBottom: 24,
-      width: 64,
+      width: 56,
     },
-    heading: { marginBottom: 22 },
-    eyebrow: { color: colors.accent, fontSize: 11, fontWeight: '900', letterSpacing: 1.4 },
-    title: { color: colors.text, fontSize: 30, fontWeight: '900', marginTop: 6 },
-    subtitle: { color: colors.textSecondary, fontSize: 14, lineHeight: 21, marginTop: 8 },
-    formCard: {
-      backgroundColor: colors.surface,
-      borderColor: colors.border,
-      borderRadius: 20,
-      borderWidth: 1,
-      gap: 16,
-      padding: 18,
-    },
-    fieldGroup: { gap: 7 },
-    label: { color: colors.text, fontSize: 13, fontWeight: '800' },
+    heading: { marginBottom: 26 },
+    eyebrow: { color: colors.textSecondary, ...Type.eyebrow },
+    title: { color: colors.text, ...Type.pageTitle, marginTop: 8 },
+    subtitle: { color: colors.textSecondary, ...Type.caption, lineHeight: 19, marginTop: 8 },
+    formCard: { gap: 18 },
+    fieldGroup: { gap: 8 },
+    label: { color: colors.textSecondary, fontSize: 13 },
     input: {
-      backgroundColor: colors.surfaceMuted,
+      backgroundColor: colors.background,
       borderColor: colors.inputBorder,
-      borderRadius: 12,
-      borderWidth: 1,
+      borderRadius: Layout.radiusMedium,
+      borderWidth: StyleSheet.hairlineWidth,
       color: colors.text,
       fontSize: 15,
-      paddingHorizontal: 13,
-      paddingVertical: 13,
+      minHeight: 48,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
     },
     passwordRow: {
       alignItems: 'center',
-      backgroundColor: colors.surfaceMuted,
+      backgroundColor: colors.background,
       borderColor: colors.inputBorder,
-      borderRadius: 12,
-      borderWidth: 1,
+      borderRadius: Layout.radiusMedium,
+      borderWidth: StyleSheet.hairlineWidth,
       flexDirection: 'row',
+      minHeight: 48,
     },
-    passwordInput: { color: colors.text, flex: 1, fontSize: 15, paddingHorizontal: 13, paddingVertical: 13 },
-    showPasswordButton: { padding: 12 },
+    passwordInput: { color: colors.text, flex: 1, fontSize: 15, paddingHorizontal: 16, paddingVertical: 12 },
+    showPasswordButton: { alignItems: 'center', height: 44, justifyContent: 'center', width: 44 },
     submitButton: {
       alignItems: 'center',
       backgroundColor: colors.primary,
-      borderRadius: 12,
+      borderRadius: Layout.radiusPill,
       flexDirection: 'row',
       gap: 8,
       justifyContent: 'center',
-      marginTop: 3,
-      paddingVertical: 14,
+      marginTop: 6,
+      minHeight: 52,
     },
-    submitButtonText: { color: colors.onPrimary, fontSize: 14, fontWeight: '900' },
-    switchModeRow: { alignItems: 'center', flexDirection: 'row', gap: 6, justifyContent: 'center', marginTop: 20 },
-    switchModeText: { color: colors.textSecondary, fontSize: 13 },
-    switchModeLink: { color: colors.primaryIcon, fontSize: 13, fontWeight: '900' },
-    pressed: { opacity: 0.7 },
+    submitButtonText: { color: colors.onPrimary, fontSize: 16, fontWeight: '600' },
+    switchModeRow: { alignItems: 'center', flexDirection: 'row', gap: 6, justifyContent: 'center', marginTop: 24 },
+    switchModeText: { color: colors.textSecondary, fontSize: 14 },
+    switchModeLink: { color: colors.primary, fontSize: 14, fontWeight: '600' },
+    pressed: { opacity: 0.6 },
   });
 }
