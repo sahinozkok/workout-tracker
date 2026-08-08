@@ -6,6 +6,7 @@ import { Alert, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'r
 import { WorkoutVisualDisplay } from '@/components/workout-visual-display';
 import { PROGRAM_ICON_OPTIONS } from '@/constants/program-icons';
 import { ThemeColors } from '@/constants/theme';
+import { useTranslation } from '@/context/language-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import { WorkoutVisual } from '@/types/workout';
 
@@ -16,6 +17,7 @@ type WorkoutVisualPickerProps = {
 
 export function WorkoutVisualPicker({ onSelect, selectedVisual }: WorkoutVisualPickerProps) {
   const { colors, isDark } = useAppTheme();
+  const { t } = useTranslation();
   const styles = createStyles(colors);
   const [textValue, setTextValue] = useState(selectedVisual.type === 'text' ? selectedVisual.text : '');
   const [iconsOpen, setIconsOpen] = useState(false);
@@ -27,7 +29,7 @@ export function WorkoutVisualPicker({ onSelect, selectedVisual }: WorkoutVisualP
   function applyTextVisual() {
     const trimmedValue = Array.from(textValue.trim()).slice(0, 4).join('');
     if (!trimmedValue) {
-      Alert.alert('Sayı veya emoji gerekli', 'Örneğin “1”, “A” veya “🔥” yazabilirsin.');
+      Alert.alert(t('components.numberOrEmojiRequired'), t('components.numberOrEmojiBody'));
       return;
     }
 
@@ -40,7 +42,7 @@ export function WorkoutVisualPicker({ onSelect, selectedVisual }: WorkoutVisualP
     if (Platform.OS !== 'web') {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Galeri izni gerekli', 'Fotoğraf seçebilmek için galeri erişimine izin vermelisin.');
+        Alert.alert(t('components.galleryPermission'), t('components.galleryPermissionBody'));
         return;
       }
     }
@@ -62,7 +64,7 @@ export function WorkoutVisualPicker({ onSelect, selectedVisual }: WorkoutVisualP
     <View style={styles.container}>
       <View style={styles.mainRow}>
         <Pressable
-          accessibilityLabel="Galeriden fotoğraf seç"
+          accessibilityLabel={t('a11y.selectPhoto')}
           accessibilityRole="button"
           onPress={() => void pickImage()}
           style={({ pressed }) => [
@@ -78,14 +80,14 @@ export function WorkoutVisualPicker({ onSelect, selectedVisual }: WorkoutVisualP
         </Pressable>
 
         <View style={styles.textArea}>
-          <Text style={styles.textLabel}>Sayı veya emoji kullan</Text>
+          <Text style={styles.textLabel}>{t('components.useNumberOrEmoji')}</Text>
           <TextInput
             autoCorrect={false}
             keyboardAppearance={isDark ? 'dark' : 'light'}
             maxLength={8}
             onChangeText={setTextValue}
             onSubmitEditing={applyTextVisual}
-            placeholder="Örn. 1 veya 🔥"
+            placeholder={t('visualPicker.textPlaceholder')}
             placeholderTextColor={colors.textTertiary}
             selectionColor={colors.primary}
             style={[styles.textInput, selectedVisual.type === 'text' && styles.selectedInput]}
@@ -94,7 +96,7 @@ export function WorkoutVisualPicker({ onSelect, selectedVisual }: WorkoutVisualP
         </View>
 
         <Pressable
-          accessibilityLabel="Hazır ikonları göster"
+          accessibilityLabel={t('a11y.openIconList')}
           accessibilityRole="button"
           accessibilityState={{ expanded: iconsOpen }}
           onPress={() => setIconsOpen((currentValue) => !currentValue)}
@@ -110,20 +112,20 @@ export function WorkoutVisualPicker({ onSelect, selectedVisual }: WorkoutVisualP
           accessibilityRole="button"
           onPress={applyTextVisual}
           style={({ pressed }) => [styles.applyButton, pressed && styles.pressed]}>
-          <Text style={styles.applyButtonText}>Uygula</Text>
+          <Text style={styles.applyButtonText}>{t('components.apply')}</Text>
         </Pressable>
       </View>
 
       {iconsOpen && (
         <View style={styles.iconPanel}>
-          <Text style={styles.iconPanelTitle}>Hazır ikonlar</Text>
+          <Text style={styles.iconPanelTitle}>{t('components.readyIcons')}</Text>
           <View style={styles.iconGrid}>
             {PROGRAM_ICON_OPTIONS.map((option) => {
               const isSelected = selectedVisual.type === 'icon' && selectedVisual.icon === option.icon;
 
               return (
                 <Pressable
-                  accessibilityLabel={`${option.label} simgesi`}
+                  accessibilityLabel={t('a11y.selectIcon', { name: t(option.labelKey) })}
                   accessibilityRole="radio"
                   accessibilityState={{ checked: isSelected }}
                   key={option.icon}
@@ -168,7 +170,7 @@ function createStyles(colors: ThemeColors) {
     },
     selectedControl: { backgroundColor: colors.primarySoft },
     textArea: { flex: 1, gap: 4, minWidth: 92 },
-    textLabel: { color: colors.text, fontSize: 9, fontWeight: '800' },
+    textLabel: { color: colors.text, fontSize: 9, fontWeight: '500' },
     textInput: {
       backgroundColor: colors.surfaceMuted,
       borderColor: colors.border,
@@ -200,7 +202,7 @@ function createStyles(colors: ThemeColors) {
       justifyContent: 'center',
       paddingHorizontal: 12,
     },
-    applyButtonText: { color: colors.onPrimary, fontSize: 11, fontWeight: '900' },
+    applyButtonText: { color: colors.onPrimary, fontSize: 11, fontWeight: '600' },
     iconPanel: {
       backgroundColor: colors.surface,
       borderColor: colors.border,
@@ -209,7 +211,7 @@ function createStyles(colors: ThemeColors) {
       gap: 10,
       padding: 10,
     },
-    iconPanelTitle: { color: colors.textSecondary, fontSize: 11, fontWeight: '800' },
+    iconPanelTitle: { color: colors.textSecondary, fontSize: 11, fontWeight: '500' },
     iconGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
     iconOption: {
       alignItems: 'center',

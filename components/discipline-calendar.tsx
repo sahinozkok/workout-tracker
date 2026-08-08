@@ -1,30 +1,19 @@
 import { useMemo, useState } from 'react';
 import { Alert, AlertButton, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { ThemeColors } from '@/constants/theme';
+import { ThemeColors, Type } from '@/constants/theme';
+import { useTranslation } from '@/context/language-context';
 import { useWorkout } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import { DisciplineStatus } from '@/types/workout';
+import { getWeekdayShortLabel, WEEKDAY_VALUES } from '@/constants/weekdays';
 import { toDateKey } from '@/utils/discipline';
 import { getSetProgressKey } from '@/utils/workout-schedule';
 import { formatDuration } from '@/utils/workout-session';
 
 type CalendarPeriod = 'week' | 'month' | 'year';
 
-const PERIOD_OPTIONS: { label: string; value: CalendarPeriod }[] = [
-  { label: 'Hafta', value: 'week' },
-  { label: 'Ay', value: 'month' },
-  { label: 'Yıl', value: 'year' },
-];
-
-const WEEKDAY_LABELS = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'];
-const YEAR_WEEKDAY_LABELS = ['Pzt', '', 'Çar', '', 'Cum', '', 'Paz'];
-
-const STATUS_LABELS: Record<DisciplineStatus, string> = {
-  completed: 'Tamamlandı',
-  partial: 'Eksik tamamlandı',
-  skipped: 'Atlandı',
-};
+const PERIOD_VALUES: CalendarPeriod[] = ['week', 'month', 'year'];
 
 export function DisciplineCalendar() {
   const {
@@ -37,7 +26,21 @@ export function DisciplineCalendar() {
     workoutSessions,
   } = useWorkout();
   const { colors } = useAppTheme();
+  const { locale, t } = useTranslation();
   const styles = createStyles(colors);
+  const weekdayLabels = useMemo(() => WEEKDAY_VALUES.map((value) => getWeekdayShortLabel(value, locale)), [locale]);
+  const yearWeekdayLabels = useMemo(
+    () => weekdayLabels.map((label, index) => (index % 2 === 0 ? label : '')),
+    [weekdayLabels],
+  );
+  const statusLabels = useMemo<Record<DisciplineStatus, string>>(
+    () => ({
+      completed: t('calendar.completed'),
+      partial: t('calendar.partialFull'),
+      skipped: t('calendar.skipped'),
+    }),
+    [t],
+  );
   const [period, setPeriod] = useState<CalendarPeriod>('week');
   const [pendingDateKey, setPendingDateKey] = useState<string>();
   const today = useMemo(() => startOfDay(new Date()), []);
@@ -51,8 +54,8 @@ export function DisciplineCalendar() {
       await cycleDisciplineStatus(dateKey);
     } catch (error) {
       Alert.alert(
-        'Takvim kaydedilemedi',
-        error instanceof Error ? error.message : 'Lütfen internet bağlantını kontrol edip tekrar dene.',
+        t('calendar.saveFailed'),
+        error instanceof Error ? error.message : t('common.networkError'),
       );
     } finally {
       setPendingDateKey(undefined);
@@ -81,87 +84,107 @@ export function DisciplineCalendar() {
       (session) => session.dateKey === dateKey && session.status === 'completed',
     );
     const planLabel = scheduledDays.length
-      ? scheduledDays.map((day) => (day.isOffDay ? `${day.name} (dinlenme)` : day.name)).join(', ')
-      : 'Planlanmış antrenman yok';
-    const statusLabel = status ? STATUS_LABELS[status] : 'İşaretlenmedi';
+      ? scheduledDays
+          .map((day) => (day.isOffDay ? t('calendar.restSuffix', { name: day.name }) : day.name))
+          .join(', ')
+      : t('calendar.noPlannedWorkout');
+    const statusLabel = status ? statusLabels[status] : t('calendar.unmarked');
     const detailLines = [
-      `Durum: ${statusLabel}`,
-      `Plan: ${planLabel}`,
-      totalSets > 0 ? `İlerleme: ${completedSets}/${totalSets} set` : undefined,
-      completedSession ? `Süre: ${formatDuration(completedSession.accumulatedDurationSeconds)}` : undefined,
+      t('calendar.status', { status: statusLabel }),
+      t('calendar.plan', { plan: planLabel }),
+      totalSets > 0 ? t('calendar.progress', { completed: completedSets, total: totalSets }) : undefined,
+      completedSession
+        ? t('calendar.duration', { duration: formatDuration(completedSession.accumulatedDurationSeconds) })
+        : undefined,
     ].filter(Boolean);
-    const buttons: AlertButton[] = [{ text: 'Kapat', style: 'cancel' }];
+    const buttons: AlertButton[] = [{ text: t('common.close'), style: 'cancel' }];
 
     if (!isScheduled) {
-      buttons.push({ text: 'Durumu değiştir', onPress: () => void cycleStatus(dateKey) });
+      buttons.push({ text: t('calendar.changeStatus'), onPress: () => void cycleStatus(dateKey) });
     }
 
     Alert.alert(
-      date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' }),
+      date.toLocaleDateString(locale, { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' }),
       detailLines.join('\n'),
       buttons,
     );
   }
 
+  function getAccessibilityLabel(date: Date, status: DisciplineStatus | undefined, isFuture: boolean) {
+    const dateLabel = date.toLocaleDateString(locale, { day: 'numeric', month: 'long', year: 'numeric' });
+    if (isFuture) return `${dateLabel}, ${t('calendar.futureDay')}`;
+    return `${dateLabel}, ${status ? statusLabels[status] : t('calendar.unmarked')}`;
+  }
+
   return (
-    <View style={styles.card}>
+    <View style={styles.section}>
       <View style={styles.header}>
-        <View style={styles.headerText}>
-          <Text style={styles.title}>Disiplin takvimi</Text>
-          <Text style={styles.periodLabel}>{getPeriodLabel(period, today)}</Text>
-        </View>
-
-        <View style={styles.periodPicker}>
-          {PERIOD_OPTIONS.map((option) => {
-            const isSelected = option.value === period;
-
-            return (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityState={{ selected: isSelected }}
-                key={option.value}
-                onPress={() => setPeriod(option.value)}
-                style={({ pressed }) => [
-                  styles.periodButton,
-                  isSelected && styles.periodButtonSelected,
-                  pressed && styles.pressed,
-                ]}>
-                <Text style={[styles.periodButtonText, isSelected && styles.periodButtonTextSelected]}>
-                  {option.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
+        <Text style={styles.title}>{t('calendar.title')}</Text>
+        <Text style={styles.periodLabel}>{getPeriodLabel(period, today, locale, t)}</Text>
       </View>
 
-      {period === 'year' ? (
+      <View accessibilityRole="tablist" style={styles.periodPicker}>
+        {PERIOD_VALUES.map((option) => {
+          const isSelected = option === period;
+
+          return (
+            <Pressable
+              accessibilityRole="tab"
+              accessibilityState={{ selected: isSelected }}
+              hitSlop={8}
+              key={option}
+              onPress={() => setPeriod(option)}
+              style={({ pressed }) => [styles.periodButton, pressed && styles.pressed]}>
+              <Text style={[styles.periodButtonText, isSelected && styles.periodButtonTextSelected]}>
+                {t(`calendar.${option}`)}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {period === 'week' ? (
+        <WeekStrip
+          colors={colors}
+          dates={dates}
+          getLabel={getAccessibilityLabel}
+          onDayPress={handleDayPress}
+          statuses={disciplineStatuses}
+          styles={styles}
+          today={today}
+          weekdayLabels={weekdayLabels}
+        />
+      ) : period === 'year' ? (
         <YearGrid
           colors={colors}
           dates={dates}
+          getLabel={getAccessibilityLabel}
+          locale={locale}
           onDayPress={handleDayPress}
           statuses={disciplineStatuses}
           styles={styles}
           today={today}
+          weekdayLabels={yearWeekdayLabels}
         />
       ) : (
-        <WeekOrMonthGrid
+        <MonthGrid
           colors={colors}
           dates={dates}
-          month={period === 'month' ? today.getMonth() : undefined}
+          getLabel={getAccessibilityLabel}
+          month={today.getMonth()}
           onDayPress={handleDayPress}
           statuses={disciplineStatuses}
           styles={styles}
           today={today}
+          weekdayLabels={weekdayLabels}
         />
       )}
 
       <View style={styles.legend}>
-        <LegendItem color={colors.disciplineCompleted} label="Tamamlandı" styles={styles} />
-        <LegendItem color={colors.disciplinePartial} label="Eksik" styles={styles} />
-        <LegendItem color={colors.disciplineSkipped} label="Atlandı" styles={styles} />
+        <LegendItem color={colors.disciplineCompleted} label={t('calendar.completed')} styles={styles} />
+        <LegendItem color={colors.disciplinePartial} label={t('calendar.partial')} styles={styles} />
+        <LegendItem color={colors.disciplineSkipped} label={t('calendar.skipped')} styles={styles} />
       </View>
-
     </View>
   );
 }
@@ -169,62 +192,124 @@ export function DisciplineCalendar() {
 type GridProps = {
   colors: ThemeColors;
   dates: Date[];
+  getLabel: (date: Date, status: DisciplineStatus | undefined, isFuture: boolean) => string;
   onDayPress: (dateKey: string) => void;
   statuses: Record<string, DisciplineStatus>;
   styles: ReturnType<typeof createStyles>;
   today: Date;
+  weekdayLabels: string[];
 };
 
-function WeekOrMonthGrid({
+function WeekStrip({ colors, dates, getLabel, onDayPress, statuses, styles, today, weekdayLabels }: GridProps) {
+  return (
+    <View style={styles.weekStrip}>
+      <View style={styles.weekLine} />
+      <View style={styles.weekRow}>
+        {dates.map((date, index) => {
+          const dateKey = toDateKey(date);
+          const status = statuses[dateKey];
+          const isFuture = date.getTime() > today.getTime();
+          const isToday = date.getTime() === today.getTime();
+          const filled = !isFuture && status !== undefined;
+
+          return (
+            <View key={dateKey} style={styles.weekCell}>
+              <Pressable
+                accessibilityLabel={getLabel(date, status, isFuture)}
+                accessibilityRole="button"
+                disabled={isFuture}
+                hitSlop={6}
+                onPress={() => onDayPress(dateKey)}
+                style={({ pressed }) => [
+                  styles.dayCircle,
+                  { backgroundColor: filled ? getStatusColor(colors, status, isFuture) : colors.background },
+                  !filled && styles.dayCircleOutlined,
+                  isToday && styles.dayCircleToday,
+                  pressed && styles.pressed,
+                ]}>
+                <Text
+                  style={[
+                    styles.dayNumber,
+                    filled && styles.dayNumberFilled,
+                    isToday && styles.dayNumberToday,
+                    isFuture && styles.dayNumberFuture,
+                  ]}>
+                  {date.getDate()}
+                </Text>
+              </Pressable>
+              <Text style={[styles.weekdayLabel, isToday && styles.weekdayLabelToday]}>
+                {weekdayLabels[index] ?? ''}
+              </Text>
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+function MonthGrid({
   colors,
   dates,
+  getLabel,
   month,
   onDayPress,
   statuses,
   styles,
   today,
-}: GridProps & { month?: number }) {
+  weekdayLabels,
+}: GridProps & { month: number }) {
   const weeks = groupIntoWeeks(dates);
 
   return (
-    <View style={styles.calendarGrid}>
-      <View style={styles.weekRow}>
-        {WEEKDAY_LABELS.map((label) => (
-          <Text key={label} style={styles.weekdayLabel}>
+    <View style={styles.monthGrid}>
+      <View style={styles.monthRow}>
+        {weekdayLabels.map((label) => (
+          <Text key={label} style={styles.monthWeekdayLabel}>
             {label}
           </Text>
         ))}
       </View>
 
       {weeks.map((week) => (
-        <View key={toDateKey(week[0])} style={styles.weekRow}>
+        <View key={toDateKey(week[0])} style={styles.monthRow}>
           {week.map((date) => {
             const dateKey = toDateKey(date);
             const status = statuses[dateKey];
             const isFuture = date.getTime() > today.getTime();
-            const isOutsideMonth = month !== undefined && date.getMonth() !== month;
+            const isOutsideMonth = date.getMonth() !== month;
+            const isToday = date.getTime() === today.getTime();
+            const filled = !isFuture && !isOutsideMonth && status !== undefined;
 
             return (
-              <Pressable
-                accessibilityLabel={getAccessibilityLabel(date, status, isFuture)}
-                accessibilityRole="button"
-                disabled={isFuture || isOutsideMonth}
-                key={dateKey}
-                onPress={() => onDayPress(dateKey)}
-                style={({ pressed }) => [
-                  styles.dayCell,
-                  {
-                    backgroundColor: isOutsideMonth
-                      ? 'transparent'
-                      : getStatusColor(colors, status, isFuture),
-                  },
-                  date.getTime() === today.getTime() && styles.todayCell,
-                  pressed && styles.pressed,
-                ]}>
-                {!isOutsideMonth && (
-                  <Text style={[styles.dayNumber, status && styles.dayNumberMarked]}>{date.getDate()}</Text>
+              <View key={dateKey} style={styles.monthCell}>
+                {isOutsideMonth ? (
+                  <View style={styles.monthCellSpacer} />
+                ) : (
+                  <Pressable
+                    accessibilityLabel={getLabel(date, status, isFuture)}
+                    accessibilityRole="button"
+                    disabled={isFuture}
+                    onPress={() => onDayPress(dateKey)}
+                    style={({ pressed }) => [
+                      styles.dayCircle,
+                      { backgroundColor: filled ? getStatusColor(colors, status, isFuture) : colors.background },
+                      !filled && styles.dayCircleOutlined,
+                      isToday && styles.dayCircleToday,
+                      pressed && styles.pressed,
+                    ]}>
+                    <Text
+                      style={[
+                        styles.dayNumber,
+                        filled && styles.dayNumberFilled,
+                        isToday && styles.dayNumberToday,
+                        isFuture && styles.dayNumberFuture,
+                      ]}>
+                      {date.getDate()}
+                    </Text>
+                  </Pressable>
                 )}
-              </Pressable>
+              </View>
             );
           })}
         </View>
@@ -233,14 +318,24 @@ function WeekOrMonthGrid({
   );
 }
 
-function YearGrid({ colors, dates, onDayPress, statuses, styles, today }: GridProps) {
+function YearGrid({
+  colors,
+  dates,
+  getLabel,
+  locale,
+  onDayPress,
+  statuses,
+  styles,
+  today,
+  weekdayLabels,
+}: GridProps & { locale: string }) {
   const weeks = groupIntoWeeks(dates);
 
   return (
     <View style={styles.yearGridRow}>
       <View style={styles.yearWeekdayLabels}>
         <View style={styles.yearMonthLabelSpacer} />
-        {YEAR_WEEKDAY_LABELS.map((label, index) => (
+        {weekdayLabels.map((label, index) => (
           <Text key={`${label}-${index}`} style={styles.yearWeekdayLabel}>
             {label}
           </Text>
@@ -259,7 +354,7 @@ function YearGrid({ colors, dates, onDayPress, statuses, styles, today }: GridPr
               <View style={styles.yearMonthLabelContainer}>
                 {monthStart && (
                   <Text numberOfLines={1} style={styles.yearMonthLabel}>
-                    {monthStart.toLocaleDateString('tr-TR', { month: 'short' }).replace('.', '')}
+                    {monthStart.toLocaleDateString(locale, { month: 'short' }).replace('.', '')}
                   </Text>
                 )}
               </View>
@@ -271,16 +366,14 @@ function YearGrid({ colors, dates, onDayPress, statuses, styles, today }: GridPr
 
                 return (
                   <Pressable
-                    accessibilityLabel={getAccessibilityLabel(date, status, isFuture)}
+                    accessibilityLabel={getLabel(date, status, isFuture)}
                     accessibilityRole="button"
                     disabled={isFuture}
                     key={dateKey}
                     onPress={() => onDayPress(dateKey)}
                     style={({ pressed }) => [
                       styles.yearDayCell,
-                      {
-                        backgroundColor: getStatusColor(colors, status, isFuture),
-                      },
+                      { backgroundColor: getStatusColor(colors, status, isFuture) },
                       date.getTime() === today.getTime() && styles.todayYearCell,
                       pressed && styles.pressed,
                     ]}
@@ -295,7 +388,15 @@ function YearGrid({ colors, dates, onDayPress, statuses, styles, today }: GridPr
   );
 }
 
-function LegendItem({ color, label, styles }: { color: string; label: string; styles: ReturnType<typeof createStyles> }) {
+function LegendItem({
+  color,
+  label,
+  styles,
+}: {
+  color: string;
+  label: string;
+  styles: ReturnType<typeof createStyles>;
+}) {
   return (
     <View style={styles.legendItem}>
       <View style={[styles.legendDot, { backgroundColor: color }]} />
@@ -370,20 +471,20 @@ function groupIntoWeeks(dates: Date[]) {
   return weeks;
 }
 
-function getPeriodLabel(period: CalendarPeriod, today: Date) {
+function getPeriodLabel(period: CalendarPeriod, today: Date, locale: string, t: (key: string) => string) {
   if (period === 'week') {
     const firstDay = startOfWeek(today);
     const lastDay = endOfWeek(today);
-    const firstLabel = firstDay.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' });
-    const lastLabel = lastDay.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: 'numeric' });
+    const firstLabel = firstDay.toLocaleDateString(locale, { day: 'numeric', month: 'short' });
+    const lastLabel = lastDay.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' });
     return `${firstLabel} – ${lastLabel}`;
   }
 
   if (period === 'month') {
-    return today.toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' });
+    return today.toLocaleDateString(locale, { month: 'long', year: 'numeric' });
   }
 
-  return 'Son 12 ay';
+  return t('calendar.lastTwelveMonths');
 }
 
 function getStatusColor(colors: ThemeColors, status: DisciplineStatus | undefined, isFuture: boolean) {
@@ -394,81 +495,69 @@ function getStatusColor(colors: ThemeColors, status: DisciplineStatus | undefine
   return colors.disciplineEmpty;
 }
 
-function getAccessibilityLabel(date: Date, status: DisciplineStatus | undefined, isFuture: boolean) {
-  const dateLabel = date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' });
-  if (isFuture) return `${dateLabel}, gelecek gün`;
-  return `${dateLabel}, ${status ? STATUS_LABELS[status] : 'işaretlenmedi'}`;
-}
+
 
 function createStyles(colors: ThemeColors) {
   return StyleSheet.create({
-    card: {
-      backgroundColor: colors.surface,
-      borderColor: colors.border,
-      borderRadius: 10,
-      borderWidth: 1,
-      gap: 14,
-      padding: 14,
+    section: { gap: 16 },
+    header: { gap: 4 },
+    title: { color: colors.text, ...Type.sectionTitle },
+    periodLabel: { color: colors.textSecondary, ...Type.caption },
+    periodPicker: { flexDirection: 'row', gap: 20 },
+    periodButton: { minHeight: 28, justifyContent: 'center' },
+    periodButtonText: { color: colors.textSecondary, fontSize: 14, fontWeight: '400' },
+    periodButtonTextSelected: { color: colors.text, fontWeight: '600' },
+    weekStrip: { justifyContent: 'center', paddingVertical: 4 },
+    weekLine: {
+      backgroundColor: colors.separator,
+      height: StyleSheet.hairlineWidth,
+      left: '7%',
+      position: 'absolute',
+      right: '7%',
+      top: 19,
     },
-    header: { gap: 14 },
-    headerText: { gap: 3 },
-    title: { color: colors.text, fontSize: 18, fontWeight: '800' },
-    periodLabel: { color: colors.textSecondary, fontSize: 13, textTransform: 'capitalize' },
-    periodPicker: {
-      backgroundColor: colors.surfaceMuted,
-      borderRadius: 12,
-      flexDirection: 'row',
-      padding: 3,
-    },
-    periodButton: {
+    weekRow: { flexDirection: 'row' },
+    weekCell: { alignItems: 'center', flex: 1, gap: 8 },
+    dayCircle: {
       alignItems: 'center',
-      borderRadius: 9,
-      flex: 1,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
+      borderRadius: 15,
+      height: 30,
+      justifyContent: 'center',
+      width: 30,
     },
-    periodButtonSelected: { backgroundColor: colors.primary },
-    periodButtonText: { color: colors.textSecondary, fontSize: 13, fontWeight: '700' },
-    periodButtonTextSelected: { color: colors.onPrimary },
-    calendarGrid: { gap: 6 },
-    weekRow: { flexDirection: 'row', gap: 6 },
-    weekdayLabel: {
-      color: colors.textSecondary,
+    dayCircleOutlined: { borderColor: colors.separator, borderWidth: StyleSheet.hairlineWidth },
+    dayCircleToday: { borderColor: colors.primary, borderWidth: 1.5 },
+    dayNumber: { color: colors.textSecondary, fontSize: 13, fontWeight: '500' },
+    dayNumberFilled: { color: colors.background, fontWeight: '600' },
+    dayNumberToday: { color: colors.primary, fontWeight: '600' },
+    dayNumberFuture: { color: colors.textTertiary },
+    weekdayLabel: { color: colors.textTertiary, fontSize: 11, fontWeight: '400' },
+    weekdayLabelToday: { color: colors.primary, fontWeight: '600' },
+    monthGrid: { gap: 8 },
+    monthRow: { flexDirection: 'row' },
+    monthCell: { alignItems: 'center', flex: 1, paddingVertical: 3 },
+    monthCellSpacer: { height: 30, width: 30 },
+    monthWeekdayLabel: {
+      color: colors.textTertiary,
       flex: 1,
       fontSize: 11,
-      fontWeight: '700',
+      fontWeight: '400',
       textAlign: 'center',
     },
-    dayCell: {
-      alignItems: 'center',
-      aspectRatio: 1,
-      borderRadius: 7,
-      flex: 1,
-      justifyContent: 'center',
-    },
-    todayCell: { borderColor: colors.primaryIcon, borderWidth: 2 },
-    dayNumber: { color: colors.textSecondary, fontSize: 12, fontWeight: '700' },
-    dayNumberMarked: { color: colors.onPrimary },
     yearGridRow: { flexDirection: 'row' },
     yearWeekdayLabels: { marginRight: 7 },
     yearMonthLabelSpacer: { height: 20 },
-    yearWeekdayLabel: {
-      color: colors.textSecondary,
-      fontSize: 8,
-      height: 16,
-      lineHeight: 13,
-      width: 20,
-    },
+    yearWeekdayLabel: { color: colors.textTertiary, fontSize: 8, height: 16, lineHeight: 13, width: 20 },
     yearScrollContent: { paddingRight: 2 },
     yearWeek: { gap: 3, marginRight: 3, width: 14 },
     yearMonthLabelContainer: { height: 17, overflow: 'visible' },
-    yearMonthLabel: { color: colors.textSecondary, fontSize: 9, overflow: 'visible', width: 34 },
+    yearMonthLabel: { color: colors.textTertiary, fontSize: 9, overflow: 'visible', width: 34 },
     yearDayCell: { borderRadius: 3, height: 14, width: 14 },
-    todayYearCell: { borderColor: colors.primaryIcon, borderWidth: 2 },
-    legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-    legendItem: { alignItems: 'center', flexDirection: 'row', gap: 5 },
-    legendDot: { borderRadius: 3, height: 10, width: 10 },
-    legendText: { color: colors.textSecondary, fontSize: 11 },
-    pressed: { opacity: 0.65 },
+    todayYearCell: { borderColor: colors.primary, borderWidth: 1.5 },
+    legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 },
+    legendItem: { alignItems: 'center', flexDirection: 'row', gap: 6 },
+    legendDot: { borderRadius: 3, height: 6, width: 6 },
+    legendText: { color: colors.textSecondary, fontSize: 12 },
+    pressed: { opacity: 0.6 },
   });
 }

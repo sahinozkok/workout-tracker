@@ -19,7 +19,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { WorkoutVisualDisplay } from '@/components/workout-visual-display';
 import { WorkoutVisualPicker } from '@/components/workout-visual-picker';
 import { ThemeColors } from '@/constants/theme';
-import { getWeekdayLabel, WEEKDAY_OPTIONS } from '@/constants/weekdays';
+import { getWeekdayLabel, getWeekdayOptions } from '@/constants/weekdays';
+import { useTranslation } from '@/context/language-context';
 import { useWorkout } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import { Weekday, WorkoutDay, WorkoutVisual } from '@/types/workout';
@@ -28,6 +29,8 @@ import { DEFAULT_PROGRAM_VISUAL } from '@/utils/workout-visual';
 export default function CreateProgramScreen() {
   const { addProgram } = useWorkout();
   const { colors, isDark } = useAppTheme();
+  const { locale, t } = useTranslation();
+  const weekdayOptions = getWeekdayOptions(locale);
   const styles = createStyles(colors);
   const [programName, setProgramName] = useState('');
   const [programVisual, setProgramVisual] = useState<WorkoutVisual>(DEFAULT_PROGRAM_VISUAL);
@@ -41,12 +44,12 @@ export default function CreateProgramScreen() {
     const trimmedDayName = dayName.trim() || (isOffDay ? `${getWeekdayLabel(selectedWeekday)} Off Day` : '');
 
     if (!trimmedDayName) {
-      Alert.alert('Gün adı gerekli', 'Örneğin “Push”, “Pull” veya “Full Body” yazabilirsin.');
+      Alert.alert(t('day.dayNameRequiredTitle'), t('day.dayNameRequiredBody'));
       return;
     }
 
     if (days.some((day) => day.scheduledWeekday === selectedWeekday)) {
-      Alert.alert('Bu tarih zaten kullanılıyor', `${getWeekdayLabel(selectedWeekday)} için daha önce bir gün ekledin.`);
+      Alert.alert(t('day.weekdayUsedTitle'), t('day.weekdayUsedBody', { weekday: getWeekdayLabel(selectedWeekday, locale) }));
       return;
     }
 
@@ -64,7 +67,7 @@ export default function CreateProgramScreen() {
     setDayName('');
     setIsOffDay(false);
 
-    const nextWeekday = WEEKDAY_OPTIONS.find(
+    const nextWeekday = weekdayOptions.find(
       (option) => ![...days, newDay].some((day) => day.scheduledWeekday === option.value),
     );
     if (nextWeekday) setSelectedWeekday(nextWeekday.value);
@@ -78,12 +81,12 @@ export default function CreateProgramScreen() {
     const trimmedProgramName = programName.trim();
 
     if (!trimmedProgramName) {
-      Alert.alert('Program adı gerekli', 'Programına kısa ve anlaşılır bir ad ver.');
+      Alert.alert(t('programDetail.nameRequiredTitle'), t('programDetail.nameRequiredBody'));
       return;
     }
 
     if (days.length === 0) {
-      Alert.alert('En az bir gün ekle', 'Programı kaydetmeden önce bir antrenman günü oluştur.');
+      Alert.alert(t('createProgram.atLeastOneDay'), t('createProgram.atLeastOneDayBody'));
       return;
     }
 
@@ -94,8 +97,8 @@ export default function CreateProgramScreen() {
       router.replace({ pathname: '/programs', params: { created: '1' } });
     } catch (error) {
       Alert.alert(
-        'Program kaydedilemedi',
-        error instanceof Error ? error.message : 'Lütfen internet bağlantını kontrol edip tekrar dene.',
+        t('programDetail.updateFailed'),
+        error instanceof Error ? error.message : t('common.networkError'),
       );
     } finally {
       setIsSaving(false);
@@ -112,13 +115,13 @@ export default function CreateProgramScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}>
           <View style={styles.formSection}>
-            <Text style={styles.label}>Program adı</Text>
+            <Text style={styles.label}>{t('programDetail.programName')}</Text>
             <TextInput
               autoFocus
               keyboardAppearance={isDark ? 'dark' : 'light'}
               maxLength={60}
               onChangeText={setProgramName}
-              placeholder="Örn. 3 Günlük Full Body"
+              placeholder={t('createProgram.programNamePlaceholder')}
               placeholderTextColor={colors.textTertiary}
               selectionColor={colors.primary}
               style={styles.input}
@@ -127,18 +130,18 @@ export default function CreateProgramScreen() {
             <Text style={styles.counter}>{programName.length}/60</Text>
           </View>
 
-          <Text style={styles.sectionHeading}>Program simgesi</Text>
+          <Text style={styles.sectionHeading}>{t('createProgram.programIcon')}</Text>
           <View style={styles.visualSection}>
             <WorkoutVisualPicker onSelect={setProgramVisual} selectedVisual={programVisual} />
           </View>
 
-          <Text style={styles.sectionHeading}>Antrenman günleri</Text>
+          <Text style={styles.sectionHeading}>{t('programDetail.workoutDays')}</Text>
           <View style={styles.daysSection}>
             <ScrollView
               contentContainerStyle={styles.weekdayOptions}
               horizontal
               showsHorizontalScrollIndicator={false}>
-              {WEEKDAY_OPTIONS.map((option) => {
+              {weekdayOptions.map((option) => {
                 const selected = selectedWeekday === option.value;
                 const used = days.some((day) => day.scheduledWeekday === option.value);
 
@@ -168,7 +171,7 @@ export default function CreateProgramScreen() {
                 maxLength={30}
                 onChangeText={setDayName}
                 onSubmitEditing={handleAddDay}
-                placeholder={isOffDay ? 'Boş bırakırsan otomatik ad verilir' : 'Örn. Push veya Bacak'}
+                placeholder={isOffDay ? t('createProgram.dayNamePlaceholderAuto') : t('createProgram.dayNamePlaceholder')}
                 placeholderTextColor={colors.textTertiary}
                 returnKeyType="done"
                 selectionColor={colors.primary}
@@ -176,7 +179,7 @@ export default function CreateProgramScreen() {
                 value={dayName}
               />
               <View style={styles.offDayInline}>
-                <Text style={styles.offDayLabel}>Off day</Text>
+                <Text style={styles.offDayLabel}>{t('day.offDay')}</Text>
                 <Switch
                   onValueChange={setIsOffDay}
                   thumbColor={colors.onPrimary}
@@ -185,7 +188,7 @@ export default function CreateProgramScreen() {
                 />
               </View>
               <Pressable
-                accessibilityLabel="Antrenman günü ekle"
+                accessibilityLabel={t('a11y.addDay')}
                 accessibilityRole="button"
                 onPress={handleAddDay}
                 style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]}>
@@ -196,7 +199,7 @@ export default function CreateProgramScreen() {
             {days.length === 0 ? (
               <View style={styles.emptyDays}>
                 <Ionicons name="calendar-outline" size={24} color={colors.textTertiary} />
-                <Text style={styles.emptyDaysText}>Henüz antrenman günü eklemedin.</Text>
+                <Text style={styles.emptyDaysText}>{t('createProgram.noDaysYet')}</Text>
               </View>
             ) : (
               <View style={styles.dayList}>
@@ -211,11 +214,11 @@ export default function CreateProgramScreen() {
                     </View>
                     <Text style={styles.dayName}>{day.name}</Text>
                     <View style={styles.daySchedule}>
-                      <Text style={styles.dayScheduleText}>{getWeekdayLabel(day.scheduledWeekday)}</Text>
-                      {day.isOffDay && <Text style={styles.offDayBadge}>OFF DAY</Text>}
+                      <Text style={styles.dayScheduleText}>{getWeekdayLabel(day.scheduledWeekday, locale)}</Text>
+                      {day.isOffDay && <Text style={styles.offDayBadge}>{t('createProgram.offDayBadge')}</Text>}
                     </View>
                     <Pressable
-                      accessibilityLabel={`${day.name} gününü kaldır`}
+                      accessibilityLabel={t('a11y.removeDay', { name: day.name })}
                       accessibilityRole="button"
                       hitSlop={10}
                       onPress={() => handleRemoveDay(day.id)}>
@@ -233,7 +236,7 @@ export default function CreateProgramScreen() {
           disabled={isSaving}
           onPress={() => void handleSave()}
           style={({ pressed }) => [styles.button, isSaving && styles.buttonDisabled, pressed && styles.buttonPressed]}>
-          <Text style={styles.buttonText}>{isSaving ? 'Kaydediliyor…' : 'Programı kaydet'}</Text>
+          <Text style={styles.buttonText}>{isSaving ? t('common.saving') : t('a11y.saveProgram')}</Text>
         </Pressable>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -246,7 +249,7 @@ function createStyles(colors: ThemeColors) {
     container: { flex: 1 },
     content: { gap: 22, padding: 20, paddingBottom: 24 },
     formSection: { backgroundColor: colors.surface, gap: 6, padding: 10 },
-    label: { color: colors.text, fontSize: 12, fontWeight: '800' },
+    label: { color: colors.text, fontSize: 12, fontWeight: '500' },
     input: {
       backgroundColor: colors.surfaceMuted,
       borderColor: colors.inputBorder,
@@ -263,7 +266,7 @@ function createStyles(colors: ThemeColors) {
       backgroundColor: colors.surface,
       color: colors.text,
       fontSize: 18,
-      fontWeight: '900',
+      fontWeight: '600',
       paddingHorizontal: 8,
       paddingVertical: 6,
     },
@@ -283,12 +286,12 @@ function createStyles(colors: ThemeColors) {
     },
     weekdayOptionSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
     weekdayOptionUsed: { opacity: 0.3 },
-    weekdayOptionText: { color: colors.textSecondary, fontSize: 11, fontWeight: '800' },
+    weekdayOptionText: { color: colors.textSecondary, fontSize: 11, fontWeight: '500' },
     weekdayOptionTextSelected: { color: colors.onPrimary },
     addDayRow: { alignItems: 'center', flexDirection: 'row', gap: 6 },
     dayInput: { flex: 1, minWidth: 105 },
     offDayInline: { alignItems: 'center', flexDirection: 'row', gap: 4 },
-    offDayLabel: { color: colors.text, fontSize: 15, fontWeight: '900' },
+    offDayLabel: { color: colors.text, fontSize: 15, fontWeight: '600' },
     addButton: {
       alignItems: 'center',
       backgroundColor: colors.primary,
@@ -325,10 +328,10 @@ function createStyles(colors: ThemeColors) {
       justifyContent: 'center',
       width: 32,
     },
-    dayName: { color: colors.text, flex: 1, fontSize: 14, fontWeight: '800' },
+    dayName: { color: colors.text, flex: 1, fontSize: 14, fontWeight: '500' },
     daySchedule: { alignItems: 'flex-end', gap: 2 },
-    dayScheduleText: { color: colors.textSecondary, fontSize: 10, fontWeight: '700' },
-    offDayBadge: { color: colors.disciplineCompleted, fontSize: 8, fontWeight: '900' },
+    dayScheduleText: { color: colors.textSecondary, fontSize: 10, fontWeight: '500' },
+    offDayBadge: { color: colors.disciplineCompleted, fontSize: 8, fontWeight: '600' },
     button: {
       alignItems: 'center',
       backgroundColor: colors.primary,
@@ -341,6 +344,6 @@ function createStyles(colors: ThemeColors) {
     },
     buttonPressed: { opacity: 0.8, transform: [{ scale: 0.98 }] },
     buttonDisabled: { opacity: 0.58 },
-    buttonText: { color: colors.onPrimary, fontSize: 14, fontWeight: '900' },
+    buttonText: { color: colors.onPrimary, fontSize: 14, fontWeight: '600' },
   });
 }

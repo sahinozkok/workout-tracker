@@ -4,20 +4,33 @@ import { Platform } from 'react-native';
 
 import { useAuth } from '@/context/auth-context';
 import { supabase } from '@/lib/supabase';
-import { TrainingGoal, UserProfile } from '@/types/profile';
+import {
+  getStoragePathFromUrl,
+  isRemoteImageUrl,
+  PickedImage,
+  ProfileImageKind,
+  removeProfileImagePaths,
+  uploadProfileImage,
+} from '@/services/profile-media';
+import { AppLanguage, TrainingGoal, UserProfile } from '@/types/profile';
 
 type ProfileContextValue = {
   isLoading: boolean;
+  preferredLanguage?: AppLanguage;
   profile: UserProfile;
   restTimerEnabled: boolean;
   saveProfile: (profile: UserProfile) => Promise<void>;
+  savePreferredLanguage: (language: AppLanguage) => Promise<void>;
   setRestTimerEnabled: (enabled: boolean) => Promise<void>;
+  uploadProfileMedia: (kind: ProfileImageKind, asset: PickedImage) => Promise<string>;
 };
 
 type ProfileRow = {
   avatar_url: string | null;
+  banner_url?: string | null;
   bio: string;
   display_name: string;
+  preferred_language?: string | null;
   rest_timer_enabled: boolean;
   training_goal: TrainingGoal;
   username: string | null;
@@ -25,6 +38,7 @@ type ProfileRow = {
 
 const DEFAULT_PROFILE: UserProfile = {
   avatarUri: undefined,
+  bannerUri: undefined,
   displayName: 'Sporcu',
   username: '',
   bio: '',
@@ -32,32 +46,36 @@ const DEFAULT_PROFILE: UserProfile = {
 };
 
 const LOCAL_AVATAR_KEY_PREFIX = '@workout-tracker/local-avatar';
-const AVATAR_BUCKET = 'avatars';
+const LEGACY_COLUMNS = 'display_name, username, bio, avatar_url, training_goal, rest_timer_enabled';
+const EXTENDED_COLUMNS = `${LEGACY_COLUMNS}, banner_url, preferred_language`;
+/** Postgres: kolon bulunamadı. PostgREST ise şema önbelleği için PGRST204 döner. */
+const UNDEFINED_COLUMN = '42703';
+const POSTGREST_MISSING_COLUMN = 'PGRST204';
+/** Yalnızca bu iki yeni kolonun eksikliği "migration uygulanmamış" sayılır. */
+const OPTIONAL_COLUMNS = ['banner_url', 'preferred_language'];
 const ProfileContext = createContext<ProfileContextValue | undefined>(undefined);
 
-async function uploadAvatar(userId: string, localUri: string) {
-  const response = await fetch(localUri);
-  if (!response.ok) throw new Error('Seçilen profil fotoğrafı okunamadı. Lütfen tekrar seç.');
+/**
+ * Sadece `banner_url` / `preferred_language` eksikliğini eksik kolon kabul eder.
+ * Başka PGRST204 veya veritabanı hataları yutulmaz; çağırana iletilir.
+ */
+function isMissingOptionalColumnError(error: { code?: string; message?: string } | null) {
+  if (!error) return false;
 
-  const responseContentType = response.headers.get('content-type');
-  const contentType = responseContentType?.startsWith('image/') ? responseContentType : 'image/jpeg';
-  const fileData = await response.arrayBuffer();
-  const filePath = `${userId}/avatar`;
-  const { error } = await supabase.storage.from(AVATAR_BUCKET).upload(filePath, fileData, {
-    cacheControl: '3600',
-    contentType,
-    upsert: true,
-  });
+  const message = error.message ?? '';
+  const mentionsOptionalColumn = OPTIONAL_COLUMNS.some((column) => message.includes(column));
+  if (!mentionsOptionalColumn) return false;
 
-  if (error) throw error;
+  if (error.code === UNDEFINED_COLUMN) return true;
+  if (error.code === POSTGREST_MISSING_COLUMN) return true;
 
-  const { data } = supabase.storage.from(AVATAR_BUCKET).getPublicUrl(filePath);
-  return `${data.publicUrl}?v=${Date.now()}`;
+  return /column .* does not exist/i.test(message) || /schema cache/i.test(message);
 }
 
 export function ProfileProvider({ children }: PropsWithChildren) {
   const { user } = useAuth();
   const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
+  const [preferredLanguage, setPreferredLanguage] = useState<AppLanguage>();
   const [restTimerEnabled, setRestTimerEnabledState] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   const userId = user?.id;
@@ -65,6 +83,7 @@ export function ProfileProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     if (!userId) {
       setProfile(DEFAULT_PROFILE);
+      setPreferredLanguage(undefined);
       setRestTimerEnabledState(true);
       setIsLoading(false);
       return;
@@ -73,26 +92,35 @@ export function ProfileProvider({ children }: PropsWithChildren) {
     let isMounted = true;
 
     async function loadProfile() {
-      const [{ data, error }, localAvatarUri] = await Promise.all([
-        supabase
-          .from('profiles')
-          .select('display_name, username, bio, avatar_url, training_goal, rest_timer_enabled')
-          .eq('id', userId)
-          .single<ProfileRow>(),
-        AsyncStorage.getItem(`${LOCAL_AVATAR_KEY_PREFIX}:${userId}`),
-      ]);
+      const extendedResult = await supabase
+        .from('profiles')
+        .select(EXTENDED_COLUMNS)
+        .eq('id', userId)
+        .single<ProfileRow>();
+
+      // banner_url / preferred_language henüz yoksa eski kolon kümesiyle devam edilir.
+      const { data, error } = isMissingOptionalColumnError(extendedResult.error)
+        ? await supabase.from('profiles').select(LEGACY_COLUMNS).eq('id', userId).single<ProfileRow>()
+        : extendedResult;
 
       if (error) throw error;
-      if (!isMounted) return;
+      if (!isMounted || !data) return;
 
-      const legacyLocalAvatar = Platform.OS !== 'web' ? localAvatarUri ?? undefined : undefined;
+      const localAvatarUri =
+        Platform.OS !== 'web' ? await AsyncStorage.getItem(`${LOCAL_AVATAR_KEY_PREFIX}:${userId}`) : null;
+      // Yerel kopya yalnızca Storage'da kalıcı bir görsel yoksa kullanılır.
+      const legacyLocalAvatar = data.avatar_url ? undefined : localAvatarUri ?? undefined;
+
+      if (!isMounted) return;
       setProfile({
         avatarUri: data.avatar_url ?? legacyLocalAvatar,
+        bannerUri: data.banner_url ?? undefined,
         displayName: data.display_name,
         username: data.username ?? '',
         bio: data.bio,
         trainingGoal: data.training_goal,
       });
+      setPreferredLanguage(data.preferred_language === 'en' || data.preferred_language === 'tr' ? data.preferred_language : undefined);
       setRestTimerEnabledState(data.rest_timer_enabled);
     }
 
@@ -109,56 +137,115 @@ export function ProfileProvider({ children }: PropsWithChildren) {
     };
   }, [userId]);
 
+  /**
+   * Görseli yükler ve kalıcı URL döndürür. Eski dosya burada silinmez; profil
+   * kaydı başarıyla güncellenene kadar mevcut çalışan görsel korunur.
+   */
+  const uploadProfileMedia = useCallback(
+    async (kind: ProfileImageKind, asset: PickedImage) => {
+      if (!userId) throw new Error('missingSession');
+      const { publicUrl } = await uploadProfileImage(userId, kind, asset);
+      return publicUrl;
+    },
+    [userId],
+  );
+
   const saveProfile = useCallback(
     async (newProfile: UserProfile) => {
-      if (!userId) throw new Error('Profil kaydetmek için giriş yapmalısın.');
+      if (!userId) throw new Error('missingSession');
 
-      const isRemoteAvatar = newProfile.avatarUri?.startsWith('http') ?? false;
-      const avatarUrl = newProfile.avatarUri
-        ? isRemoteAvatar
-          ? newProfile.avatarUri
-          : await uploadAvatar(userId, newProfile.avatarUri)
-        : undefined;
+      // Yalnızca kalıcı (http) adresler veritabanına yazılır; yerel file:// veya
+      // blob: adresleri hiçbir koşulda profile kaydedilmez.
+      const avatarUrl = isRemoteImageUrl(newProfile.avatarUri) ? newProfile.avatarUri : undefined;
+      const bannerUrl = isRemoteImageUrl(newProfile.bannerUri) ? newProfile.bannerUri : undefined;
 
-      if (!newProfile.avatarUri) {
-        const { error: removeError } = await supabase.storage
-          .from(AVATAR_BUCKET)
-          .remove([`${userId}/avatar`]);
-        if (removeError && !removeError.message.toLocaleLowerCase('en-US').includes('not found')) {
-          throw removeError;
-        }
-      }
+      const updates: Record<string, unknown> = {
+        avatar_url: avatarUrl ?? null,
+        bio: newProfile.bio,
+        display_name: newProfile.displayName,
+        training_goal: newProfile.trainingGoal,
+        username: newProfile.username || null,
+      };
 
-      const { error } = await supabase
+      // Kaydetmeden önceki kalıcı adresler; temizlik kararı bunlara göre verilir.
+      const previousAvatarPath = getStoragePathFromUrl(profile.avatarUri, userId);
+      const previousBannerPath = getStoragePathFromUrl(profile.bannerUri, userId);
+      const nextAvatarPath = getStoragePathFromUrl(avatarUrl, userId);
+      const nextBannerPath = getStoragePathFromUrl(bannerUrl, userId);
+
+      const extendedResult = await supabase
         .from('profiles')
-        .update({
-          avatar_url: avatarUrl ?? null,
-          bio: newProfile.bio,
-          display_name: newProfile.displayName,
-          training_goal: newProfile.trainingGoal,
-          username: newProfile.username || null,
-        })
+        .update({ ...updates, banner_url: bannerUrl ?? null })
         .eq('id', userId);
 
-      if (error) throw error;
+      let bannerPersisted = true;
+      let result = extendedResult;
 
-      await AsyncStorage.removeItem(`${LOCAL_AVATAR_KEY_PREFIX}:${userId}`);
-      setProfile({ ...newProfile, avatarUri: avatarUrl });
+      if (isMissingOptionalColumnError(extendedResult.error)) {
+        // Migration uygulanmadıysa banner sunucuya yazılamaz; diğer alanlar kaydedilir.
+        bannerPersisted = false;
+        result = await supabase.from('profiles').update(updates).eq('id', userId);
+      }
+
+      if (result.error) {
+        // Veritabanı güncellemesi başarısız: yeni yüklenen sahipsiz dosyalar
+        // temizlenir, eski çalışan dosya ve URL olduğu gibi korunur.
+        const orphanPaths = [
+          nextAvatarPath && nextAvatarPath !== previousAvatarPath ? nextAvatarPath : undefined,
+          nextBannerPath && nextBannerPath !== previousBannerPath ? nextBannerPath : undefined,
+        ];
+        await removeProfileImagePaths(orphanPaths, userId);
+        throw result.error;
+      }
+
+      // Yalnızca güncelleme başarılı olduktan sonra önceki dosyalar silinir.
+      await removeProfileImagePaths(
+        [
+          previousAvatarPath && previousAvatarPath !== nextAvatarPath ? previousAvatarPath : undefined,
+          bannerPersisted && previousBannerPath && previousBannerPath !== nextBannerPath
+            ? previousBannerPath
+            : undefined,
+        ],
+        userId,
+      );
+
+      await AsyncStorage.removeItem(`${LOCAL_AVATAR_KEY_PREFIX}:${userId}`).catch(() => undefined);
+      setProfile({
+        ...newProfile,
+        avatarUri: avatarUrl,
+        // Kolon yoksa banner kaydedilmiş gibi gösterilmez.
+        bannerUri: bannerPersisted ? bannerUrl : undefined,
+      });
+
+      if (!bannerPersisted && bannerUrl) {
+        // Sunucuya yazılamayan banner dosyası sahipsiz kalmasın.
+        await removeProfileImagePaths([nextBannerPath], userId);
+        throw new Error('bannerColumnMissing');
+      }
+    },
+    [profile.avatarUri, profile.bannerUri, userId],
+  );
+
+  const savePreferredLanguage = useCallback(
+    async (language: AppLanguage) => {
+      setPreferredLanguage(language);
+      if (!userId) return;
+
+      const { error } = await supabase.from('profiles').update({ preferred_language: language }).eq('id', userId);
+      // Yalnızca kolon eksikliği yutulur; yerel tercih yine de geçerli kalır.
+      if (error && !isMissingOptionalColumnError(error)) throw error;
     },
     [userId],
   );
 
   const setRestTimerEnabled = useCallback(
     async (enabled: boolean) => {
-      if (!userId) throw new Error('Ayarı kaydetmek için giriş yapmalısın.');
+      if (!userId) throw new Error('missingSession');
 
       const previousValue = restTimerEnabled;
       setRestTimerEnabledState(enabled);
 
-      const { error } = await supabase
-        .from('profiles')
-        .update({ rest_timer_enabled: enabled })
-        .eq('id', userId);
+      const { error } = await supabase.from('profiles').update({ rest_timer_enabled: enabled }).eq('id', userId);
 
       if (error) {
         setRestTimerEnabledState(previousValue);
@@ -169,8 +256,26 @@ export function ProfileProvider({ children }: PropsWithChildren) {
   );
 
   const value = useMemo(
-    () => ({ isLoading, profile, restTimerEnabled, saveProfile, setRestTimerEnabled }),
-    [isLoading, profile, restTimerEnabled, saveProfile, setRestTimerEnabled],
+    () => ({
+      isLoading,
+      preferredLanguage,
+      profile,
+      restTimerEnabled,
+      saveProfile,
+      savePreferredLanguage,
+      setRestTimerEnabled,
+      uploadProfileMedia,
+    }),
+    [
+      isLoading,
+      preferredLanguage,
+      profile,
+      restTimerEnabled,
+      saveProfile,
+      savePreferredLanguage,
+      setRestTimerEnabled,
+      uploadProfileMedia,
+    ],
   );
 
   return <ProfileContext.Provider value={value}>{children}</ProfileContext.Provider>;

@@ -7,7 +7,8 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { AuthProvider, useAuth } from '@/context/auth-context';
-import { ProfileProvider } from '@/context/profile-context';
+import { LanguageProvider, useLanguage, useTranslation } from '@/context/language-context';
+import { ProfileProvider, useProfile } from '@/context/profile-context';
 import { ThemePreferenceProvider } from '@/context/theme-context';
 import { WorkoutProvider } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
@@ -16,11 +17,13 @@ import { configureRestNotifications } from '@/utils/rest-notifications';
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <ThemePreferenceProvider>
-        <AuthProvider>
-          <UserScopedApp />
-        </AuthProvider>
-      </ThemePreferenceProvider>
+      <LanguageProvider>
+        <ThemePreferenceProvider>
+          <AuthProvider>
+            <UserScopedApp />
+          </AuthProvider>
+        </ThemePreferenceProvider>
+      </LanguageProvider>
     </GestureHandlerRootView>
   );
 }
@@ -30,6 +33,7 @@ function UserScopedApp() {
 
   return (
     <ProfileProvider key={user?.id ?? 'signed-out'}>
+      <LanguageSync />
       <WorkoutProvider>
         <AppNavigation />
       </WorkoutProvider>
@@ -37,8 +41,21 @@ function UserScopedApp() {
   );
 }
 
+/** Hesapta kayıtlı dil tercihi varsa oturum açıldığında uygulanır. */
+function LanguageSync() {
+  const { preferredLanguage } = useProfile();
+  const { language, setLanguage } = useLanguage();
+
+  useEffect(() => {
+    if (preferredLanguage && preferredLanguage !== language) setLanguage(preferredLanguage);
+  }, [language, preferredLanguage, setLanguage]);
+
+  return null;
+}
+
 function AppNavigation() {
   const { isLoading, session } = useAuth();
+  const { t } = useTranslation();
   const { colors, isDark } = useAppTheme();
   const baseNavigationTheme = isDark ? DarkTheme : DefaultTheme;
   const navigationTheme = {
@@ -75,9 +92,9 @@ function AppNavigation() {
           animation: 'slide_from_right',
           contentStyle: { backgroundColor: colors.background },
           headerShadowVisible: false,
-          headerStyle: { backgroundColor: colors.surface },
+          headerStyle: { backgroundColor: colors.background },
           headerTintColor: colors.text,
-          headerTitleStyle: { fontSize: 19, fontWeight: '900' },
+          headerTitleStyle: { fontSize: 17, fontWeight: '600' },
         }}>
         <Stack.Protected guard={!session}>
           <Stack.Screen name="(auth)" options={{ headerShown: false }} />
@@ -87,18 +104,21 @@ function AppNavigation() {
           <Stack.Screen
             name="program/create"
             options={{
-              title: 'Yeni Program',
-              headerBackTitle: 'Geri',
+              title: t('createProgram.title'),
+              headerBackTitle: t('common.back'),
             }}
           />
-          <Stack.Screen name="program/[id]" options={{ headerBackTitle: 'Programlar', title: 'Program Detayı' }} />
+          <Stack.Screen
+            name="program/[id]"
+            options={{ headerBackTitle: t('tabs.programs'), title: t('nav.programDetail') }}
+          />
           <Stack.Screen
             name="program/[id]/day/[dayId]/index"
-            options={{ headerBackTitle: 'Program', title: 'Antrenman Günü' }}
+            options={{ headerBackTitle: t('nav.program'), title: t('nav.workoutDay') }}
           />
           <Stack.Screen
             name="program/[id]/day/[dayId]/add-exercise"
-            options={{ headerBackTitle: 'Program', title: 'Egzersiz Ekle' }}
+            options={{ headerBackTitle: t('nav.program'), title: t('nav.addExercise') }}
           />
         </Stack.Protected>
       </Stack>
