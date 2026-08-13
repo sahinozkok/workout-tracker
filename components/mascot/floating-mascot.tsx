@@ -26,6 +26,7 @@ import { MascotLoveParticles } from '@/components/mascot/mascot-love-particles';
 import { Layout } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { useMascot } from '@/context/mascot-context';
+import { useWorkout } from '@/context/workout-context';
 import {
   clampEdgeRatio,
   isVerticalEdge,
@@ -35,6 +36,11 @@ import {
   MascotReactionType,
   MascotState,
 } from '@/types/mascot';
+import {
+  getMascotDailyMessage,
+  MascotDailyInput,
+  resolveMascotDailyContext,
+} from '@/utils/mascot-daily-context';
 
 const mascotSource = require('../../assets/images/mascot/mascot-idle.png');
 
@@ -208,6 +214,16 @@ function nearestAngle(current: number, target: number) {
 export function FloatingMascot() {
   const { enabled, isReady, isThinking, position, reaction, savePosition } = useMascot();
   const { t, tList } = useTranslation();
+  // Yalnızca `WorkoutContext`'in zaten bellekte tuttuğu değerler okunur:
+  // yeni sorgu, refresh veya ağ isteği yapılmaz.
+  const {
+    activeProgramId,
+    disciplineStatuses,
+    isProgramsLoading,
+    programs,
+    programsError,
+    workoutSessions,
+  } = useWorkout();
   const insets = useSafeAreaInsets();
   const { height, width } = useWindowDimensions();
   const pathname = usePathname();
@@ -407,6 +423,38 @@ export function FloatingMascot() {
   useEffect(() => {
     pathnameRef.current = pathname;
   }, [pathname]);
+
+  /**
+   * Workout verisi her set tamamlandığında değişir. Ref üzerinden okunduğu
+   * için `pickTapMessage` → `handleTap` → gesture zinciri yeniden kurulmaz;
+   * pan/double-tap/single-tap nesnesi bu değişimlerden etkilenmez.
+   */
+  const workoutDataRef = useRef<Omit<MascotDailyInput, 'today'>>({
+    activeProgramId,
+    disciplineStatuses,
+    isProgramsLoading,
+    programs,
+    programsError,
+    workoutSessions,
+  });
+
+  useEffect(() => {
+    workoutDataRef.current = {
+      activeProgramId,
+      disciplineStatuses,
+      isProgramsLoading,
+      programs,
+      programsError,
+      workoutSessions,
+    };
+  }, [
+    activeProgramId,
+    disciplineStatuses,
+    isProgramsLoading,
+    programs,
+    programsError,
+    workoutSessions,
+  ]);
 
   const clearBubbleTimer = useCallback(() => {
     if (bubbleTimerRef.current) {
@@ -700,6 +748,18 @@ export function FloatingMascot() {
     const group = resolveMessageGroup(pathnameRef.current ?? '');
     if (!group) return undefined;
 
+    if (group === 'home') {
+      // Ana Sayfa'da bugünkü program/disiplin durumundan deterministik mesaj.
+      // Rastgelelik yok: aynı durum her zaman aynı mesajı verir. Bağlam
+      // üretilemezse (yükleniyor/hata) aşağıdaki home havuzuna düşülür ve o
+      // havuzun tekrarsız rastgele sistemi bozulmadan çalışmaya devam eder.
+      const daily = resolveMascotDailyContext({ ...workoutDataRef.current, today: new Date() });
+      if (daily) {
+        const { key, params } = getMascotDailyMessage(daily);
+        return t(key, params);
+      }
+    }
+
     const messages = tList(`mascot.contextMessages.${group}`);
     if (messages.length === 0) return undefined;
 
@@ -712,7 +772,9 @@ export function FloatingMascot() {
 
     lastTapMessageRef.current[group] = chosen;
     return chosen;
-  }, [tList]);
+    // `t` ve `tList` yalnızca dil değişince kimlik değiştirir; workout verisi
+    // ref'ten okunduğu için burası her set tamamlandığında yeniden kurulmaz.
+  }, [t, tList]);
 
   const handleTap = useCallback(() => {
     // Aktif bir set/kutlama tepkisi varken dokunma tamamen yok sayılır:

@@ -557,6 +557,18 @@ export const en: TranslationSchema = {
     bubbleCta: 'Open AI Coach',
     celebrationMessage: 'Workout complete! Great work!',
     lovedMessage: 'I liked that!',
+    dailyMessages: {
+      noActiveProgram: 'Activate a program and we can follow today’s plan together.',
+      running: 'Your workout is in progress. I’m right here!',
+      paused: 'Your workout is waiting; continue whenever you’re ready.',
+      rest: 'Today is a rest day. Recovery is part of the plan too.',
+      partial: 'You’ve started today. The remaining sets will be here when you’re ready.',
+      completed: 'Today’s plan is complete. Great work!',
+      completedStreak: '{count}-day streak! Your consistency is growing.',
+      scheduledSingle: 'Today is {day} day. We can start whenever you’re ready.',
+      scheduledMultiple: 'You have {count} workout days planned today. We can start whenever you’re ready.',
+      noSchedule: 'There’s no workout scheduled in your active program today.',
+    },
     contextMessages: {
       home: [
         'I’m here for today’s goal.',
