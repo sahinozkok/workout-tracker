@@ -19,16 +19,18 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { BUBBLE_MAX_WIDTH, MascotSpeechBubble } from '@/components/mascot/mascot-speech-bubble';
 import { MascotCelebrationParticles } from '@/components/mascot/mascot-celebration-particles';
-import { MascotSpeechBubble } from '@/components/mascot/mascot-speech-bubble';
 import { Layout } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { useMascot } from '@/context/mascot-context';
 import {
-  clampVerticalRatio,
+  clampEdgeRatio,
+  isVerticalEdge,
+  MASCOT_EDGE_ROTATION,
   MASCOT_REACTION_PRIORITY,
+  MascotEdge,
   MascotReactionType,
-  MascotSide,
   MascotState,
 } from '@/types/mascot';
 
@@ -38,16 +40,31 @@ const mascotSource = require('../../assets/images/mascot/mascot-idle.png');
 const MASCOT_SIZE = 88;
 /** Aktif antrenman ekranında set kontrollerini kapatmayan küçük mod. */
 const COMPACT_MASCOT_SIZE = 64;
-/**
- * Dokunma hedefi ekran değişse de sabit kalır: sınır hesabı sabit kaldığı için
- * maskot sekmeler ve program sayfaları arasında yerinden oynamaz.
- */
+/** Görsel kutu. Dokunma hedefi bundan küçüktür (aşağıya bakınız). */
 const TOUCH_SIZE = 100;
 /** Kenarlardan bırakılan güvenli boşluk. */
 const EDGE_MARGIN = 12;
 
-const IDLE_TRAVEL = 3;
-const IDLE_HALF_CYCLE = 1000; // tam döngü ≈ 2000 ms
+/**
+ * Kaynak görselin en-boy oranı (584 × 512). `contentFit="contain"` kare kutuya
+ * genişlikten sığdırdığı için karakterin **baş-kuyruk ekseni** boyunca gerçek
+ * uzunluğu `size / ASPECT` olur. Peek mesafesi bu uzunluktan hesaplanır.
+ */
+const MASCOT_ASPECT = 584 / 512;
+
+/**
+ * Kenardan bakma. Karakterin baş-kuyruk ekseninin bu kadarı ekranda kalır,
+ * gerisi yüzeyin arkasına gizlenir. Görünür kısım hiçbir koşulda
+ * `PEEK_MIN_VISIBLE` altına inmez.
+ */
+const PEEK_VISIBLE_FRACTION = 0.55;
+const PEEK_MIN_VISIBLE = 44;
+/** AI düşünürken maskot biraz daha fazla görünür. */
+const THINKING_PEEK_FACTOR = 0.7;
+const PEEK_SPRING = { damping: 20, mass: 0.9, stiffness: 200 };
+/** Reduce Motion: kenara girip çıkma ve dönüş neredeyse anlık olur. */
+const REDUCED_PEEK_DURATION = 120;
+
 const TAP_LIFT = -9;
 const BUBBLE_TIMEOUT = 4000;
 const CELEBRATION_BUBBLE_TIMEOUT = 3800;
@@ -70,8 +87,20 @@ const THINKING_HALF_CYCLE = 700;
 
 const SPRING = { damping: 18, mass: 0.9, stiffness: 170 };
 
+/**
+ * Köşede iki kenara uzaklık neredeyse eşitken kenarın sürekli değişmemesi için
+ * mevcut kenara verilen avantaj. Titremeyi (edge flapping) önler.
+ */
+const EDGE_HYSTERESIS = 16;
+
 /** `app/program/[id]/day/[dayId]/index.tsx` — aktif antrenman ekranı. */
 const ACTIVE_WORKOUT_PATTERN = /^\/program\/[^/]+\/day\/[^/]+$/;
+/**
+ * Alt sekme çubuğu yalnızca `(tabs)` route'larında görünür. Kök Stack'e
+ * push edilen ekranlar (program, gün, egzersiz ekleme, ayarlar) sekmeleri
+ * tamamen kaplar; oralarda alt yüzey cihazın güvenli alt sınırıdır.
+ */
+const ROOT_STACK_PATTERN = /^\/(program|settings)(\/|$)/;
 
 type Bounds = { maxX: number; maxY: number; minX: number; minY: number };
 
@@ -80,16 +109,46 @@ type BubbleVariant = 'tap' | 'celebration';
 /** `runId` sayesinde aynı tür tepki tekrarlansa bile süre efekti yeniden kurulur. */
 type ActiveReaction = { runId: number; type: MascotReactionType };
 
-function resolveX(side: MascotSide, bounds: Bounds) {
-  return side === 'left' ? bounds.minX : bounds.maxX;
+/** Kenar + oran → konteyner içindeki kutu koordinatı. */
+function resolveEdgePosition(edge: MascotEdge, edgeRatio: number, bounds: Bounds) {
+  const ratio = clampEdgeRatio(edgeRatio);
+
+  if (isVerticalEdge(edge)) {
+    return {
+      x: edge === 'left' ? bounds.minX : bounds.maxX,
+      y: bounds.minY + ratio * Math.max(0, bounds.maxY - bounds.minY),
+    };
+  }
+
+  return {
+    x: bounds.minX + ratio * Math.max(0, bounds.maxX - bounds.minX),
+    y: edge === 'top' ? bounds.minY : bounds.maxY,
+  };
 }
 
-function resolveY(verticalRatio: number, bounds: Bounds) {
-  return bounds.minY + clampVerticalRatio(verticalRatio) * Math.max(0, bounds.maxY - bounds.minY);
+/** Kenara göre peek vektörü (birim yön). */
+function edgeVector(edge: MascotEdge) {
+  'worklet';
+  if (edge === 'left') return { x: -1, y: 0 };
+  if (edge === 'right') return { x: 1, y: 0 };
+  if (edge === 'top') return { x: 0, y: -1 };
+  return { x: 0, y: 1 };
 }
 
 /**
- * Ekranda yaşayan maskot (Aşama 1).
+ * Hedef açıyı mevcut açıya **en yakın** eşdeğerine taşır. Böylece örneğin
+ * sağ kenardan (−90°) üst kenara (180°) geçerken 270° tam tur atılmaz,
+ * 90° kısa yol kullanılır. Deterministiktir.
+ */
+function nearestAngle(current: number, target: number) {
+  let delta = (target - current) % 360;
+  if (delta > 180) delta -= 360;
+  if (delta < -180) delta += 360;
+  return current + delta;
+}
+
+/**
+ * Ekranda yaşayan maskot.
  *
  * Ağ isteği, AI çağrısı veya Supabase sorgusu yapmaz; kullanıcı mesajlarını ve
  * antrenman verisini okumaz. Dış kapsayıcı `box-none` olduğu için yalnızca
@@ -140,14 +199,75 @@ export function FloatingMascot() {
   const isCompact = ACTIVE_WORKOUT_PATTERN.test(pathname ?? '');
   const mascotSize = isCompact ? COMPACT_MASCOT_SIZE : MASCOT_SIZE;
 
-  // Konum katmanı
+  /**
+   * Sekme çubuğu bu route'ta görünüyor mu? Alt kenarın "yüzeyi" buna göre
+   * değişir: sekme çubuğunun üstü veya cihazın güvenli alt sınırı.
+   */
+  const hasTabBar = !ROOT_STACK_PATTERN.test(pathname ?? '');
+  const bottomReserve = (hasTabBar ? Layout.tabBarHeight : 0) + insets.bottom;
+
+  /**
+   * Sunum konteyneri. Maskot bunun **içinde** yaşar ve `overflow: 'hidden'`
+   * ile buranın sınırında kırpılır.
+   *
+   * Bu, alt kenar için zorunlu: `FloatingMascot` navigasyonun üstünde bir
+   * overlay olarak çizildiği için gövdeyi gerçekten sekme çubuğunun arkasına
+   * çizmek mümkün değil (z-sırası buna izin vermiyor). Konteynerin alt sınırı
+   * sekme çubuğunun üst çizgisinde bittiği için gövde tam o çizgide kırpılır
+   * ve "yüzeyin arkasından bakma" görüntüsü sekme butonlarının üstüne hiç
+   * çizim yapmadan elde edilir.
+   *
+   * Aynı sınır dokunmayı da çözer: konteynerin kendi çerçevesi orada bittiği
+   * için sekme çubuğu üzerindeki dokunuşlar maskota hiç ulaşmaz.
+   */
+  const container = useMemo(
+    () => ({
+      top: insets.top,
+      left: insets.left,
+      right: insets.right,
+      bottom: bottomReserve,
+      innerWidth: Math.max(0, width - insets.left - insets.right),
+      innerHeight: Math.max(0, height - insets.top - bottomReserve),
+    }),
+    [bottomReserve, height, insets.left, insets.right, insets.top, width],
+  );
+
+  /** Kutu koordinatları konteynere görelidir. */
+  const bounds = useMemo<Bounds>(
+    () => ({
+      minX: EDGE_MARGIN,
+      minY: EDGE_MARGIN,
+      maxX: Math.max(EDGE_MARGIN, container.innerWidth - EDGE_MARGIN - TOUCH_SIZE),
+      maxY: Math.max(EDGE_MARGIN, container.innerHeight - EDGE_MARGIN - TOUCH_SIZE),
+    }),
+    [container.innerHeight, container.innerWidth],
+  );
+
+  // Kalıcı konum katmanı — kaydedilen konum yalnızca burada tutulur.
   const positionX = useSharedValue(0);
   const positionY = useSharedValue(0);
-  // Idle katmanı (süzülme)
-  const idleProgress = useSharedValue(0);
-  // İfade katmanı (sürekli düşünme eğilimi) — yalnızca rotation'a dokunur.
+  /**
+   * Kenardan bakma katmanı. **İşaretli** vektör tutar (0,0 = tamamen görünür).
+   *
+   * İşaretin değerin kendisinde taşınması bilinçli: yön her karede konumdan
+   * türetilseydi maskot orta çizgiyi veya köşeyi geçtiği anda işaret ters
+   * döner ve offset henüz sıfırlanmamışsa parmağın altında sıçrama olurdu.
+   * Animasyonlar her zaman mevcut değerden hedefe geçtiği için bu vektör
+   * hiçbir koşulda süreksizlik yaşamaz.
+   *
+   * `positionX/Y` içine yazılmaz ve AsyncStorage'a gitmez.
+   */
+  const peekOffsetX = useSharedValue(0);
+  const peekOffsetY = useSharedValue(0);
+  /**
+   * Kenar yönü katmanı — yalnızca peek duruşunun temel açısı. Tepki katmanının
+   * `reactionRotation` değerinden ayrıdır, böylece set/kutlama dönüşleriyle
+   * birbirlerini ezmezler.
+   */
+  const edgeRotation = useSharedValue(0);
+  // İfade katmanı (sürekli düşünme eğilimi) — temel açının üzerine eklenir.
   const thinkingProgress = useSharedValue(0);
-  // Tepki katmanı (tap/set/kutlama) — yalnızca translateY, scale ve rotation'a dokunur.
+  // Tepki katmanı (tap/set/kutlama).
   const reactionY = useSharedValue(0);
   const reactionScale = useSharedValue(1);
   const reactionRotation = useSharedValue(0);
@@ -162,20 +282,6 @@ export function FloatingMascot() {
    */
   const isPanActive = useSharedValue(false);
 
-  const bounds = useMemo<Bounds>(() => {
-    // Alt navigasyon + home indicator alanı her ekranda korunur.
-    const bottomReserve = Layout.tabBarHeight + insets.bottom;
-    const minX = insets.left + EDGE_MARGIN;
-    const minY = insets.top + EDGE_MARGIN;
-
-    return {
-      minX,
-      minY,
-      maxX: Math.max(minX, width - insets.right - EDGE_MARGIN - TOUCH_SIZE),
-      maxY: Math.max(minY, height - bottomReserve - EDGE_MARGIN - TOUCH_SIZE),
-    };
-  }, [height, insets.bottom, insets.left, insets.right, insets.top, width]);
-
   // Kayıtlı konum ref'te tutulur: sürükleme sonrası state güncellemesi
   // yeniden yerleştirme efektini tetiklemesin, maskot zıplamasın.
   const positionRef = useRef(position);
@@ -189,12 +295,11 @@ export function FloatingMascot() {
     if (!isReady) return;
 
     const target = positionRef.current;
-    const x = resolveX(target.side, bounds);
-    const y = resolveY(target.verticalRatio, bounds);
+    const { x, y } = resolveEdgePosition(target.edge, target.edgeRatio, bounds);
 
     if (hasPositionedRef.current) {
-      // Ekran boyutu / güvenli alan değişti: kayıtlı oran yeniden hesaplanıp
-      // yeni güvenli sınırların içine yaylanarak taşınır.
+      // Ekran boyutu / güvenli alan / sekme çubuğu değişti: kayıtlı oran
+      // yeniden hesaplanıp yeni güvenli sınırların içine yaylanarak taşınır.
       positionX.value = withSpring(x, SPRING);
       positionY.value = withSpring(y, SPRING);
       return;
@@ -269,31 +374,102 @@ export function FloatingMascot() {
     );
   }, [bubbleVariant]);
 
-  // Sakin süzülme. Sürükleme sırasında, Reduce Motion açıkken veya maskot
-  // gizliyken çalışmaz; interval kullanılmadığı için sürekli render üretmez.
+  /**
+   * Karakterin baş-kuyruk ekseni boyunca kenarın dışına kaydırılacağı mesafe.
+   * Kutunun kenarı ile konteyner sınırı arasındaki boşluk + gizlenecek uzunluk.
+   */
+  const peekDistance = useMemo(() => {
+    const axisLength = mascotSize / MASCOT_ASPECT;
+    const gapToBoundary = EDGE_MARGIN + (TOUCH_SIZE - axisLength) / 2;
+    const visible = Math.max(PEEK_MIN_VISIBLE, axisLength * PEEK_VISIBLE_FRACTION);
+    return gapToBoundary + Math.max(0, axisLength - visible);
+  }, [mascotSize]);
+
+  /**
+   * Sunum hedefi tek kaynaktan türetilir; peek/full için ayrı boolean state
+   * tutulmaz. Tamamen görünür durumlarda maskot dik (0°) durur, çünkü zıplama
+   * ve kutlama hareketleri yalnızca dik duruşta doğru okunur.
+   */
+  const isFullyVisible =
+    state === 'dragging' || Boolean(activeReaction) || Boolean(bubbleVariant);
+
+  const peekMagnitude = useMemo(() => {
+    if (isFullyVisible) return 0;
+    return isThinking ? peekDistance * THINKING_PEEK_FACTOR : peekDistance;
+  }, [isFullyVisible, isThinking, peekDistance]);
+
+  /**
+   * Peek yönü. Sürükleme boyunca sabit kalır; yalnızca iki güvenli noktada
+   * güncellenir: kayıtlı kenar değiştiğinde ve sürükleme bittiğinde yeni kenar
+   * kesinleştiğinde.
+   */
+  const peekEdgeRef = useRef<MascotEdge>(position.edge);
+  /**
+   * Aynı kenarın UI thread kopyası. `settleToEdge` bir worklet olduğu için
+   * JS ref'ini okuyamaz (ref closure'a snapshot olarak yakalanır); hysteresis
+   * kararının güncel kenarı görmesi buna bağlıdır.
+   */
+  const peekEdgeShared = useSharedValue<MascotEdge>(position.edge);
+
   useEffect(() => {
-    if (isHidden || reduceMotion || state === 'dragging' || activeReaction) {
-      cancelAnimation(idleProgress);
-      idleProgress.value = withTiming(0, { duration: 180 });
+    if (isDraggingRef.current) return;
+    peekEdgeRef.current = position.edge;
+    peekEdgeShared.value = position.edge;
+  }, [peekEdgeShared, position.edge]);
+
+  /** İlk yerleşim animasyonsuz olmalı: maskot tam görünür doğup kenara kaymaz. */
+  const hasPeekInitRef = useRef(false);
+
+  useEffect(() => {
+    if (!isReady) return;
+
+    const edge = peekEdgeRef.current;
+    const vector = edgeVector(edge);
+    const targetX = vector.x * peekMagnitude;
+    const targetY = vector.y * peekMagnitude;
+    // Tamamen görünürken dik dur; aksi hâlde bulunduğu kenarın temel açısı.
+    const rawRotation = isFullyVisible ? 0 : MASCOT_EDGE_ROTATION[edge];
+    const targetRotation = nearestAngle(edgeRotation.value, rawRotation);
+
+    if (!hasPeekInitRef.current) {
+      peekOffsetX.value = targetX;
+      peekOffsetY.value = targetY;
+      edgeRotation.value = rawRotation;
+      hasPeekInitRef.current = true;
       return;
     }
 
-    idleProgress.value = 0;
-    idleProgress.value = withRepeat(
-      withTiming(1, { duration: IDLE_HALF_CYCLE, easing: Easing.inOut(Easing.sin) }),
-      -1,
-      true,
-    );
+    if (reduceMotion) {
+      peekOffsetX.value = withTiming(targetX, { duration: REDUCED_PEEK_DURATION });
+      peekOffsetY.value = withTiming(targetY, { duration: REDUCED_PEEK_DURATION });
+      edgeRotation.value = withTiming(targetRotation, { duration: REDUCED_PEEK_DURATION });
+      return;
+    }
 
-    return () => cancelAnimation(idleProgress);
-  }, [activeReaction, idleProgress, isHidden, reduceMotion, state]);
+    peekOffsetX.value = withSpring(targetX, PEEK_SPRING);
+    peekOffsetY.value = withSpring(targetY, PEEK_SPRING);
+    edgeRotation.value = withSpring(targetRotation, PEEK_SPRING);
+    // `position.edge` bağımlılığı, kayıtlı kenar değiştiğinde hedefin yeni
+    // yönle yeniden hesaplanmasını sağlar.
+  }, [
+    edgeRotation,
+    isFullyVisible,
+    isReady,
+    peekMagnitude,
+    peekOffsetX,
+    peekOffsetY,
+    position.edge,
+    reduceMotion,
+  ]);
 
   // Unmount olurken süren tüm animasyonlar durdurulur.
   useEffect(
     () => () => {
       cancelAnimation(positionX);
       cancelAnimation(positionY);
-      cancelAnimation(idleProgress);
+      cancelAnimation(peekOffsetX);
+      cancelAnimation(peekOffsetY);
+      cancelAnimation(edgeRotation);
       cancelAnimation(thinkingProgress);
       cancelAnimation(reactionY);
       cancelAnimation(reactionScale);
@@ -301,7 +477,9 @@ export function FloatingMascot() {
       cancelAnimation(reactionOpacity);
     },
     [
-      idleProgress,
+      edgeRotation,
+      peekOffsetX,
+      peekOffsetY,
       positionX,
       positionY,
       reactionOpacity,
@@ -314,8 +492,7 @@ export function FloatingMascot() {
 
   /**
    * Süren tek seferlik tepkiyi tamamen sonlandırır: animasyonlar iptal edilir,
-   * değerler normale döner, partikül ve kutlama balonu kaldırılır. `runId`
-   * temizlendiği için süre efektinin cleanup'ı eski zamanlayıcıyı da siler.
+   * değerler normale döner, partikül ve kutlama balonu kaldırılır.
    *
    * `resetScale` sürükleme yolunda `false` gelir: o sırada `reactionScale`
    * sürükleme ölçeğine (%5) aittir ve ezilmemelidir.
@@ -353,13 +530,21 @@ export function FloatingMascot() {
 
   /** AsyncStorage'a yalnızca sürükleme bittiğinde yazılır, her frame'de değil. */
   const handleDragEnd = useCallback(
-    (side: MascotSide, verticalRatio: number) => {
+    (edge: MascotEdge, edgeRatio: number) => {
       isDraggingRef.current = false;
+      // Kenar, yeni değeri kesinleştiği anda ve `setState`'ten ÖNCE güncellenir:
+      // aşağıdaki setState peek efektini tetiklediğinde hedef doğrudan yeni
+      // kenara göre hesaplanır, önce eski kenara doğru yanlış bir animasyon
+      // başlayıp sonra düzeltilmez. Normal `onEnd` ve iptal yolundaki
+      // `onFinalize` aynı `settleToEdge` → `handleDragEnd` akışını kullandığı
+      // için ikisi de aynı sonucu verir.
+      peekEdgeRef.current = edge;
+      peekEdgeShared.value = edge;
       // Sürükleme bitince AI hâlâ yazıyorsa düşünme durumuna dönülür.
       setState(isThinkingRef.current ? 'thinking' : 'idle');
-      void savePosition({ side, verticalRatio });
+      void savePosition({ edge, edgeRatio });
     },
-    [savePosition],
+    [peekEdgeShared, savePosition],
   );
 
   const handleTap = useCallback(() => {
@@ -388,8 +573,8 @@ export function FloatingMascot() {
 
   /**
    * Tek seferlik tepkiyi oynatır. Tepki katmanı `translateY`, `scale` ve
-   * `rotation`'ı yalnızca burada sürer; konum ve idle katmanlarına dokunmaz,
-   * bu yüzden maskotun kayıtlı konumu değişmez.
+   * `rotation`'ı yalnızca burada sürer; konum, peek ve kenar yönü katmanlarına
+   * dokunmaz, bu yüzden maskotun kayıtlı konumu değişmez.
    */
   const playReaction = useCallback(
     (type: MascotReactionType) => {
@@ -559,6 +744,7 @@ export function FloatingMascot() {
   /**
    * Düşünme: yavaş sağ-sol eğilme. Öncelik sırası gereği sürükleme veya tek
    * seferlik bir tepki varken durur; onlar bitince AI hâlâ yazıyorsa devam eder.
+   * Kenarın temel açısının **üzerine** ayrı katmanda eklenir.
    */
   useEffect(() => {
     const shouldThink =
@@ -584,19 +770,62 @@ export function FloatingMascot() {
     /**
      * Sürüklemenin bitiş temizliği. Normal `.onEnd` ve iptal yolundaki
      * `.onFinalize` aynı davranışı paylaşsın diye tek yerde tutulur:
-     * en yakın kenara yerleş, ölçeği normale döndür, konumu kaydet.
+     * en yakın **dört** kenardan birine yerleş, ölçeği normale döndür,
+     * konumu bir kez kaydet.
      */
     const settleToEdge = () => {
       'worklet';
-      const side: MascotSide = positionX.value + TOUCH_SIZE / 2 < width / 2 ? 'left' : 'right';
-      const span = bounds.maxY - bounds.minY;
-      const rawRatio = span > 0 ? (positionY.value - bounds.minY) / span : 0;
-      // Oran her koşulda güvenli sınırlar içinde kalır.
-      const verticalRatio = Math.min(1, Math.max(0, rawRatio));
+      const centerX = positionX.value + TOUCH_SIZE / 2;
+      const centerY = positionY.value + TOUCH_SIZE / 2;
+      const spanX = bounds.maxX - bounds.minX;
+      const spanY = bounds.maxY - bounds.minY;
 
-      positionX.value = withSpring(side === 'left' ? bounds.minX : bounds.maxX, SPRING);
+      // Merkezin dört sınıra uzaklığı.
+      let bestEdge: MascotEdge = 'right';
+      let bestDistance = Infinity;
+      const distances: { edge: MascotEdge; distance: number }[] = [
+        { edge: 'left', distance: centerX - bounds.minX },
+        { edge: 'right', distance: bounds.maxX + TOUCH_SIZE - centerX },
+        { edge: 'top', distance: centerY - bounds.minY },
+        { edge: 'bottom', distance: bounds.maxY + TOUCH_SIZE - centerY },
+      ];
+
+      for (let i = 0; i < distances.length; i += 1) {
+        // Hysteresis: mevcut kenar küçük bir avantajla korunur, böylece
+        // köşede uzaklıklar neredeyse eşitken kenar sürekli değişip titremez.
+        const bias = distances[i].edge === peekEdgeShared.value ? EDGE_HYSTERESIS : 0;
+        const effective = distances[i].distance - bias;
+        if (effective < bestDistance) {
+          bestDistance = effective;
+          bestEdge = distances[i].edge;
+        }
+      }
+
+      const isVertical = bestEdge === 'left' || bestEdge === 'right';
+      const rawRatio = isVertical
+        ? spanY > 0
+          ? (positionY.value - bounds.minY) / spanY
+          : 0
+        : spanX > 0
+          ? (positionX.value - bounds.minX) / spanX
+          : 0;
+      const edgeRatio = Math.min(1, Math.max(0, rawRatio));
+
+      const targetX = isVertical
+        ? bestEdge === 'left'
+          ? bounds.minX
+          : bounds.maxX
+        : bounds.minX + edgeRatio * spanX;
+      const targetY = isVertical
+        ? bounds.minY + edgeRatio * spanY
+        : bestEdge === 'top'
+          ? bounds.minY
+          : bounds.maxY;
+
+      positionX.value = withSpring(targetX, SPRING);
+      positionY.value = withSpring(targetY, SPRING);
       reactionScale.value = withSpring(1, SPRING);
-      runOnJS(handleDragEnd)(side, verticalRatio);
+      runOnJS(handleDragEnd)(bestEdge, edgeRatio);
     };
 
     const pan = Gesture.Pan()
@@ -652,23 +881,31 @@ export function FloatingMascot() {
     handleDragStart,
     handleTap,
     isPanActive,
+    peekEdgeShared,
     positionX,
     positionY,
     reactionScale,
-    width,
   ]);
 
   const positionStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: positionX.value }, { translateY: positionY.value }],
   }));
 
-  const idleStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateY: interpolate(idleProgress.value, [0, 1], [IDLE_TRAVEL, -IDLE_TRAVEL]) },
-    ],
+  /**
+   * Kenardan bakma katmanı. İşaret vektörün içinde taşındığı için burada
+   * hiçbir yön hesabı yapılmaz — orta çizgi veya köşe geçilse bile sıçrama
+   * oluşamaz.
+   */
+  const peekStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: peekOffsetX.value }, { translateY: peekOffsetY.value }],
   }));
 
-  /** İfade katmanı: yalnızca düşünme eğilimi. Tepki katmanını ezmez. */
+  /** Kenar yönü katmanı: yalnızca peek duruşunun temel açısı. */
+  const edgeRotationStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${edgeRotation.value}deg` }],
+  }));
+
+  /** İfade katmanı: düşünme eğilimi temel açının üzerine eklenir. */
   const thinkingStyle = useAnimatedStyle(() => ({
     transform: [
       {
@@ -696,19 +933,47 @@ export function FloatingMascot() {
     router.navigate('/coach');
   }, [router, showBubble]);
 
+  /**
+   * Üst/alt kenarda balonun yatay kayması. Balon maskot kutusunun merkezine
+   * hizalanır, ancak konteynerin içinde kalacak biçimde sıkıştırılır; böylece
+   * maskot kenarın ucuna yakınken bile balon ekran dışına taşmaz.
+   */
+  const bubbleHorizontalOffset = useMemo(() => {
+    if (isVerticalEdge(position.edge)) return 0;
+
+    const boxX = bounds.minX + clampEdgeRatio(position.edgeRatio) * (bounds.maxX - bounds.minX);
+    const centered = boxX + TOUCH_SIZE / 2 - BUBBLE_MAX_WIDTH / 2;
+    const clamped = Math.min(
+      Math.max(EDGE_MARGIN, container.innerWidth - BUBBLE_MAX_WIDTH - EDGE_MARGIN),
+      Math.max(EDGE_MARGIN, centered),
+    );
+    return clamped - boxX;
+  }, [bounds, container.innerWidth, position.edge, position.edgeRatio]);
+
   if (isHidden) return null;
 
   const isCelebrationBubble = bubbleVariant === 'celebration';
 
   return (
-    <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+    <View
+      pointerEvents="box-none"
+      style={[
+        styles.clipContainer,
+        {
+          bottom: container.bottom,
+          left: container.left,
+          right: container.right,
+          top: container.top,
+        },
+      ]}>
       <Animated.View pointerEvents="box-none" style={[styles.positionLayer, positionStyle]}>
         {bubbleVariant && (
           <MascotSpeechBubble
+            edge={position.edge}
+            horizontalOffset={bubbleHorizontalOffset}
             message={isCelebrationBubble ? t('mascot.celebrationMessage') : undefined}
             onPressCta={handleOpenCoach}
             showCta={!isCelebrationBubble}
-            side={position.side}
           />
         )}
 
@@ -720,36 +985,49 @@ export function FloatingMascot() {
           />
         )}
 
-        {/* Katmanlar: Konum → Idle → İfade(düşünme) → Tepki → Görsel.
-            Her katman yalnızca kendi transform'unu sürer, hiçbiri diğerini ezmez. */}
-        <GestureDetector gesture={gesture}>
-          <Animated.View
-            accessible
-            accessibilityHint={t('mascot.accessibilityHint')}
-            accessibilityLabel={t('mascot.accessibilityLabel')}
-            accessibilityRole="button"
-            onAccessibilityTap={handleTap}
-            style={[styles.touchTarget, idleStyle]}>
-            <Animated.View style={thinkingStyle}>
-              <Animated.View style={reactionStyle}>
-                <Image
-                  accessibilityElementsHidden
-                  contentFit="contain"
-                  importantForAccessibility="no"
-                  source={mascotSource}
-                  style={{ height: mascotSize, width: mascotSize }}
-                  transition={0}
-                />
+        {/* Katmanlar:
+            Kalıcı konum → Kenardan bakma → Kenar yönü → Düşünme → Tepki → Görsel.
+            Her katman yalnızca kendi transform'unu sürer, hiçbiri diğerini ezmez.
+            Balon ve partiküller dönüş katmanlarının dışındadır: hiç dönmezler.
+            Dokunma hedefi peek katmanının içindedir, yani karakterle birlikte
+            hareket eder ve gizlenen kısmı konteynerin dışında kalır. */}
+        <Animated.View pointerEvents="box-none" style={[styles.peekLayer, peekStyle]}>
+          <GestureDetector gesture={gesture}>
+            <Animated.View
+              accessible
+              accessibilityHint={t('mascot.accessibilityHint')}
+              accessibilityLabel={t('mascot.accessibilityLabel')}
+              accessibilityRole="button"
+              onAccessibilityTap={handleTap}
+              style={styles.touchTarget}>
+              <Animated.View style={edgeRotationStyle}>
+                <Animated.View style={thinkingStyle}>
+                  <Animated.View style={reactionStyle}>
+                    <Image
+                      accessibilityElementsHidden
+                      contentFit="contain"
+                      importantForAccessibility="no"
+                      source={mascotSource}
+                      style={{ height: mascotSize, width: mascotSize }}
+                      transition={0}
+                    />
+                  </Animated.View>
+                </Animated.View>
               </Animated.View>
             </Animated.View>
-          </Animated.View>
-        </GestureDetector>
+          </GestureDetector>
+        </Animated.View>
       </Animated.View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  /**
+   * Maskotun yaşadığı alan. `overflow: 'hidden'` gövdeyi konteyner sınırında
+   * kırpar; konteynerin kendi çerçevesi de dokunmayı orada durdurur.
+   */
+  clipContainer: { overflow: 'hidden', position: 'absolute' },
   positionLayer: {
     height: TOUCH_SIZE,
     left: 0,
@@ -757,6 +1035,7 @@ const styles = StyleSheet.create({
     top: 0,
     width: TOUCH_SIZE,
   },
+  peekLayer: { height: TOUCH_SIZE, width: TOUCH_SIZE },
   touchTarget: {
     alignItems: 'center',
     height: TOUCH_SIZE,
