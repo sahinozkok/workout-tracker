@@ -10,7 +10,11 @@ export const BUBBLE_MAX_WIDTH = 188;
 export const BUBBLE_GAP = 8;
 
 type Props = {
+  /** Verilmezse Aşama 1'in varsayılan dokunma mesajı gösterilir. */
+  message?: string;
   onPressCta: () => void;
+  /** Kutlama balonunda AI Koç CTA'sı bulunmaz. */
+  showCta?: boolean;
   /** Maskotun yaslandığı kenar; balon her zaman ekranın içine doğru açılır. */
   side: MascotSide;
 };
@@ -19,23 +23,25 @@ type Props = {
  * Kompakt konuşma balonu. Yalnızca görünür alanı dokunma yakalar; çevresindeki
  * saydam bölge `box-none` sayesinde alttaki ekranın butonlarını engellemez.
  */
-export function MascotSpeechBubble({ onPressCta, side }: Props) {
+export function MascotSpeechBubble({ message, onPressCta, showCta = true, side }: Props) {
   const { colors } = useAppTheme();
   const { t } = useTranslation();
   const styles = createStyles(colors);
 
   return (
     <View style={[styles.bubble, side === 'right' ? styles.bubbleLeftOfMascot : styles.bubbleRightOfMascot]}>
-      <Text style={styles.message}>{t('mascot.bubbleMessage')}</Text>
-      <Pressable
-        accessibilityLabel={t('mascot.bubbleCta')}
-        accessibilityRole="button"
-        hitSlop={6}
-        onPress={onPressCta}
-        style={({ pressed }) => [styles.cta, pressed && styles.pressed]}>
-        <Text style={styles.ctaText}>{t('mascot.bubbleCta')}</Text>
-        <Ionicons name="arrow-forward" size={12} color={colors.primary} />
-      </Pressable>
+      <Text style={styles.message}>{message ?? t('mascot.bubbleMessage')}</Text>
+      {showCta && (
+        <Pressable
+          accessibilityLabel={t('mascot.bubbleCta')}
+          accessibilityRole="button"
+          hitSlop={6}
+          onPress={onPressCta}
+          style={({ pressed }) => [styles.cta, pressed && styles.pressed]}>
+          <Text style={styles.ctaText}>{t('mascot.bubbleCta')}</Text>
+          <Ionicons name="arrow-forward" size={12} color={colors.primary} />
+        </Pressable>
+      )}
     </View>
   );
 }

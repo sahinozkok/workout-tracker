@@ -23,6 +23,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useTranslation } from '@/context/language-context';
+import { useMascot } from '@/context/mascot-context';
 import { useProfile } from '@/context/profile-context';
 import { useWorkout } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
@@ -70,6 +71,19 @@ export default function CoachScreen() {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string>();
   const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
+
+  const { setThinking } = useMascot();
+
+  /**
+   * Maskotun düşünme durumu mevcut `isSending` state'ini izler. Yeni bir AI
+   * isteği oluşturmaz; üç noktalı "yazıyor" göstergesi olduğu gibi kalır.
+   * Cleanup her durumda `false` yazdığı için ekrandan çıkıldığında maskot
+   * düşünme animasyonunda takılı kalmaz.
+   */
+  useEffect(() => {
+    setThinking(isSending);
+    return () => setThinking(false);
+  }, [isSending, setThinking]);
 
   const scrollToEnd = useCallback(() => {
     requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));

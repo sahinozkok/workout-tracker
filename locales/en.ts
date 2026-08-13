@@ -555,5 +555,6 @@ export const en: TranslationSchema = {
     accessibilityHint: 'Tap to open the speech bubble, press and hold to drag it.',
     bubbleMessage: 'Ready for today’s workout?',
     bubbleCta: 'Open AI Coach',
+    celebrationMessage: 'Workout complete! Great work!',
   },
 };

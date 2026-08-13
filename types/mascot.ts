@@ -1,5 +1,26 @@
-/** Aşama 1 maskot durumları. Evcil hayvan/ilerleme sistemi bilerek yok. */
-export type MascotState = 'idle' | 'dragging' | 'happy';
+/** Maskotun görsel durumu. Evcil hayvan/ilerleme sistemi bilerek yok. */
+export type MascotState = 'idle' | 'dragging' | 'happy' | 'thinking' | 'celebrating';
+
+/** Ekranların maskota gönderebileceği tek seferlik olaylar. */
+export type MascotReactionType = 'set-complete' | 'workout-complete';
+
+/**
+ * Tek seferlik tepki. `id` artan olduğu için React yeniden render olduğunda
+ * aynı tepki tekrar oynatılmaz; kalıcı olarak hiçbir yere yazılmaz.
+ */
+export type MascotReaction = {
+  id: number;
+  type: MascotReactionType;
+};
+
+/**
+ * Çakışma önceliği (büyükten küçüğe):
+ * dragging > workout-complete > set-complete > thinking > idle
+ */
+export const MASCOT_REACTION_PRIORITY: Record<MascotReactionType, number> = {
+  'workout-complete': 2,
+  'set-complete': 1,
+};
 
 /** Maskotun yaslandığı ekran kenarı. */
 export type MascotSide = 'left' | 'right';

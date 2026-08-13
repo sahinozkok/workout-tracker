@@ -11,6 +11,7 @@ import { WorkoutVisualPicker } from '@/components/workout-visual-picker';
 import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { getWeekdayLabel, getWeekdayOptions } from '@/constants/weekdays';
 import { useTranslation } from '@/context/language-context';
+import { useMascot } from '@/context/mascot-context';
 import { useProfile } from '@/context/profile-context';
 import { useWorkout } from '@/context/workout-context';
 import { getProgramExerciseName } from '@/data/exercises';
@@ -47,6 +48,8 @@ import { DEFAULT_EXERCISE_VISUAL, getDayVisual, getExerciseVisual } from '@/util
 
 export default function WorkoutDayScreen() {
   const { id, dayId } = useLocalSearchParams<{ id: string; dayId: string }>();
+  // Yalnızca yerel, geçici bir UI olayı gönderir; ağ/depolama işlemi yapmaz.
+  const { triggerReaction } = useMascot();
   const {
     completeSet,
     completedSetCounts,
@@ -391,6 +394,9 @@ export default function WorkoutDayScreen() {
     setIsWorkoutActionPending(true);
     try {
       await finishWorkout(sessionId);
+      // Manuel bitiş de aynı başarı noktasını kullanır: hata olursa buraya
+      // hiç gelinmez, dolayısıyla kutlama oynamaz.
+      triggerReaction('workout-complete');
       void clearRestTimer();
     } catch (error) {
       showWorkoutError(t('day.finishFailed'), error, t);
@@ -407,12 +413,20 @@ export default function WorkoutDayScreen() {
       const completesWholeWorkout = totalCompletedSets + 1 >= totalTargetSets;
       if (completesWholeWorkout) {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        if (workoutSession?.status === 'running') await finishWorkout(workoutSession.id);
+        if (workoutSession?.status === 'running') {
+          await finishWorkout(workoutSession.id);
+          // Yalnızca finishWorkout başarıyla döndüyse kutlama oynar. Bu dal
+          // erken `return` ettiği için küçük set tepkisi hiç tetiklenmez.
+          triggerReaction('workout-complete');
+        }
         void clearRestTimer();
         return;
       }
 
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      // Set gerçekten kaydedildi ve antrenmanı bitirmiyor: küçük sevinme.
+      // Ek haptic yok; yukarıdaki mevcut davranış korunur.
+      triggerReaction('set-complete');
 
       if (!restTimerEnabled || exercise.restSeconds <= 0) return;
 
