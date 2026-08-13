@@ -14,16 +14,24 @@ import { useAuth } from '@/context/auth-context';
 import {
   DEFAULT_MASCOT_POSITION,
   MascotPosition,
+  MascotReaction,
+  MascotReactionType,
   normalizeMascotPosition,
 } from '@/types/mascot';
 
 type MascotContextValue = {
   enabled: boolean;
+  /** AI yanıt hazırlarken sürekli açık kalan durum. */
+  isThinking: boolean;
   /** Tercih okunana kadar maskot çizilmez; yanlış konumda "doğup" zıplamaz. */
   isReady: boolean;
   position: MascotPosition;
+  /** En son tetiklenen tek seferlik olay; kalıcı değildir. */
+  reaction?: MascotReaction;
   savePosition: (position: MascotPosition) => Promise<void>;
   setEnabled: (enabled: boolean) => Promise<void>;
+  setThinking: (value: boolean) => void;
+  triggerReaction: (type: MascotReactionType) => void;
 };
 
 const ENABLED_KEY_PREFIX = 'mascot:enabled';
@@ -51,6 +59,10 @@ export function MascotProvider({ children }: PropsWithChildren) {
   const [enabled, setEnabledState] = useState(true);
   const [position, setPosition] = useState<MascotPosition>(DEFAULT_MASCOT_POSITION);
   const [isReady, setIsReady] = useState(false);
+  const [reaction, setReaction] = useState<MascotReaction>();
+  const [isThinking, setIsThinking] = useState(false);
+  // Artan sayaç; her olay benzersiz bir kimlik alır.
+  const reactionIdRef = useRef(0);
 
   useEffect(() => {
     if (!userId) {
@@ -58,6 +70,8 @@ export function MascotProvider({ children }: PropsWithChildren) {
       setEnabledState(true);
       setPosition(DEFAULT_MASCOT_POSITION);
       setIsReady(false);
+      setReaction(undefined);
+      setIsThinking(false);
       return;
     }
 
@@ -101,14 +115,24 @@ export function MascotProvider({ children }: PropsWithChildren) {
 
   // Yazma sırasında oturumun güncel sahibini stale closure olmadan okumak için.
   const userIdRef = useRef(userId);
+  // triggerReaction'ın kimliği sabit kalsın diye tercih ref üzerinden okunur.
+  const enabledRef = useRef(enabled);
 
   useEffect(() => {
     userIdRef.current = userId;
   }, [userId]);
 
+  useEffect(() => {
+    enabledRef.current = enabled;
+  }, [enabled]);
+
   const setEnabled = useCallback(async (nextEnabled: boolean) => {
     // Ayar anında uygulanır; kalıcılaştırma başarısız olsa bile UI takılmaz.
+    enabledRef.current = nextEnabled;
     setEnabledState(nextEnabled);
+
+    // Maskot kapatılınca bekleyen kutlama/tepki de temizlenir.
+    if (!nextEnabled) setReaction(undefined);
 
     const ownerId = userIdRef.current;
     if (!ownerId) return;
@@ -116,6 +140,23 @@ export function MascotProvider({ children }: PropsWithChildren) {
     await AsyncStorage.setItem(enabledKey(ownerId), nextEnabled ? 'true' : 'false').catch(
       () => undefined,
     );
+  }, []);
+
+  /**
+   * Tek seferlik olay gönderir. Maskot kapalıyken olay düşürülür: daha sonra
+   * oynamak üzere kuyrukta beklemez. Hiçbir kalıcı depolamaya yazılmaz.
+   */
+  const triggerReaction = useCallback((type: MascotReactionType) => {
+    if (!enabledRef.current) return;
+
+    reactionIdRef.current += 1;
+    setReaction({ id: reactionIdRef.current, type });
+  }, []);
+
+  const setThinking = useCallback((value: boolean) => {
+    // Aynı değer için gereksiz render üretmemek adına React'in kendi
+    // eşitlik kontrolüne bırakılır.
+    setIsThinking(value);
   }, []);
 
   const savePosition = useCallback(async (nextPosition: MascotPosition) => {
@@ -131,8 +172,28 @@ export function MascotProvider({ children }: PropsWithChildren) {
   }, []);
 
   const value = useMemo(
-    () => ({ enabled, isReady, position, savePosition, setEnabled }),
-    [enabled, isReady, position, savePosition, setEnabled],
+    () => ({
+      enabled,
+      isReady,
+      isThinking,
+      position,
+      reaction,
+      savePosition,
+      setEnabled,
+      setThinking,
+      triggerReaction,
+    }),
+    [
+      enabled,
+      isReady,
+      isThinking,
+      position,
+      reaction,
+      savePosition,
+      setEnabled,
+      setThinking,
+      triggerReaction,
+    ],
   );
 
   return <MascotContext.Provider value={value}>{children}</MascotContext.Provider>;

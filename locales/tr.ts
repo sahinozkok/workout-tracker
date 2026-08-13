@@ -554,6 +554,7 @@ export const tr = {
     accessibilityHint: 'Konuşma balonunu açmak için dokun, taşımak için basılı tutup sürükle.',
     bubbleMessage: 'Bugünkü antrenmana hazır mısın?',
     bubbleCta: 'AI Koç’a git',
+    celebrationMessage: 'Antrenman tamamlandı! Harika iş!',
   },
 };
 
