@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
+import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -11,18 +12,18 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ProgressRing } from '@/components/progress-ring';
 import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useLanguage } from '@/context/language-context';
 import { useProfile } from '@/context/profile-context';
-import { ThemePreference } from '@/context/theme-context';
+import { useWorkout } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import {
   getStoragePathFromUrl,
@@ -30,9 +31,8 @@ import {
   ProfileMediaError,
   removeProfileImagePaths,
 } from '@/services/profile-media';
-import { AppLanguage, TrainingGoal, UserProfile } from '@/types/profile';
-import { cancelAllRestNotifications } from '@/utils/rest-notifications';
-import { clearAllRestTimers } from '@/utils/rest-timer-storage';
+import { TrainingGoal, UserProfile } from '@/types/profile';
+import { calculateDisciplineStreak } from '@/utils/discipline';
 
 const GOAL_OPTIONS: { glyph: string; labelKey: string; value: TrainingGoal }[] = [
   { glyph: '📅', labelKey: 'profile.goalConsistency', value: 'consistency' },
@@ -41,19 +41,15 @@ const GOAL_OPTIONS: { glyph: string; labelKey: string; value: TrainingGoal }[] =
   { glyph: '♡', labelKey: 'profile.goalFitness', value: 'fitness' },
 ];
 
-const LANGUAGE_OPTIONS: { labelKey: string; value: AppLanguage }[] = [
-  { labelKey: 'profile.languageTurkish', value: 'tr' },
-  { labelKey: 'profile.languageEnglish', value: 'en' },
-];
-
 export default function ProfileScreen() {
-  const { signOut, user } = useAuth();
-  const { profile, restTimerEnabled, saveProfile, savePreferredLanguage, setRestTimerEnabled, uploadProfileMedia } =
-    useProfile();
-  const { colors, isDark, preference, setPreference } = useAppTheme();
-  const { language, setLanguage, t } = useLanguage();
+  const { user } = useAuth();
+  const { profile, saveProfile, saveProfileMedia, uploadProfileMedia } = useProfile();
+  const { colors, isDark } = useAppTheme();
+  const { disciplineStatuses, workoutSessions } = useWorkout();
+  const { t } = useLanguage();
   const styles = createStyles(colors);
   const [draft, setDraft] = useState<UserProfile>(profile);
+  const [isProfileEditorOpen, setIsProfileEditorOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [uploadingKind, setUploadingKind] = useState<ProfileImageKind>();
   // Yüklenmiş ama henüz "Profili kaydet" ile kalıcılaşmamış dosyalar.
@@ -79,8 +75,21 @@ export default function ProfileScreen() {
     [],
   );
 
+  const isProfileEditorOpenRef = useRef(isProfileEditorOpen);
+
   useEffect(() => {
-    setDraft(profile);
+    isProfileEditorOpenRef.current = isProfileEditorOpen;
+  }, [isProfileEditorOpen]);
+
+  useEffect(() => {
+    // Kapak/avatar artık anında kalıcılaştığı için profil nesnesi kullanıcı
+    // formu doldururken de değişebilir. Düzenleme alanı açıkken yalnızca
+    // görsel alanlar eşitlenir; henüz kaydedilmemiş ad/bio metinleri ezilmez.
+    setDraft((current) =>
+      isProfileEditorOpenRef.current
+        ? { ...current, avatarUri: profile.avatarUri, bannerUri: profile.bannerUri }
+        : profile,
+    );
   }, [profile]);
 
   function updateDraft<Key extends keyof UserProfile>(key: Key, value: UserProfile[Key]) {
@@ -126,13 +135,31 @@ export default function ProfileScreen() {
         await removeProfileImagePaths([previousStagedPath], user.id);
       }
 
+      // Kalıcılaştırma bitene kadar dosya staged sayılır; bu arada ekrandan
+      // çıkılırsa sahipsiz dosya bırakılmaz.
       const stagedPath = user?.id ? getStoragePathFromUrl(publicUrl, user.id) : undefined;
       stagedPathsRef.current = { ...stagedPathsRef.current, [kind]: stagedPath };
+
+      try {
+        // Kamera düğmesi düzenleme alanı kapalıyken de erişilebilir olduğundan,
+        // kullanıcıdan ayrıca "Profili kaydet" demesi beklenmez.
+        await saveProfileMedia(kind, publicUrl);
+      } finally {
+        // Başarılıysa dosya artık kalıcı: unmount temizliği onu silmemeli.
+        // Başarısızsa context dosyayı zaten sildi: aynı yol ikinci kez
+        // hedeflenmemeli. Her iki durumda da işaret kaldırılır.
+        stagedPathsRef.current = { ...stagedPathsRef.current, [kind]: undefined };
+      }
+
       updateDraft(kind === 'avatar' ? 'avatarUri' : 'bannerUri', publicUrl);
     } catch (error) {
-      // Yükleme başarısızsa mevcut çalışan görsel korunur.
-      const code = error instanceof ProfileMediaError ? error.code : 'uploadFailed';
-      Alert.alert(t('profile.uploadFailedTitle'), t(`profile.mediaErrors.${code}`));
+      // Yükleme veya kayıt başarısızsa mevcut çalışan görsel korunur.
+      if (error instanceof Error && error.message === 'bannerColumnMissing') {
+        Alert.alert(t('profile.bannerNotSupported'), t('profile.bannerNotSupportedBody'));
+      } else {
+        const code = error instanceof ProfileMediaError ? error.code : 'uploadFailed';
+        Alert.alert(t('profile.uploadFailedTitle'), t(`profile.mediaErrors.${code}`));
+      }
     } finally {
       setUploadingKind(undefined);
     }
@@ -154,15 +181,6 @@ export default function ProfileScreen() {
     if (stagedPath && ownerId) {
       // removeProfileImagePaths yolun kullanıcıya ait olduğunu ayrıca doğrular.
       await removeProfileImagePaths([stagedPath], ownerId);
-    }
-  }
-
-  async function handleLanguageChange(nextLanguage: AppLanguage) {
-    setLanguage(nextLanguage);
-    try {
-      await savePreferredLanguage(nextLanguage);
-    } catch {
-      Alert.alert(t('profile.languageFailed'), t('common.networkError'));
     }
   }
 
@@ -194,6 +212,7 @@ export default function ProfileScreen() {
       // sırasında yanlışlıkla silinmesinler.
       stagedPathsRef.current = {};
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setIsProfileEditorOpen(false);
       Alert.alert(t('profile.saved'), t('profile.savedBody'));
     } catch (error) {
       // Başarısız kayıtta context yeni dosyaları sildi; işaretler tekrar
@@ -209,32 +228,10 @@ export default function ProfileScreen() {
     }
   }
 
-  async function handleRestTimerToggle(enabled: boolean) {
-    try {
-      await setRestTimerEnabled(enabled);
-      // Ayar kapatılınca planlanmış mola bildirimleri ve yalnızca rest-timer
-      // ön ekine sahip AsyncStorage kayıtları temizlenir; başka veri silinmez.
-      if (!enabled) await Promise.all([cancelAllRestNotifications(), clearAllRestTimers()]);
-    } catch {
-      Alert.alert(t('profile.restTimerFailed'), t('profile.restTimerFailedBody'));
-    }
-  }
-
-  function handleSignOut() {
-    Alert.alert(t('profile.signOut'), t('profile.signOutBody'), [
-      { text: t('common.cancel'), style: 'cancel' },
-      {
-        text: t('profile.signOut'),
-        style: 'destructive',
-        onPress: async () => {
-          const result = await signOut();
-          if (result.error) Alert.alert(t('profile.signOutFailed'), result.error);
-        },
-      },
-    ]);
-  }
-
   const avatarLetter = draft.displayName.trim().charAt(0).toLocaleUpperCase('tr-TR') || 'S';
+  const completedWorkoutCount = workoutSessions.filter((session) => session.status === 'completed').length;
+  const disciplineStreak = calculateDisciplineStreak(disciplineStatuses);
+  const selectedGoal = GOAL_OPTIONS.find((option) => option.value === draft.trainingGoal);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -285,6 +282,76 @@ export default function ProfileScreen() {
             </View>
           </View>
 
+          <View style={styles.profileSummary}>
+            <Text style={styles.summaryName}>{draft.displayName || t('profile.displayNamePlaceholder')}</Text>
+            <Text numberOfLines={1} style={styles.summaryMeta}>
+              @{draft.username || t('profile.usernamePlaceholder')}
+              {draft.bio.trim() ? ` · ${draft.bio.trim()}` : ''}
+            </Text>
+
+            <View style={styles.summaryRings}>
+              <View style={styles.summaryRingItem}>
+                <ProgressRing
+                  color={colors.primary}
+                  progress={Math.min(1, completedWorkoutCount / 12)}
+                  size={54}
+                  strokeWidth={4}
+                  trackColor={colors.surfaceMuted}>
+                  <Text style={styles.summaryRingValue}>{completedWorkoutCount}</Text>
+                </ProgressRing>
+                <Text style={styles.summaryRingLabel}>{t('history.workouts')}</Text>
+              </View>
+              <View style={styles.summaryRingItem}>
+                <ProgressRing
+                  color={colors.accent}
+                  progress={Math.min(1, disciplineStreak / 7)}
+                  size={54}
+                  strokeWidth={4}
+                  trackColor={colors.surfaceMuted}>
+                  <Text style={styles.summaryRingValue}>{disciplineStreak}g</Text>
+                </ProgressRing>
+                <Text style={styles.summaryRingLabel}>{t('home.streakDays', { count: disciplineStreak })}</Text>
+              </View>
+            </View>
+
+            <View style={styles.summaryCard}>
+              <View style={styles.summaryCardRow}>
+                <Text style={styles.summaryCardLabel}>{t('profile.displayName')}</Text>
+                <Text numberOfLines={1} style={styles.summaryCardValue}>{draft.displayName}</Text>
+              </View>
+              <View style={[styles.summaryCardRow, styles.summaryCardRowLast]}>
+                <Text style={styles.summaryCardLabel}>{t('profile.goal')}</Text>
+                <Text numberOfLines={1} style={[styles.summaryCardValue, styles.summaryGoal]}>
+                  {selectedGoal ? t(selectedGoal.labelKey) : '—'}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.headerActions}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ expanded: isProfileEditorOpen }}
+                onPress={() => setIsProfileEditorOpen((current) => !current)}
+                style={({ pressed }) => [styles.editProfileButton, pressed && styles.pressed]}>
+                <Text style={styles.editProfileLabel}>{t('common.edit')}</Text>
+                <Ionicons
+                  name={isProfileEditorOpen ? 'chevron-up' : 'chevron-forward'}
+                  size={13}
+                  color={colors.text}
+                />
+              </Pressable>
+
+              <Pressable
+                accessibilityLabel={t('profile.settings')}
+                accessibilityRole="button"
+                onPress={() => router.push('/settings')}
+                style={({ pressed }) => [styles.settingsButton, pressed && styles.pressed]}>
+                <Ionicons name="settings-outline" size={20} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+          </View>
+
+          {isProfileEditorOpen && (
+          <>
           <Text style={styles.introText}>{t('profile.intro')}</Text>
 
           <View style={styles.photoRow}>
@@ -412,147 +479,12 @@ export default function ProfileScreen() {
             <Ionicons name="checkmark" size={18} color={colors.onPrimary} />
             <Text style={styles.saveButtonText}>{isSaving ? t('common.saving') : t('profile.save')}</Text>
           </Pressable>
+          </>
+          )}
 
-          <View style={styles.divider} />
-
-          <View style={styles.settingRow}>
-            <View style={styles.settingText}>
-              <Text style={styles.settingTitle}>{t('profile.language')}</Text>
-              <Text style={styles.caption}>{t('profile.languageCaption')}</Text>
-            </View>
-            <View accessibilityRole="radiogroup" style={styles.languageToggle}>
-              {LANGUAGE_OPTIONS.map((option) => {
-                const isSelected = language === option.value;
-
-                return (
-                  <Pressable
-                    accessibilityLabel={t(option.labelKey)}
-                    accessibilityRole="radio"
-                    accessibilityState={{ checked: isSelected }}
-                    key={option.value}
-                    onPress={() => void handleLanguageChange(option.value)}
-                    style={({ pressed }) => [
-                      styles.languageButton,
-                      isSelected && styles.languageButtonSelected,
-                      pressed && styles.pressed,
-                    ]}>
-                    <Text style={[styles.languageText, isSelected && styles.languageTextSelected]}>
-                      {option.value.toLocaleUpperCase('en-US')}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.settingRow}>
-            <View style={styles.settingText}>
-              <Text style={styles.settingTitle}>{t('profile.appearance')}</Text>
-              <Text style={styles.caption}>{t('profile.appearanceCaption')}</Text>
-            </View>
-            <View accessibilityRole="radiogroup" style={styles.themeToggle}>
-              <ThemeButton
-                colors={colors}
-                icon="sunny-outline"
-                label={t('profile.themeLight')}
-                onSelect={setPreference}
-                selected={preference === 'light'}
-                styles={styles}
-                value="light"
-              />
-              <ThemeButton
-                colors={colors}
-                icon="phone-portrait-outline"
-                label={t('profile.themeSystem')}
-                onSelect={setPreference}
-                selected={preference === 'system'}
-                styles={styles}
-                value="system"
-              />
-              <ThemeButton
-                colors={colors}
-                icon="moon"
-                label={t('profile.themeDark')}
-                onSelect={setPreference}
-                selected={preference === 'dark'}
-                styles={styles}
-                value="dark"
-              />
-            </View>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.settingRow}>
-            <View style={styles.settingIcon}>
-              <Ionicons name="time-outline" size={18} color={colors.accent} />
-            </View>
-            <View style={styles.settingText}>
-              <Text style={styles.settingTitle}>{t('profile.restTimer')}</Text>
-              <Text style={styles.caption}>{t('profile.restTimerCaption')}</Text>
-            </View>
-            <Switch
-              accessibilityLabel={t('profile.restTimerLabel')}
-              onValueChange={(enabled) => void handleRestTimerToggle(enabled)}
-              thumbColor={Platform.OS === 'android' ? colors.onPrimary : undefined}
-              trackColor={{ false: colors.surfaceMuted, true: colors.primary }}
-              value={restTimerEnabled}
-            />
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.accountRow}>
-            <Ionicons name="shield-checkmark-outline" size={18} color={colors.disciplineCompleted} />
-            <View style={styles.settingText}>
-              <Text style={styles.settingTitle}>{t('profile.accountConnected')}</Text>
-              <Text numberOfLines={1} style={styles.caption}>
-                {user?.email}
-              </Text>
-            </View>
-          </View>
-
-          <Pressable
-            accessibilityRole="button"
-            onPress={handleSignOut}
-            style={({ pressed }) => [styles.signOutButton, pressed && styles.pressed]}>
-            <Ionicons name="log-out-outline" size={18} color={colors.danger} />
-            <Text style={styles.signOutText}>{t('profile.signOut')}</Text>
-          </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
-  );
-}
-
-function ThemeButton({
-  colors,
-  icon,
-  label,
-  onSelect,
-  selected,
-  styles,
-  value,
-}: {
-  colors: ThemeColors;
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  onSelect: (preference: ThemePreference) => void;
-  selected: boolean;
-  styles: ReturnType<typeof createStyles>;
-  value: ThemePreference;
-}) {
-  return (
-    <Pressable
-      accessibilityLabel={label}
-      accessibilityRole="radio"
-      accessibilityState={{ checked: selected }}
-      onPress={() => onSelect(value)}
-      style={({ pressed }) => [styles.themeButton, selected && styles.themeButtonSelected, pressed && styles.pressed]}>
-      <Ionicons name={icon} size={15} color={selected ? colors.onPrimary : colors.textTertiary} />
-    </Pressable>
   );
 }
 
@@ -569,7 +501,7 @@ function createStyles(colors: ThemeColors) {
     },
     bannerSection: { marginBottom: 12 },
     banner: {
-      aspectRatio: 3,
+      aspectRatio: 2.25,
       backgroundColor: colors.surfaceMuted,
       overflow: 'hidden',
       width: '100%',
@@ -613,23 +545,28 @@ function createStyles(colors: ThemeColors) {
     },
     avatarImage: { height: '100%', width: '100%' },
     avatarLetter: { color: colors.primarySoftText, fontSize: 28, fontWeight: '500' },
-    languageToggle: {
-      backgroundColor: colors.surfaceMuted,
-      borderRadius: Layout.radiusSmall,
-      flexDirection: 'row',
-      gap: 2,
-      padding: 3,
-    },
-    languageButton: {
+    profileSummary: { alignItems: 'center', gap: 8, paddingHorizontal: Layout.screenPadding, paddingBottom: 18 },
+    summaryName: { color: colors.text, fontSize: 18, fontWeight: '700', marginTop: -18 },
+    summaryMeta: { color: colors.textSecondary, fontSize: 12, maxWidth: '88%' },
+    summaryRings: { flexDirection: 'row', gap: 24, marginBottom: 10, marginTop: 10 },
+    summaryRingItem: { alignItems: 'center', gap: 5 },
+    summaryRingValue: { color: colors.text, fontSize: 14, fontWeight: '700', fontVariant: ['tabular-nums'] },
+    summaryRingLabel: { color: colors.textTertiary, fontSize: 9 },
+    summaryCard: { backgroundColor: colors.card, borderRadius: Layout.radiusLarge, paddingHorizontal: 16, width: '100%' },
+    summaryCardRow: { alignItems: 'center', borderBottomColor: colors.separator, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', justifyContent: 'space-between', minHeight: 42 },
+    summaryCardRowLast: { borderBottomWidth: 0 },
+    summaryCardLabel: { color: colors.textSecondary, fontSize: 12 },
+    summaryCardValue: { color: colors.text, flex: 1, fontSize: 12, fontWeight: '600', marginLeft: 14, textAlign: 'right' },
+    summaryGoal: { color: colors.primary },
+    editProfileButton: { alignItems: 'center', flexDirection: 'row', gap: 3, justifyContent: 'center', minHeight: Layout.minTouchSize },
+    editProfileLabel: { color: colors.text, fontSize: 12, fontWeight: '600' },
+    headerActions: { alignItems: 'center', flexDirection: 'row', gap: 6 },
+    settingsButton: {
       alignItems: 'center',
-      borderRadius: 6,
-      height: 28,
+      height: Layout.minTouchSize,
       justifyContent: 'center',
-      paddingHorizontal: 10,
+      width: Layout.minTouchSize,
     },
-    languageButtonSelected: { backgroundColor: colors.primary },
-    languageText: { color: colors.textTertiary, fontSize: 12, fontWeight: '600' },
-    languageTextSelected: { color: colors.onPrimary },
     photoText: { flex: 1, gap: 2 },
     photoTitle: { color: colors.text, fontSize: 15, fontWeight: '600' },
     caption: { color: colors.textSecondary, fontSize: 12, lineHeight: 17 },
@@ -702,41 +639,6 @@ function createStyles(colors: ThemeColors) {
       minHeight: 52,
     },
     saveButtonText: { color: colors.onPrimary, fontSize: 16, fontWeight: '600' },
-    divider: { marginHorizontal: Layout.screenPadding,
-      backgroundColor: colors.separator,
-      height: StyleSheet.hairlineWidth,
-      marginVertical: 22,
-    },
-    settingRow: { paddingHorizontal: Layout.screenPadding, alignItems: 'center', flexDirection: 'row', gap: 12 },
-    settingIcon: {
-      alignItems: 'center',
-      backgroundColor: colors.accentSoft,
-      borderRadius: Layout.radiusSmall,
-      height: 34,
-      justifyContent: 'center',
-      width: 34,
-    },
-    settingText: { flex: 1, gap: 2 },
-    settingTitle: { color: colors.text, fontSize: 15, fontWeight: '600' },
-    themeToggle: {
-      backgroundColor: colors.surfaceMuted,
-      borderRadius: Layout.radiusSmall,
-      flexDirection: 'row',
-      gap: 2,
-      padding: 3,
-    },
-    themeButton: { alignItems: 'center', borderRadius: 6, height: 28, justifyContent: 'center', width: 30 },
-    themeButtonSelected: { backgroundColor: colors.primary },
-    accountRow: { paddingHorizontal: Layout.screenPadding, alignItems: 'center', flexDirection: 'row', gap: 12 },
-    signOutButton: { marginHorizontal: Layout.screenPadding,
-      alignItems: 'center',
-      alignSelf: 'flex-start',
-      flexDirection: 'row',
-      gap: 8,
-      marginTop: 18,
-      minHeight: Layout.minTouchSize,
-    },
-    signOutText: { color: colors.danger, fontSize: 15, fontWeight: '500' },
     pressed: { opacity: 0.6 },
   });
 }

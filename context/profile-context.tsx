@@ -1,5 +1,14 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createContext, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import {
+  createContext,
+  PropsWithChildren,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { Platform } from 'react-native';
 
 import { useAuth } from '@/context/auth-context';
@@ -20,6 +29,8 @@ type ProfileContextValue = {
   profile: UserProfile;
   restTimerEnabled: boolean;
   saveProfile: (profile: UserProfile) => Promise<void>;
+  /** Yalnızca avatar/kapak adresini kalıcılaştırır; diğer profil alanlarına dokunmaz. */
+  saveProfileMedia: (kind: ProfileImageKind, url: string | undefined) => Promise<void>;
   savePreferredLanguage: (language: AppLanguage) => Promise<void>;
   setRestTimerEnabled: (enabled: boolean) => Promise<void>;
   uploadProfileMedia: (kind: ProfileImageKind, asset: PickedImage) => Promise<string>;
@@ -79,6 +90,12 @@ export function ProfileProvider({ children }: PropsWithChildren) {
   const [restTimerEnabled, setRestTimerEnabledState] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   const userId = user?.id;
+  // Kalıcılaştırma sırasında güncel profili stale closure olmadan okumak için.
+  const profileRef = useRef(profile);
+
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
 
   useEffect(() => {
     if (!userId) {
@@ -146,6 +163,56 @@ export function ProfileProvider({ children }: PropsWithChildren) {
       if (!userId) throw new Error('missingSession');
       const { publicUrl } = await uploadProfileImage(userId, kind, asset);
       return publicUrl;
+    },
+    [userId],
+  );
+
+  /**
+   * Kapak/avatar kamera düğmesi profil düzenleme alanı kapalıyken de
+   * erişilebilir olduğundan, başarılı yüklemeden sonra adres doğrudan
+   * kalıcılaştırılır. Yalnızca ilgili kolon yazılır: kullanıcının o sırada
+   * düzenlemekte olduğu ad/bio gibi alanlar hiçbir koşulda sunucuya gitmez.
+   *
+   * Sıra bilinçli: önce veritabanı güncellenir, eski dosya ancak bu güncelleme
+   * başarılı olduktan sonra silinir. Böylece hata durumunda eski çalışan kapak
+   * hem veritabanında hem Storage'da bozulmadan kalır.
+   */
+  const saveProfileMedia = useCallback(
+    async (kind: ProfileImageKind, url: string | undefined) => {
+      if (!userId) throw new Error('missingSession');
+
+      const nextUrl = isRemoteImageUrl(url) ? url : undefined;
+      const field = kind === 'avatar' ? 'avatarUri' : 'bannerUri';
+      const column = kind === 'avatar' ? 'avatar_url' : 'banner_url';
+
+      // Önceki adres ref'ten okunur: yükleme sırasında profil değişmiş olsa
+      // bile eski/yeni URL karışmaz ve yanlış dosya silinmez.
+      const previousUrl = profileRef.current[field];
+      const previousPath = getStoragePathFromUrl(previousUrl, userId);
+      const nextPath = getStoragePathFromUrl(nextUrl, userId);
+      // Aynı yol iki kez hedeflenmesin: yeni dosya eskisiyle aynıysa silinmez.
+      const orphanPath = nextPath && nextPath !== previousPath ? nextPath : undefined;
+
+      const { error } = await supabase
+        .from('profiles')
+        .update({ [column]: nextUrl ?? null })
+        .eq('id', userId);
+
+      if (error) {
+        // Kayıt başarısız: yeni yüklenen dosya sahipsiz kalmasın.
+        await removeProfileImagePaths([orphanPath], userId);
+        if (kind === 'banner' && isMissingOptionalColumnError(error)) {
+          throw new Error('bannerColumnMissing');
+        }
+        throw error;
+      }
+
+      setProfile((current) => ({ ...current, [field]: nextUrl }));
+
+      // Yalnızca veritabanı güncellendikten sonra eski dosya silinir.
+      if (previousPath && previousPath !== nextPath) {
+        await removeProfileImagePaths([previousPath], userId);
+      }
     },
     [userId],
   );
@@ -262,6 +329,7 @@ export function ProfileProvider({ children }: PropsWithChildren) {
       profile,
       restTimerEnabled,
       saveProfile,
+      saveProfileMedia,
       savePreferredLanguage,
       setRestTimerEnabled,
       uploadProfileMedia,
@@ -272,6 +340,7 @@ export function ProfileProvider({ children }: PropsWithChildren) {
       profile,
       restTimerEnabled,
       saveProfile,
+      saveProfileMedia,
       savePreferredLanguage,
       setRestTimerEnabled,
       uploadProfileMedia,

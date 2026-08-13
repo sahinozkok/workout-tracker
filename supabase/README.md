@@ -48,11 +48,12 @@ The Gemini API key is stored only in Supabase Edge Function secrets:
 
 ```text
 GEMINI_API_KEY=your-google-ai-studio-key
-GEMINI_MODEL=your-supported-gemini-model
-AI_DAILY_LIMIT=10
+GEMINI_CHAT_MODELS=gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite,gemini-3.6-flash
+AI_DAILY_LIMIT=15
+SUMMARY_DAILY_LIMIT=20
 ```
 
-`GEMINI_MODEL` and `AI_DAILY_LIMIT` are optional. The function uses its configured defaults when they are omitted.
+All values except `GEMINI_API_KEY` are optional. The function defaults to a server-side model fallback list, 15 AI chat requests per rolling 24 hours, and 20 deterministic summaries per rolling 24 hours.
 
 ### Deploy through the Dashboard
 
@@ -84,6 +85,8 @@ Restart Expo with `npx expo start -c` after changing environment variables.
 - Workout metrics are recalculated from the user's Supabase records.
 - Client-provided totals are not trusted.
 - Structured model responses are validated before use.
-- Successful requests are recorded for daily usage limits.
+- AI chat actions and deterministic summaries use separate, atomic rolling-24-hour quotas.
 - Conversation messages are linked with idempotency identifiers to prevent duplicate replies.
+- Weekly and exercise summaries are generated from verified metrics without calling Gemini.
+- Program reviews receive only the authenticated user's program and workout context.
 - The AI is instructed not to diagnose injuries or provide medical treatment.

@@ -6,7 +6,7 @@ import {
 } from '@/types/ai';
 import { supabase } from '@/lib/supabase';
 
-export const isGeminiEnabled = process.env.EXPO_PUBLIC_AI_PROVIDER === 'gemini';
+const isCoachBackendEnabled = process.env.EXPO_PUBLIC_AI_PROVIDER === 'gemini';
 
 const GOAL_SUGGESTIONS: Record<WeeklyWorkoutMetrics['trainingGoal'], string> = {
   consistency: 'Gelecek antrenmanın gününü şimdiden netleştirerek ritmini koru.',
@@ -84,7 +84,7 @@ function isWorkoutInsight(value: unknown): value is WeeklyWorkoutInsight {
     typeof insight.generatedAt === 'string' &&
     typeof insight.headline === 'string' &&
     typeof insight.summary === 'string' &&
-    (insight.provider === 'gemini' || insight.provider === 'mock') &&
+    (insight.provider === 'deterministic' || insight.provider === 'gemini' || insight.provider === 'mock') &&
     Array.isArray(insight.highlights) &&
     insight.highlights.every((item) => typeof item === 'string') &&
     Array.isArray(insight.nextSteps) &&
@@ -92,14 +92,14 @@ function isWorkoutInsight(value: unknown): value is WeeklyWorkoutInsight {
   );
 }
 
-async function invokeGeminiCoach(body: { exerciseName?: string; feature: 'exercise_progress' | 'weekly_summary' }) {
+async function invokeWorkoutCoach(body: { exerciseName?: string; feature: 'exercise_progress' | 'weekly_summary' }) {
   const {
     data: { session },
     error: sessionError,
   } = await supabase.auth.getSession();
 
   if (sessionError || !session?.access_token) {
-    throw new Error('AI Koç için oturumun yenilenemedi. Çıkış yapıp tekrar giriş yapmayı dene.');
+    throw new Error('Özet servisi için oturumun yenilenemedi. Çıkış yapıp tekrar giriş yapmayı dene.');
   }
 
   const { data, error } = await supabase.functions.invoke('workout-coach', {
@@ -108,7 +108,7 @@ async function invokeGeminiCoach(body: { exerciseName?: string; feature: 'exerci
   });
 
   if (error) {
-    let message = 'Gerçek AI bağlantısına ulaşılamadı.';
+    let message = 'Özet servisine ulaşılamadı.';
     const context = 'context' in error ? error.context : undefined;
 
     if (context instanceof Response) {
@@ -123,12 +123,12 @@ async function invokeGeminiCoach(body: { exerciseName?: string; feature: 'exerci
 
     throw new Error(message);
   }
-  if (!isWorkoutInsight(data)) throw new Error('AI yanıtı beklenen biçimde gelmedi.');
+  if (!isWorkoutInsight(data)) throw new Error('Özet beklenen biçimde gelmedi.');
   return data;
 }
 
 export async function generateWeeklyWorkoutInsight(metrics: WeeklyWorkoutMetrics) {
-  if (isGeminiEnabled) return invokeGeminiCoach({ feature: 'weekly_summary' });
+  if (isCoachBackendEnabled) return invokeWorkoutCoach({ feature: 'weekly_summary' });
 
   await wait(550);
   return buildMockInsight(metrics);
@@ -199,8 +199,8 @@ function buildExerciseMockInsight(metrics: ExerciseProgressMetrics): ExercisePro
 }
 
 export async function generateExerciseProgressInsight(metrics: ExerciseProgressMetrics) {
-  if (isGeminiEnabled) {
-    return invokeGeminiCoach({ exerciseName: metrics.exerciseName, feature: 'exercise_progress' });
+  if (isCoachBackendEnabled) {
+    return invokeWorkoutCoach({ exerciseName: metrics.exerciseName, feature: 'exercise_progress' });
   }
 
   await wait(550);

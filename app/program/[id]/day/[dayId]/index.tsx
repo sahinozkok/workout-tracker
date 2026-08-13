@@ -1,13 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ProgramDetailScroll } from '@/components/program-detail-scroll';
 import ProgramExerciseList from '@/components/program-exercise-list';
-import { WorkoutVisualDisplay } from '@/components/workout-visual-display';
 import { WorkoutVisualPicker } from '@/components/workout-visual-picker';
 import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { getWeekdayLabel, getWeekdayOptions } from '@/constants/weekdays';
@@ -104,6 +103,82 @@ export default function WorkoutDayScreen() {
   const [targetSetsDraft, setTargetSetsDraft] = useState('3');
   const [targetRepsDraft, setTargetRepsDraft] = useState('8-10');
   const [restSecondsDraft, setRestSecondsDraft] = useState('90');
+  // Yalnızca ekran seçimi; programın kalıcı sırasını değiştirmez.
+  const [selectedExerciseId, setSelectedExerciseId] = useState<string>();
+  const [weightInput, setWeightInput] = useState('');
+  const [repetitionsInput, setRepetitionsInput] = useState('');
+  const [rpeInput, setRpeInput] = useState('');
+  const [validationError, setValidationError] = useState<string>();
+  const [isSetDetailsOpen, setIsSetDetailsOpen] = useState(false);
+
+  // Aktif egzersiz: kullanıcı panelden seçtiyse o, yoksa program sırasındaki
+  // ilk tamamlanmamış egzersiz.
+  // useMemo: effect bağımlılıklarının her render'da değişmesini engeller.
+  const dayExercises = useMemo(() => day?.exercises ?? [], [day?.exercises]);
+  // Program sırasındaki ilk tamamlanmamış egzersiz.
+  const currentExerciseId = dayExercises.find(
+    (exercise) => (completedSetCounts[getSetProgressKey(todayKey, exercise.id)] ?? 0) < exercise.targetSets,
+  )?.id;
+  const activeExercise =
+    dayExercises.find((exercise) => exercise.id === selectedExerciseId) ??
+    dayExercises.find((exercise) => exercise.id === currentExerciseId) ??
+    dayExercises[0];
+  const activeExerciseName = activeExercise
+    ? getProgramExerciseName(activeExercise.exerciseId, activeExercise.customExerciseName)
+    : '';
+  const activeCompletedSets = activeExercise
+    ? Math.min(completedSetCounts[getSetProgressKey(todayKey, activeExercise.id)] ?? 0, activeExercise.targetSets)
+    : 0;
+  const activeSetRecords = activeExercise
+    ? workoutSets
+        .filter(
+          (workoutSet) => workoutSet.dateKey === todayKey && workoutSet.programExerciseId === activeExercise.id,
+        )
+        .sort((first, second) => first.setNumber - second.setNumber)
+    : [];
+  const activePreviousRecords = activeExercise
+    ? workoutSets
+        .filter(
+          (workoutSet) => workoutSet.dateKey !== todayKey && workoutSet.programExerciseId === activeExercise.id,
+        )
+        .sort((first, second) => second.dateKey.localeCompare(first.dateKey))
+    : [];
+  const activePreviousSet = activePreviousRecords.find(
+    (workoutSet) =>
+      workoutSet.dateKey === activePreviousRecords[0]?.dateKey &&
+      workoutSet.setNumber === activeCompletedSets + 1,
+  );
+  const isActiveExerciseComplete = Boolean(activeExercise && activeCompletedSets >= activeExercise.targetSets);
+
+
+  // Panelden seçilen egzersizin son seti tamamlandığında seçim bırakılır ve
+  // ekran program sırasındaki ilk tamamlanmamış egzersize geçer. Set kaydı
+  // başarısız olursa sayaç artmadığı için seçim korunur.
+  useEffect(() => {
+    if (!selectedExerciseId) return;
+
+    const selectedExercise = dayExercises.find((exercise) => exercise.id === selectedExerciseId);
+    if (!selectedExercise) {
+      setSelectedExerciseId(undefined);
+      return;
+    }
+
+    const completedSets = completedSetCounts[getSetProgressKey(todayKey, selectedExercise.id)] ?? 0;
+    if (completedSets >= selectedExercise.targetSets) setSelectedExerciseId(undefined);
+  }, [completedSetCounts, dayExercises, selectedExerciseId, todayKey]);
+
+  // Aktif egzersiz veya tamamlanan set değişince giriş alanları önerilen
+  // değerlerle tazelenir (önceki antrenmandaki set veya hedef tekrar).
+  useEffect(() => {
+    setValidationError(undefined);
+    setRpeInput('');
+    setWeightInput(activePreviousSet?.weightKg?.toString() ?? '');
+    const suggestedRepetitions =
+      activePreviousSet?.repetitions ?? getFirstTargetRepetition(activeExercise?.targetReps ?? '');
+    setRepetitionsInput(suggestedRepetitions?.toString() ?? '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeExercise?.id, activeCompletedSets]);
+
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -213,12 +288,8 @@ export default function WorkoutDayScreen() {
       Math.min(completedSetCounts[getSetProgressKey(todayKey, exercise.id)] ?? 0, exercise.targetSets),
     0,
   );
-  const isWorkoutComplete = totalTargetSets > 0 && totalCompletedSets === totalTargetSets;
-  const hasProgress = totalCompletedSets > 0;
-  // Antrenman başlamadan önce gün, referans tasarımdaki sade plan görünümünü
-  // kullanır; antrenman başlayınca set giriş kartlarına geçilir.
-  const isPlanMode = !workoutSession && !hasProgress;
-  const elapsedSeconds = workoutSession ? getWorkoutDurationSeconds(workoutSession, clockNow) : 0;
+  // Aynı programın aynı günü için geçmiş tamamlanmış antrenmanların ortalaması
+  // (bugünkü oturum hariç).
   const previousSessions = workoutSessions.filter(
     (session) =>
       session.programId === program.id &&
@@ -232,17 +303,40 @@ export default function WorkoutDayScreen() {
           previousSessions.length,
       )
     : undefined;
+  const isWorkoutComplete = totalTargetSets > 0 && totalCompletedSets === totalTargetSets;
+  const hasProgress = totalCompletedSets > 0;
+  // Antrenman başlamadan önce gün, referans tasarımdaki sade plan görünümünü
+  // kullanır; antrenman başlayınca set giriş kartlarına geçilir.
+  const isPlanMode = !workoutSession && !hasProgress;
+  const elapsedSeconds = workoutSession ? getWorkoutDurationSeconds(workoutSession, clockNow) : 0;
   const restProgress = restTimer ? getRestTimerProgress(restTimer, clockNow) : undefined;
   const canCompleteSets = canTrackToday && workoutSession?.status === 'running';
-  const currentExerciseId = day.exercises.find(
-    (exercise) =>
-      (completedSetCounts[getSetProgressKey(todayKey, exercise.id)] ?? 0) < exercise.targetSets,
-  )?.id;
-  const orderedExercises = [...day.exercises].sort((first, second) => {
-    const firstComplete = (completedSetCounts[getSetProgressKey(todayKey, first.id)] ?? 0) >= first.targetSets;
-    const secondComplete = (completedSetCounts[getSetProgressKey(todayKey, second.id)] ?? 0) >= second.targetSets;
-    return Number(firstComplete) - Number(secondComplete);
-  });
+
+  async function submitActiveSet() {
+    if (!activeExercise || pendingExerciseId) return;
+
+    const repetitions = parseNumberInput(repetitionsInput);
+    const weightKg = parseOptionalNumberInput(weightInput);
+    const rpe = parseOptionalNumberInput(rpeInput);
+
+    if (repetitions === undefined || !Number.isInteger(repetitions) || repetitions < 0 || repetitions > 1000) {
+      setValidationError(t('day.repsValidation'));
+      return;
+    }
+
+    if (weightKg === null || (weightKg !== undefined && (weightKg < 0 || weightKg > 99999))) {
+      setValidationError(t('day.weightValidation'));
+      return;
+    }
+
+    if (rpe === null || (rpe !== undefined && (rpe < 0 || rpe > 10))) {
+      setValidationError(t('day.rpeValidation'));
+      return;
+    }
+
+    setValidationError(undefined);
+    await handleCompleteSet(activeExercise, { repetitions, weightKg, rpe });
+  }
 
   /**
    * Aktif molayı gerçekten bitirir: kayıt silinir, bildirim iptal edilir.
@@ -507,41 +601,34 @@ export default function WorkoutDayScreen() {
     ]);
   }
 
-  const dayControls = (
-    <View style={styles.controlsRow}>
-      <View style={styles.controlGroup}>
-        <Pressable
-          accessibilityLabel={t('day.moveUp')}
-          accessibilityRole="button"
-          disabled={dayIndex === 0}
-          onPress={() => void moveDay(-1)}
-          style={({ pressed }) => [
-            styles.controlButton,
-            dayIndex === 0 && styles.controlButtonDisabled,
-            pressed && styles.pressed,
-          ]}>
-          <Ionicons name="chevron-up" size={16} color={colors.text} />
-        </Pressable>
-        <Pressable
-          accessibilityLabel={t('day.moveDown')}
-          accessibilityRole="button"
-          disabled={dayIndex === programDays.length - 1}
-          onPress={() => void moveDay(1)}
-          style={({ pressed }) => [
-            styles.controlButton,
-            dayIndex === programDays.length - 1 && styles.controlButtonDisabled,
-            pressed && styles.pressed,
-          ]}>
-          <Ionicons name="chevron-down" size={16} color={colors.text} />
-        </Pressable>
-        <Pressable
-          accessibilityLabel={t('day.editDay')}
-          accessibilityRole="button"
-          onPress={openDayEditor}
-          style={({ pressed }) => [styles.controlButton, pressed && styles.pressed]}>
-          <Ionicons name="pencil-outline" size={15} color={colors.text} />
-        </Pressable>
-      </View>
+  /** Gün işlemleri referans gövdeyi bozmamak için başlık menüsünde tutulur. */
+  function openDayMenu() {
+    Alert.alert(day?.name ?? '', t('day.dayOptions'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      { text: t('day.editDay'), onPress: openDayEditor },
+      ...(dayIndex > 0 ? [{ text: t('day.moveUp'), onPress: () => void moveDay(-1) }] : []),
+      ...(dayIndex < programDays.length - 1
+        ? [{ text: t('day.moveDown'), onPress: () => void moveDay(1) }]
+        : []),
+    ]);
+  }
+
+  const dayHeaderButton = (
+    <Pressable
+      accessibilityLabel={t('day.dayOptions')}
+      accessibilityRole="button"
+      hitSlop={10}
+      onPress={openDayMenu}
+      style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}>
+      <Ionicons name="ellipsis-horizontal" size={20} color={colors.text} />
+    </Pressable>
+  );
+
+  const daySummaryRow = (
+    <View style={styles.summaryRow}>
+      <Text style={styles.summaryText}>
+        {t('day.summary', { exercises: day.exercises.length, sets: totalTargetSets })}
+      </Text>
       {!day.isOffDay && (
         <Pressable
           accessibilityLabel={t('day.addExerciseLabel')}
@@ -643,7 +730,7 @@ export default function WorkoutDayScreen() {
       <SafeAreaView style={styles.safeArea} edges={['bottom']}>
         <Stack.Screen options={{ title: day.name }} />
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          {dayControls}
+          {daySummaryRow}
           {dayEditor}
           <View style={styles.restDayContainer}>
             <Ionicons name="moon-outline" size={32} color={colors.textTertiary} />
@@ -669,14 +756,68 @@ export default function WorkoutDayScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['bottom']}>
-      <Stack.Screen options={{ title: day.name }} />
+    <SafeAreaView style={styles.safeArea} edges={isPlanMode ? ['bottom'] : ['top', 'bottom']}>
+      <Stack.Screen
+        options={
+          isPlanMode
+            ? { headerRight: () => dayHeaderButton, headerShown: true, title: day.name }
+            : { headerShown: false }
+        }
+      />
       <View style={styles.workoutScreen}>
+      {!isPlanMode && (
+        <>
+          <View style={styles.workoutTopBar}>
+            <Pressable
+              accessibilityLabel={t('common.back')}
+              accessibilityRole="button"
+              onPress={() => router.back()}
+              style={({ pressed }) => [styles.topBarButton, pressed && styles.pressed]}>
+              <Ionicons name="chevron-back" size={24} color={colors.text} />
+            </Pressable>
+
+            <Pressable
+              accessibilityHint={t('a11y.toggleTimer')}
+              accessibilityLabel={t('day.setsProgress', {
+                completed: totalCompletedSets,
+                total: totalTargetSets,
+              })}
+              accessibilityRole="button"
+              disabled={!workoutSession || isWorkoutActionPending}
+              onPress={() => void handleWorkoutToggle()}
+              style={({ pressed }) => [styles.topBarCenter, pressed && styles.pressed]}>
+              <Text style={styles.topBarStatus}>
+                {t('day.setsProgress', { completed: totalCompletedSets, total: totalTargetSets })} ·{' '}
+                {formatDuration(elapsedSeconds)}
+                {workoutSession?.status === 'paused' ? ` · ${t('day.resumeWorkout')}` : ''}
+              </Text>
+            </Pressable>
+
+            <Pressable
+              accessibilityRole="button"
+              disabled={isWorkoutActionPending || !workoutSession}
+              hitSlop={8}
+              onPress={handleFinishWorkout}
+              style={({ pressed }) => [styles.topBarButton, pressed && styles.pressed]}>
+              <Text style={styles.topBarFinish}>{t('day.finish')}</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.topBarProgressTrack}>
+            <View
+              style={[
+                styles.topBarProgressFill,
+                { width: `${totalTargetSets ? (totalCompletedSets / totalTargetSets) * 100 : 0}%` },
+              ]}
+            />
+          </View>
+        </>
+      )}
       <ProgramDetailScroll
         contentContainerStyle={[styles.content, restTimerEnabled && restTimer && styles.contentWithRestTimer]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}>
-        {dayControls}
+        {daySummaryRow}
         {dayEditor}
 
         {editingExerciseId && (
@@ -786,74 +927,6 @@ export default function WorkoutDayScreen() {
           </>
         ) : (
           <>
-            <View style={styles.workoutHeader}>
-              <View style={styles.progressTextRow}>
-                <Text style={styles.progressLabel}>{t('day.totalProgress')}</Text>
-                <Text style={styles.progressValue}>
-                  {t('day.setsProgress', { completed: totalCompletedSets, total: totalTargetSets })}
-                </Text>
-              </View>
-              <View style={styles.progressTrack}>
-                <View
-                  style={[
-                    styles.progressFill,
-                    { width: `${totalTargetSets ? (totalCompletedSets / totalTargetSets) * 100 : 0}%` },
-                  ]}
-                />
-              </View>
-
-              <View style={styles.workoutControls}>
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={!canTrackToday || day.exercises.length === 0 || isWorkoutActionPending}
-                  onPress={() => void handleWorkoutToggle()}
-                  style={({ pressed }) => [
-                    styles.workoutToggleButton,
-                    workoutSession?.status === 'running' && styles.workoutPauseButton,
-                    (!canTrackToday || day.exercises.length === 0 || isWorkoutActionPending) &&
-                      styles.workoutButtonDisabled,
-                    pressed && styles.pressed,
-                  ]}>
-                  {isWorkoutActionPending ? (
-                    <ActivityIndicator color={colors.background} size="small" />
-                  ) : (
-                    <Ionicons
-                      name={!workoutSession ? 'play' : workoutSession.status === 'running' ? 'pause' : 'play-forward'}
-                      size={16}
-                      color={colors.background}
-                    />
-                  )}
-                  <Text style={styles.workoutToggleText}>
-                    {isWorkoutActionPending
-                      ? t('common.saving')
-                      : !workoutSession
-                        ? t('day.startWorkout')
-                        : workoutSession.status === 'running'
-                          ? t('day.pauseWorkout')
-                          : t('day.resumeWorkout')}
-                  </Text>
-                </Pressable>
-
-                <View style={styles.workoutStopwatch}>
-                  <Text style={styles.workoutStopwatchText}>{formatDuration(elapsedSeconds)}</Text>
-                  {averageDurationSeconds !== undefined && (
-                    <Text style={styles.averageDuration}>{t('day.averageDuration', { duration: formatDuration(averageDurationSeconds) })}</Text>
-                  )}
-                </View>
-              </View>
-
-              {workoutSession && (
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={isWorkoutActionPending}
-                  onPress={handleFinishWorkout}
-                  style={({ pressed }) => [styles.finishWorkoutButton, pressed && styles.pressed]}>
-                  <Ionicons name="flag-outline" size={14} color={colors.textSecondary} />
-                  <Text style={styles.finishWorkoutText}>{t('day.finishWorkout')}</Text>
-                </Pressable>
-              )}
-            </View>
-
             {!canTrackToday && (
               <View style={styles.scheduleNotice}>
                 <Ionicons name="calendar-outline" size={16} color={colors.accent} />
@@ -880,63 +953,216 @@ export default function WorkoutDayScreen() {
               </View>
             )}
 
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>{t('day.exercises')}</Text>
-              {hasProgress && canTrackToday && (
+            {activeExercise && (
+              <View style={styles.activeSetBlock}>
+                <Text style={styles.activeSetLabel}>
+                  {t('day.setOfTotal', {
+                    current: Math.min(activeCompletedSets + 1, activeExercise.targetSets),
+                    total: activeExercise.targetSets,
+                  })}
+                </Text>
+                <Text numberOfLines={2} style={styles.activeExerciseName}>
+                  {activeExerciseName}
+                </Text>
+
+                <View style={styles.activeValues}>
+                  <View style={styles.valueGroup}>
+                    <TextInput
+                      accessibilityLabel={t('day.kg')}
+                      editable={canCompleteSets && !pendingExerciseId}
+                      keyboardType="decimal-pad"
+                      maxLength={8}
+                      onChangeText={setWeightInput}
+                      placeholder="—"
+                      placeholderTextColor={colors.textTertiary}
+                      selectTextOnFocus
+                      style={styles.valueInput}
+                      value={weightInput}
+                    />
+                    <Text style={styles.valueUnit}>{t('day.kgUnit')}</Text>
+                  </View>
+                  <View style={styles.valueGroup}>
+                    <TextInput
+                      accessibilityLabel={t('day.repsShort')}
+                      editable={canCompleteSets && !pendingExerciseId}
+                      keyboardType="number-pad"
+                      maxLength={5}
+                      onChangeText={setRepetitionsInput}
+                      placeholder={activeExercise.targetReps}
+                      placeholderTextColor={colors.textTertiary}
+                      selectTextOnFocus
+                      style={styles.valueInput}
+                      value={repetitionsInput}
+                    />
+                    <Text style={styles.valueUnit}>{t('day.repsUnit')}</Text>
+                  </View>
+                </View>
+
+                {validationError && <Text style={styles.validationError}>{validationError}</Text>}
+
+                <Pressable
+                  accessibilityLabel={t('day.completeSetLabel', { name: activeExerciseName })}
+                  accessibilityRole="button"
+                  disabled={!canCompleteSets || Boolean(pendingExerciseId) || isActiveExerciseComplete}
+                  onPress={() => void submitActiveSet()}
+                  style={({ pressed }) => [
+                    styles.completeSetPill,
+                    (!canCompleteSets || Boolean(pendingExerciseId) || isActiveExerciseComplete) &&
+                      styles.completeSetPillDisabled,
+                    pressed && styles.pressed,
+                  ]}>
+                  {pendingExerciseId === activeExercise.id ? (
+                    <ActivityIndicator color={colors.background} size="small" />
+                  ) : (
+                    <Text style={styles.completeSetPillText}>
+                      {isActiveExerciseComplete
+                        ? t('day.completed')
+                        : canCompleteSets
+                          ? t('day.completeSet')
+                          : !workoutSession
+                            ? t('day.startFirst')
+                            : workoutSession.status === 'paused'
+                              ? t('day.workoutPaused')
+                              : t('day.availableOnScheduledDay')}
+                    </Text>
+                  )}
+                </Pressable>
+
                 <Pressable
                   accessibilityRole="button"
-                  disabled={isWorkoutActionPending}
-                  onPress={() => void handleResetSets()}
-                  style={({ pressed }) => [styles.resetButton, pressed && styles.pressed]}>
-                  <Text style={styles.resetButtonText}>{t('day.reset')}</Text>
+                  accessibilityState={{ expanded: isSetDetailsOpen }}
+                  hitSlop={8}
+                  onPress={() => setIsSetDetailsOpen((current) => !current)}
+                  style={({ pressed }) => [styles.detailsToggle, pressed && styles.pressed]}>
+                  <Text style={styles.detailsToggleText}>{t('day.details')}</Text>
+                  <Ionicons
+                    name={isSetDetailsOpen ? 'chevron-up' : 'chevron-down'}
+                    size={13}
+                    color={colors.textSecondary}
+                  />
                 </Pressable>
-              )}
-            </View>
 
-            <View style={styles.exerciseList}>
-              {orderedExercises.map((exercise) => {
-              const completedSets = Math.min(
-                completedSetCounts[getSetProgressKey(todayKey, exercise.id)] ?? 0,
-                exercise.targetSets,
-              );
-              const currentSetRecords = workoutSets
-                .filter((workoutSet) => workoutSet.dateKey === todayKey && workoutSet.programExerciseId === exercise.id)
-                .sort((first, second) => first.setNumber - second.setNumber);
-              const previousSetRecords = workoutSets
-                .filter((workoutSet) => workoutSet.dateKey !== todayKey && workoutSet.programExerciseId === exercise.id)
-                .sort((first, second) => second.dateKey.localeCompare(first.dateKey));
-              const latestPreviousDate = previousSetRecords[0]?.dateKey;
-              const previousSet = previousSetRecords.find(
-                (workoutSet) =>
-                  workoutSet.dateKey === latestPreviousDate && workoutSet.setNumber === completedSets + 1,
-              );
+                {isSetDetailsOpen && (
+                  <View style={styles.detailsArea}>
+                    {activePreviousSet && (
+                      <Text style={styles.previousSetText}>
+                        {t('day.previousSet', { value: formatSetPerformance(activePreviousSet, t, locale) })}
+                      </Text>
+                    )}
 
-              return (
-                <ExerciseSetCard
-                  colors={colors}
-                  completedSetRecords={currentSetRecords}
-                  completedSets={completedSets}
-                  disabled={!canCompleteSets || Boolean(pendingExerciseId)}
-                  disabledLabel={
-                    pendingExerciseId
-                      ? t('day.savingShort')
-                      : !canTrackToday
-                        ? t('day.availableOnScheduledDay')
-                        : !workoutSession
-                          ? t('day.startFirst')
-                          : workoutSession.status === 'paused'
-                            ? t('day.workoutPaused')
-                            : undefined
-                  }
-                  exercise={exercise}
-                  index={day.exercises.findIndex((item) => item.id === exercise.id)}
-                  isCurrent={exercise.id === currentExerciseId}
-                  key={exercise.id}
-                  onCompleteSet={(performance) => handleCompleteSet(exercise, performance)}
-                  onUndoSet={() => void handleUndoSet(exercise)}
-                  previousSet={previousSet}
-                />
-              );
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>{t('day.rpe')}</Text>
+                      <TextInput
+                        accessibilityLabel={t('day.rpe')}
+                        editable={canCompleteSets && !pendingExerciseId}
+                        keyboardType="decimal-pad"
+                        maxLength={4}
+                        onChangeText={setRpeInput}
+                        placeholder={t('day.optional')}
+                        placeholderTextColor={colors.textTertiary}
+                        style={styles.detailInput}
+                        value={rpeInput}
+                      />
+                    </View>
+
+                    {activeSetRecords.length > 0 && (
+                      <View style={styles.completedSetList}>
+                        {activeSetRecords.map((workoutSet) => (
+                          <View key={workoutSet.id} style={styles.completedSetRow}>
+                            <Text style={styles.completedSetNumberText}>
+                              {t('day.setLabel', { number: workoutSet.setNumber })}
+                            </Text>
+                            <Text style={styles.completedSetValue}>
+                              {workoutSet.weightKg === undefined
+                                ? t('day.bodyweightLabel')
+                                : `${formatDecimal(workoutSet.weightKg, locale)} kg`}
+                            </Text>
+                            <Text style={styles.completedSetValue}>
+                              {workoutSet.repetitions === undefined
+                                ? t('day.noDetail')
+                                : t('day.repsValue', { count: workoutSet.repetitions })}
+                            </Text>
+                            {workoutSet.rpe !== undefined && (
+                              <Text style={styles.completedSetRpe}>
+                                RPE {formatDecimal(workoutSet.rpe, locale)}
+                              </Text>
+                            )}
+                          </View>
+                        ))}
+                      </View>
+                    )}
+
+                    <View style={styles.detailActions}>
+                      {activeCompletedSets > 0 && canCompleteSets && (
+                        <Pressable
+                          accessibilityLabel={t('day.undoSetLabel', { name: activeExerciseName })}
+                          accessibilityRole="button"
+                          disabled={Boolean(pendingExerciseId)}
+                          onPress={() => void handleUndoSet(activeExercise)}
+                          style={({ pressed }) => [styles.detailButton, pressed && styles.pressed]}>
+                          <Ionicons name="arrow-undo-outline" size={14} color={colors.text} />
+                          <Text style={styles.detailButtonText}>{t('day.setLabel', { number: activeCompletedSets })}</Text>
+                        </Pressable>
+                      )}
+                      {hasProgress && canTrackToday && (
+                        <Pressable
+                          accessibilityRole="button"
+                          disabled={isWorkoutActionPending}
+                          onPress={() => void handleResetSets()}
+                          style={({ pressed }) => [styles.detailButton, pressed && styles.pressed]}>
+                          <Text style={styles.resetButtonText}>{t('day.reset')}</Text>
+                        </Pressable>
+                      )}
+                    </View>
+                  </View>
+                )}
+              </View>
+            )}
+
+            {averageDurationSeconds !== undefined && (
+              <Text style={styles.averageDuration}>
+                {t('day.averageDuration', { duration: formatDuration(averageDurationSeconds) })}
+              </Text>
+            )}
+
+            <View style={styles.allExercisesPanel}>
+              <View style={styles.panelGrabber} />
+              <Text style={styles.panelTitle}>{t('day.allExercises')}</Text>
+
+              {day.exercises.map((exercise) => {
+                const exerciseName = getProgramExerciseName(exercise.exerciseId, exercise.customExerciseName);
+                const completedSets = Math.min(
+                  completedSetCounts[getSetProgressKey(todayKey, exercise.id)] ?? 0,
+                  exercise.targetSets,
+                );
+                const isComplete = completedSets >= exercise.targetSets;
+                const isActive = exercise.id === activeExercise?.id;
+
+                return (
+                  <Pressable
+                    accessibilityLabel={t('a11y.selectExercise', { name: exerciseName })}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: isActive }}
+                    key={exercise.id}
+                    onPress={() => setSelectedExerciseId(exercise.id)}
+                    style={({ pressed }) => [styles.panelRow, pressed && styles.pressed]}>
+                    <View style={styles.panelMarker}>
+                      {isActive && <Ionicons name="caret-forward" size={11} color={colors.primary} />}
+                    </View>
+                    <Text
+                      numberOfLines={1}
+                      style={[
+                        styles.panelExerciseName,
+                        isActive && styles.panelExerciseNameActive,
+                        isComplete && styles.panelExerciseNameComplete,
+                      ]}>
+                      {exerciseName}
+                    </Text>
+                    <Text style={[styles.panelSetCount, isComplete && styles.panelSetCountComplete]}>
+                      {completedSets}/{exercise.targetSets}
+                    </Text>
+                  </Pressable>
+                );
               })}
             </View>
           </>
@@ -1025,250 +1251,6 @@ function ExerciseTargetInput({
   );
 }
 
-function ExerciseSetCard({
-  colors,
-  completedSetRecords,
-  completedSets,
-  disabled,
-  disabledLabel,
-  exercise,
-  index,
-  isCurrent,
-  onCompleteSet,
-  onUndoSet,
-  previousSet,
-}: {
-  colors: ThemeColors;
-  completedSetRecords: WorkoutSetRecord[];
-  completedSets: number;
-  disabled: boolean;
-  disabledLabel?: string;
-  exercise: ProgramExercise;
-  index: number;
-  isCurrent: boolean;
-  onCompleteSet: (performance: WorkoutSetPerformance) => Promise<void>;
-  onUndoSet: () => void;
-  previousSet?: WorkoutSetRecord;
-}) {
-  const styles = createStyles(colors);
-  const { locale, t } = useTranslation();
-  const exerciseName = getProgramExerciseName(exercise.exerciseId, exercise.customExerciseName);
-  const isComplete = completedSets === exercise.targetSets;
-  const progress = exercise.targetSets ? (completedSets / exercise.targetSets) * 100 : 0;
-  const suggestedRepetitions = previousSet?.repetitions ?? getFirstTargetRepetition(exercise.targetReps);
-  const [weightInput, setWeightInput] = useState(previousSet?.weightKg?.toString() ?? '');
-  const [repetitionsInput, setRepetitionsInput] = useState(suggestedRepetitions?.toString() ?? '');
-  const [rpeInput, setRpeInput] = useState('');
-  const [validationError, setValidationError] = useState<string>();
-
-  async function submitSet() {
-    const repetitions = parseNumberInput(repetitionsInput);
-    const weightKg = parseOptionalNumberInput(weightInput);
-    const rpe = parseOptionalNumberInput(rpeInput);
-
-    if (repetitions === undefined || !Number.isInteger(repetitions) || repetitions < 0 || repetitions > 1000) {
-      setValidationError(t('day.repsValidation'));
-      return;
-    }
-
-    if (weightKg === null || (weightKg !== undefined && (weightKg < 0 || weightKg > 99999))) {
-      setValidationError(t('day.weightValidation'));
-      return;
-    }
-
-    if (rpe === null || (rpe !== undefined && (rpe < 0 || rpe > 10))) {
-      setValidationError(t('day.rpeValidation'));
-      return;
-    }
-
-    setValidationError(undefined);
-    await onCompleteSet({ repetitions, weightKg, rpe });
-  }
-
-  return (
-    <View style={[
-      styles.exerciseCard,
-      isCurrent && styles.exerciseCardCurrent,
-      isComplete && styles.exerciseCardComplete,
-    ]}>
-      <View style={styles.exerciseHeader}>
-        <View style={[styles.exerciseVisual, isComplete && styles.exerciseVisualComplete]}>
-          <WorkoutVisualDisplay
-            color={isComplete ? colors.onPrimary : colors.accentText}
-            size={28}
-            visual={getExerciseVisual(exercise.visual)}
-          />
-        </View>
-        <View style={styles.exerciseText}>
-          <Text style={styles.exerciseOrder}>
-            {isCurrent ? t('day.nextExercise') : t('day.exerciseIndex', { index: index + 1 })}
-          </Text>
-          <Text style={styles.exerciseName}>{exerciseName}</Text>
-          <Text style={styles.exerciseTarget}>
-            {t('day.exerciseTarget', {
-              reps: exercise.targetReps,
-              rest: exercise.restSeconds,
-              sets: exercise.targetSets,
-            })}
-          </Text>
-        </View>
-        {isComplete && <Ionicons name="checkmark-circle" size={25} color={colors.disciplineCompleted} />}
-      </View>
-
-      <View style={styles.exerciseProgressTrack}>
-        <View
-          style={[
-            styles.exerciseProgressFill,
-            isComplete && styles.exerciseProgressFillComplete,
-            { width: `${progress}%` },
-          ]}
-        />
-      </View>
-
-      {completedSetRecords.length > 0 && (
-        <View style={styles.completedSetList}>
-          {completedSetRecords.map((workoutSet) => (
-            <View key={workoutSet.id} style={styles.completedSetRow}>
-              <View style={styles.completedSetNumber}>
-                <Ionicons name="checkmark" size={12} color={colors.onPrimary} />
-                <Text style={styles.completedSetNumberText}>{t('day.setLabel', { number: workoutSet.setNumber })}</Text>
-              </View>
-              <Text style={styles.completedSetValue}>
-                {workoutSet.weightKg === undefined
-                  ? t('day.bodyweightLabel')
-                  : `${formatDecimal(workoutSet.weightKg, locale)} kg`}
-              </Text>
-              <Text style={styles.completedSetValue}>
-                {workoutSet.repetitions === undefined
-                  ? t('day.noDetail')
-                  : t('day.repsValue', { count: workoutSet.repetitions })}
-              </Text>
-              {workoutSet.rpe !== undefined && (
-                <Text style={styles.completedSetRpe}>RPE {formatDecimal(workoutSet.rpe, locale)}</Text>
-              )}
-            </View>
-          ))}
-        </View>
-      )}
-
-      {!isComplete && (
-        <View style={styles.setEntryArea}>
-          <View style={styles.nextSetRow}>
-            <Text style={styles.nextSetTitle}>{t('day.setLabel', { number: completedSets + 1 })}</Text>
-            {previousSet && (
-              <Text numberOfLines={1} style={styles.previousSetText}>
-                {t('day.previousSet', { value: formatSetPerformance(previousSet, t, locale) })}
-              </Text>
-            )}
-          </View>
-
-          <View style={styles.setInputRow}>
-            <SetInput
-              colors={colors}
-              disabled={disabled}
-              keyboardType="decimal-pad"
-              label={t('day.kg')}
-              onChangeText={setWeightInput}
-              placeholder="—"
-              value={weightInput}
-            />
-            <SetInput
-              colors={colors}
-              disabled={disabled}
-              keyboardType="number-pad"
-              label={t('day.repsShort')}
-              onChangeText={setRepetitionsInput}
-              placeholder={exercise.targetReps}
-              value={repetitionsInput}
-            />
-            <SetInput
-              colors={colors}
-              disabled={disabled}
-              keyboardType="decimal-pad"
-              label={t('day.rpe')}
-              onChangeText={setRpeInput}
-              placeholder={t('day.optional')}
-              value={rpeInput}
-            />
-          </View>
-          {validationError && <Text style={styles.validationError}>{validationError}</Text>}
-        </View>
-      )}
-
-      <View style={styles.setControls}>
-        <View style={styles.setCountArea}>
-          <Text style={[styles.setCount, isComplete && styles.setCountComplete]}>{completedSets}</Text>
-          <Text style={styles.setTarget}>{t('day.setCountSuffix', { total: exercise.targetSets })}</Text>
-        </View>
-
-        {completedSets > 0 && !disabled && (
-          <Pressable
-            accessibilityLabel={t('day.undoSetLabel', { name: exerciseName })}
-            accessibilityRole="button"
-            onPress={onUndoSet}
-            style={({ pressed }) => [styles.undoButton, pressed && styles.pressed]}>
-            <Ionicons name="remove" size={20} color={colors.textSecondary} />
-          </Pressable>
-        )}
-
-        <Pressable
-          accessibilityLabel={t('day.completeSetLabel', { name: exerciseName })}
-          accessibilityRole="button"
-          disabled={isComplete || disabled}
-          onPress={() => void submitSet()}
-          style={({ pressed }) => [
-            styles.completeSetButton,
-            isComplete && styles.completeSetButtonDone,
-            disabled && styles.completeSetButtonDisabled,
-            pressed && styles.pressed,
-          ]}>
-          <Ionicons name={isComplete ? 'checkmark' : 'add'} size={20} color={colors.onPrimary} />
-          <Text style={styles.completeSetButtonText}>
-            {isComplete ? t('day.completed') : disabled ? disabledLabel : t('day.completeSet')}
-          </Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
-function SetInput({
-  colors,
-  disabled,
-  keyboardType,
-  label,
-  onChangeText,
-  placeholder,
-  value,
-}: {
-  colors: ThemeColors;
-  disabled: boolean;
-  keyboardType: 'decimal-pad' | 'number-pad';
-  label: string;
-  onChangeText: (value: string) => void;
-  placeholder: string;
-  value: string;
-}) {
-  const styles = createStyles(colors);
-
-  return (
-    <View style={styles.setInputGroup}>
-      <Text style={styles.setInputLabel}>{label}</Text>
-      <TextInput
-        editable={!disabled}
-        keyboardType={keyboardType}
-        maxLength={8}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor={colors.textTertiary}
-        selectTextOnFocus
-        style={[styles.setInput, disabled && styles.setInputDisabled]}
-        value={value}
-      />
-    </View>
-  );
-}
-
 function getFirstTargetRepetition(targetReps: string) {
   const match = targetReps.match(/\d+/);
   return match ? Number(match[0]) : undefined;
@@ -1306,6 +1288,115 @@ function formatSetPerformance(
 
 function createStyles(colors: ThemeColors) {
   return StyleSheet.create({
+    activeSetBlock: { alignItems: 'center', gap: 10, paddingTop: 18 },
+    activeSetLabel: { color: colors.primary, fontSize: 12, fontWeight: '600', letterSpacing: 0.6 },
+    activeExerciseName: { color: colors.text, fontSize: 24, fontWeight: '600', textAlign: 'center' },
+    activeValues: { alignItems: 'baseline', flexDirection: 'row', gap: 20, marginTop: 6 },
+    valueGroup: { alignItems: 'baseline', flexDirection: 'row', gap: 4 },
+    valueInput: {
+      color: colors.text,
+      fontSize: 38,
+      fontVariant: ['tabular-nums'],
+      fontWeight: '300',
+      minWidth: 62,
+      paddingVertical: 4,
+      textAlign: 'center',
+    },
+    valueUnit: { color: colors.textSecondary, fontSize: 13 },
+    completeSetPill: {
+      alignItems: 'center',
+      alignSelf: 'center',
+      backgroundColor: colors.text,
+      borderRadius: Layout.radiusPill,
+      justifyContent: 'center',
+      marginTop: 8,
+      minHeight: 52,
+      minWidth: 200,
+      paddingHorizontal: 32,
+    },
+    completeSetPillDisabled: { backgroundColor: colors.surfaceMuted },
+    completeSetPillText: { color: colors.background, fontSize: 16, fontWeight: '600' },
+    detailsToggle: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 5,
+      justifyContent: 'center',
+      minHeight: Layout.minTouchSize,
+    },
+    detailsToggleText: { color: colors.textSecondary, fontSize: 13 },
+    detailsArea: { alignSelf: 'stretch', gap: 12 },
+    detailRow: { alignItems: 'center', flexDirection: 'row', gap: 12 },
+    detailLabel: { color: colors.textSecondary, fontSize: 13, width: 46 },
+    detailInput: {
+      backgroundColor: colors.background,
+      borderColor: colors.inputBorder,
+      borderRadius: Layout.radiusSmall,
+      borderWidth: StyleSheet.hairlineWidth,
+      color: colors.text,
+      flex: 1,
+      fontSize: 15,
+      minHeight: Layout.minTouchSize,
+      paddingHorizontal: 12,
+    },
+    detailActions: { flexDirection: 'row', gap: 10 },
+    detailButton: {
+      alignItems: 'center',
+      borderColor: colors.separator,
+      borderRadius: Layout.radiusPill,
+      borderWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row',
+      gap: 6,
+      justifyContent: 'center',
+      minHeight: Layout.minTouchSize,
+      paddingHorizontal: 16,
+    },
+    detailButtonText: { color: colors.text, fontSize: 13 },
+    allExercisesPanel: {
+      backgroundColor: colors.card,
+      borderColor: colors.separator,
+      borderRadius: Layout.radiusLarge,
+      borderWidth: StyleSheet.hairlineWidth,
+      marginTop: 22,
+      paddingBottom: 6,
+      paddingHorizontal: 16,
+      paddingTop: 10,
+    },
+    panelGrabber: {
+      alignSelf: 'center',
+      backgroundColor: colors.textTertiary,
+      borderRadius: 2,
+      height: 3,
+      marginBottom: 12,
+      width: 34,
+    },
+    panelTitle: { color: colors.textSecondary, ...Type.eyebrow, marginBottom: 4 },
+    panelRow: {
+      alignItems: 'center',
+      borderTopColor: colors.separator,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row',
+      gap: 8,
+      minHeight: Layout.minTouchSize,
+    },
+    panelMarker: { alignItems: 'center', width: 12 },
+    panelExerciseName: { color: colors.textSecondary, flex: 1, fontSize: 15 },
+    panelExerciseNameActive: { color: colors.text, fontWeight: '500' },
+    panelExerciseNameComplete: { color: colors.disciplineCompleted },
+    panelSetCount: { color: colors.textTertiary, fontSize: 13, fontVariant: ['tabular-nums'] },
+    panelSetCountComplete: { color: colors.disciplineCompleted },
+    workoutTopBar: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 8,
+      paddingHorizontal: Layout.screenPadding,
+      paddingVertical: 10,
+    },
+    topBarButton: { alignItems: 'center', height: Layout.minTouchSize, justifyContent: 'center', width: Layout.minTouchSize },
+    topBarCenter: { alignItems: 'center', flex: 1, justifyContent: 'center', minHeight: Layout.minTouchSize },
+    topBarStatus: { color: colors.textSecondary, fontSize: 13, fontVariant: ['tabular-nums'] },
+    topBarFinish: { color: colors.primary, fontSize: 16, fontWeight: '500' },
+    topBarProgressTrack: { backgroundColor: colors.surfaceMuted, height: 2, marginHorizontal: Layout.screenPadding },
+    topBarProgressFill: { backgroundColor: colors.text, height: '100%' },
     safeArea: { backgroundColor: colors.background, flex: 1 },
     workoutScreen: { flex: 1 },
     content: { gap: 18, paddingBottom: 44, paddingHorizontal: Layout.screenPadding, paddingTop: 12 },
@@ -1322,6 +1413,14 @@ function createStyles(colors: ThemeColors) {
     },
     primaryButtonText: { color: colors.onPrimary, fontSize: 15, fontWeight: '600' },
 
+    headerButton: { alignItems: 'center', height: 40, justifyContent: 'center', width: 40 },
+    summaryRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      minHeight: Layout.minTouchSize,
+    },
+    summaryText: { color: colors.textSecondary, ...Type.caption, flexShrink: 1 },
     controlsRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
     controlGroup: { flexDirection: 'row', gap: 8 },
     controlButton: {
@@ -1409,7 +1508,7 @@ function createStyles(colors: ThemeColors) {
 
     startWorkoutButton: {
       alignItems: 'center',
-      alignSelf: 'flex-start',
+      alignSelf: 'stretch',
       backgroundColor: colors.text,
       borderRadius: Layout.radiusPill,
       flexDirection: 'row',
@@ -1447,7 +1546,7 @@ function createStyles(colors: ThemeColors) {
       fontVariant: ['tabular-nums'],
       fontWeight: '300',
     },
-    averageDuration: { color: colors.textTertiary, ...Type.footnote, marginTop: 2 },
+    averageDuration: { color: colors.textTertiary, ...Type.footnote, marginTop: 18, textAlign: 'center' },
     finishWorkoutButton: {
       alignItems: 'center',
       alignSelf: 'flex-start',

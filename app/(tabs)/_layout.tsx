@@ -1,4 +1,5 @@
-import { Ionicons } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import { Tabs } from 'expo-router';
 import { StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -6,6 +7,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Layout } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
+
+const coachMascotSource = require('../../assets/images/ai-coach-mascot.png');
 
 export default function TabLayout() {
   const { colors } = useAppTheme();
@@ -23,8 +26,8 @@ export default function TabLayout() {
         sceneStyle: { backgroundColor: colors.background },
         tabBarActiveTintColor: colors.tabIconSelected,
         tabBarInactiveTintColor: colors.tabIconDefault,
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '500' },
-        tabBarItemStyle: { paddingTop: 6 },
+        tabBarShowLabel: false,
+        tabBarItemStyle: { paddingTop: 8 },
         tabBarStyle: {
           backgroundColor: colors.background,
           borderTopColor: colors.separator,
@@ -39,8 +42,8 @@ export default function TabLayout() {
         name="index"
         options={{
           title: t('tabs.home'),
-          tabBarIcon: ({ color, focused, size }) => (
-            <Ionicons name={focused ? 'home' : 'home-outline'} size={size ?? 24} color={color} />
+          tabBarIcon: ({ color, size }) => (
+            <Feather name="home" size={(size ?? 24) - 2} color={color} />
           ),
         }}
       />
@@ -48,8 +51,8 @@ export default function TabLayout() {
         name="programs"
         options={{
           title: t('tabs.programs'),
-          tabBarIcon: ({ color, focused, size }) => (
-            <Ionicons name={focused ? 'barbell' : 'barbell-outline'} size={size ?? 24} color={color} />
+          tabBarIcon: ({ color, size }) => (
+            <Feather name="activity" size={(size ?? 24) - 1} color={color} />
           ),
         }}
       />
@@ -57,8 +60,8 @@ export default function TabLayout() {
         name="history"
         options={{
           title: t('tabs.history'),
-          tabBarIcon: ({ color, focused, size }) => (
-            <Ionicons name={focused ? 'time' : 'time-outline'} size={size ?? 24} color={color} />
+          tabBarIcon: ({ color, size }) => (
+            <Feather name="clock" size={(size ?? 24) - 1} color={color} />
           ),
         }}
       />
@@ -67,7 +70,12 @@ export default function TabLayout() {
         options={{
           title: t('tabs.coach'),
           tabBarIcon: ({ color, focused, size }) => (
-            <Ionicons name={focused ? 'sparkles' : 'sparkles-outline'} size={size ?? 24} color={color} />
+            <Image
+              contentFit="cover"
+              source={coachMascotSource}
+              style={{ height: (size ?? 24) + 6, width: (size ?? 24) + 18 }}
+              tintColor={focused ? color : colors.icon}
+            />
           ),
         }}
       />
@@ -75,8 +83,8 @@ export default function TabLayout() {
         name="profile"
         options={{
           title: t('tabs.profile'),
-          tabBarIcon: ({ color, focused, size }) => (
-            <Ionicons name={focused ? 'person' : 'person-outline'} size={size ?? 24} color={color} />
+          tabBarIcon: ({ color, size }) => (
+            <Feather name="user" size={(size ?? 24) - 1} color={color} />
           ),
         }}
       />

@@ -84,3 +84,20 @@ export function buildDisciplineStatuses(
 
   return statuses;
 }
+
+/**
+ * Verilen haftanın gününün **bu haftaki** gerçek tarihini döndürür.
+ * Hafta pazartesi başlar. Disiplin durumu bu tarihe göre okunur; böylece
+ * yalnızca gün adına bakıp geçmiş haftalar boyanmaz.
+ */
+export function getWeekdayDateInCurrentWeek(weekday: number, today: Date) {
+  const startOfWeek = new Date(today);
+  startOfWeek.setHours(0, 0, 0, 0);
+  const mondayOffset = (startOfWeek.getDay() + 6) % 7;
+  startOfWeek.setDate(startOfWeek.getDate() - mondayOffset);
+
+  const offset = weekday === 0 ? 6 : weekday - 1;
+  const result = new Date(startOfWeek);
+  result.setDate(result.getDate() + offset);
+  return result;
+}

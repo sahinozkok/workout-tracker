@@ -44,11 +44,11 @@ export const Colors = {
     tabIconSelected: '#007AFF',
   },
   dark: {
-    background: '#000000',
+    background: '#040404ff',
     surface: '#000000',
     surfaceMuted: '#1C1C1E',
     card: '#131315',
-    text: '#FFFFFF',
+    text: '#ebe6e6ff',
     textSecondary: '#8E8E93',
     textTertiary: '#6A6A6E',
     border: '#242426',
