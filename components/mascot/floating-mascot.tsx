@@ -22,6 +22,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BUBBLE_MAX_WIDTH, MascotSpeechBubble } from '@/components/mascot/mascot-speech-bubble';
 import { MascotCelebrationParticles } from '@/components/mascot/mascot-celebration-particles';
+import { MascotLoveParticles } from '@/components/mascot/mascot-love-particles';
 import { Layout } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { useMascot } from '@/context/mascot-context';
@@ -85,6 +86,19 @@ const DRAG_SCALE = 1.05;
 /** Bu mesafeden kısa hareketler sürükleme sayılmaz; tap olarak geçer. */
 const DRAG_MIN_DISTANCE = 8;
 
+/**
+ * Çift dokunma "sevme" tepkisi. Tepki ve balon aynı süreyi paylaşır, böylece
+ * maskot ikisi de bitince tek seferde kenardaki peek durumuna döner.
+ */
+const LOVE_REACTION_DURATION = 1700;
+/**
+ * Ard arda çok hızlı çift dokunmalarda üst üste animasyon, zamanlayıcı veya
+ * partikül oluşmasını engelleyen yerel bekleme.
+ */
+const LOVE_COOLDOWN = 1500;
+/** Kalpler tepkiden biraz önce sönerek kaybolur. */
+const LOVE_PARTICLE_LIFETIME = 1400;
+
 /** Küçük sevinme: iki zıplama, toplam 560 ms. */
 const SET_REACTION_DURATION = 560;
 /** Büyük kutlama: üç zıplama, toplam 1220 ms. */
@@ -117,7 +131,7 @@ const ROOT_STACK_PATTERN = /^\/(program|settings)(\/|$)/;
 
 type Bounds = { maxX: number; maxY: number; minX: number; minY: number };
 
-type BubbleVariant = 'tap' | 'celebration';
+type BubbleVariant = 'tap' | 'celebration' | 'love';
 
 /** `runId` sayesinde aynı tür tepki tekrarlansa bile süre efekti yeniden kurulur. */
 type ActiveReaction = { runId: number; type: MascotReactionType };
@@ -197,6 +211,11 @@ export function FloatingMascot() {
   /** 0 = parçacık yok. Her kutlama yeni bir kimlik alır, böylece yeniden başlar. */
   const [particleRun, setParticleRun] = useState(0);
   const particleRunRef = useRef(0);
+  /** Aynı mantık kalpler için; kutlama partikülleriyle karışmaz. */
+  const [loveRun, setLoveRun] = useState(0);
+  const loveRunRef = useRef(0);
+  /** Son sevme tepkisinin zamanı; cooldown bunun üzerinden ölçülür. */
+  const loveCooldownRef = useRef(0);
   // AI durumu ref'te de tutulur: sürükleme/tepki bittiğinde hangi duruma
   // dönüleceğine stale closure olmadan karar verilir.
   const isThinkingRef = useRef(isThinking);
@@ -364,7 +383,12 @@ export function FloatingMascot() {
 
       if (!variant) return;
 
-      const timeout = variant === 'celebration' ? CELEBRATION_BUBBLE_TIMEOUT : BUBBLE_TIMEOUT;
+      const timeout =
+        variant === 'celebration'
+          ? CELEBRATION_BUBBLE_TIMEOUT
+          : variant === 'love'
+            ? LOVE_REACTION_DURATION
+            : BUBBLE_TIMEOUT;
       bubbleTimerRef.current = setTimeout(() => {
         bubbleVariantRef.current = undefined;
         setBubbleVariant(undefined);
@@ -384,6 +408,11 @@ export function FloatingMascot() {
   // durumuna dönülür, aksi hâlde boşta durumuna.
   useEffect(() => {
     if (bubbleVariant) return;
+    // Aktif bir tepki sürerken balonun kapanması durumu sıfırlamamalı: örneğin
+    // `set-complete`, `loved` tepkisini devralırken sevme balonunu kapatır ve
+    // bu efekt yeni tepkinin 'happy' durumunu yanlışlıkla 'idle' yapardı.
+    // Tepki kendi bitiş efektinde zaten doğru duruma dönüyor.
+    if (activeReactionRef.current) return;
     setState((current) =>
       current === 'happy' ? (isThinkingRef.current ? 'thinking' : 'idle') : current,
     );
@@ -579,6 +608,7 @@ export function FloatingMascot() {
       activeReactionRef.current = undefined;
       setActiveReaction(undefined);
       setParticleRun(0);
+      setLoveRun(0);
     },
     [reactionOpacity, reactionRotation, reactionScale, reactionY],
   );
@@ -648,6 +678,26 @@ export function FloatingMascot() {
       cancelAnimation(reactionRotation);
       cancelAnimation(reactionOpacity);
 
+      /**
+       * Devralınan `loved` tepkisinin sunumu anında temizlenir. Aksi hâlde
+       * kalpler ve sevme balonu yeni tepkinin altında görünmeye devam eder;
+       * `workout-complete` durumunda kalpler kutlama partikülleriyle üst üste
+       * biner.
+       *
+       * `loveRunRef` bir kimlik sayacıdır, sıfırlanmaz — yalnızca görünürlük
+       * state'i kapatılır.
+       */
+      const previous = activeReactionRef.current;
+      if (previous?.type === 'loved' && type !== 'loved') {
+        setLoveRun(0);
+        // `workout-complete` aşağıda kendi balonunu açıp devraldığı için
+        // burada ayrıca kapatılmasına gerek yok; `set-complete` ise hiç balon
+        // açmadığından sevme balonu burada kapatılmalı.
+        if (type !== 'workout-complete' && bubbleVariantRef.current === 'love') {
+          showBubble(undefined);
+        }
+      }
+
       // Her oynatma yeni bir runId alır: süre efekti yeniden kurulur ve
       // devralınan tepkinin eski zamanlayıcısı cleanup ile silinir.
       reactionRunRef.current += 1;
@@ -661,6 +711,11 @@ export function FloatingMascot() {
         showBubble('celebration');
         particleRunRef.current += 1;
         setParticleRun(particleRunRef.current);
+      } else if (type === 'loved') {
+        // Kısa, CTA'sız sevme balonu + kalpler.
+        showBubble('love');
+        loveRunRef.current += 1;
+        setLoveRun(loveRunRef.current);
       }
 
       if (reduceMotion) {
@@ -673,6 +728,29 @@ export function FloatingMascot() {
         reactionOpacity.value = withSequence(
           withTiming(0.72, { duration: REDUCED_REACTION_DURATION / 2 }),
           withTiming(1, { duration: REDUCED_REACTION_DURATION / 2 }),
+        );
+        return;
+      }
+
+      if (type === 'loved') {
+        // Küçük, doğal bir sevinme: iki yumuşak zıplama ve çok hafif eğilme.
+        reactionY.value = withSequence(
+          withTiming(-8, { duration: 150, easing: Easing.out(Easing.quad) }),
+          withTiming(0, { duration: 160, easing: Easing.in(Easing.quad) }),
+          withTiming(-5, { duration: 140, easing: Easing.out(Easing.quad) }),
+          withTiming(0, { duration: 160, easing: Easing.in(Easing.quad) }),
+        );
+        reactionScale.value = withSequence(
+          withTiming(1.08, { duration: 150 }),
+          withTiming(1, { duration: 160 }),
+          withTiming(1.04, { duration: 140 }),
+          withTiming(1, { duration: 160 }),
+        );
+        reactionRotation.value = withSequence(
+          withTiming(-3, { duration: 150 }),
+          withTiming(3, { duration: 160 }),
+          withTiming(-2, { duration: 140 }),
+          withTiming(0, { duration: 160 }),
         );
         return;
       }
@@ -729,6 +807,29 @@ export function FloatingMascot() {
     [reactionOpacity, reactionRotation, reactionScale, reactionY, reduceMotion, showBubble],
   );
 
+  /**
+   * Çift dokunma = "sevme". Tek dokunma ve sürükleme davranışına dokunmaz.
+   *
+   * Üç guard sırayla uygulanır:
+   *  1. Sürükleme sırasında hiç çalışmaz (pan en yüksek önceliktir).
+   *  2. Süren bir tepki varsa hiç çalışmaz — özellikle workout-complete
+   *     kutlaması bölünmez. (`loved` zaten en düşük öncelikli olduğu için
+   *     tepki tüketen efekt de bunu ayrıca engeller.)
+   *  3. Cooldown: ard arda çok hızlı çift dokunmalar üst üste animasyon,
+   *     zamanlayıcı veya partikül üretmez.
+   */
+  const handleDoubleTap = useCallback(() => {
+    if (isDraggingRef.current) return;
+    if (activeReactionRef.current) return;
+
+    const now = Date.now();
+    if (now - loveCooldownRef.current < LOVE_COOLDOWN) return;
+    loveCooldownRef.current = now;
+
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+    playReaction('loved');
+  }, [playReaction]);
+
   // Aynı tepki React yeniden render olduğunda tekrar oynatılmaz: artan kimlik
   // bir kez tüketilir. Maskot görünmüyorsa olay düşürülür, kuyrukta beklemez.
   const lastReactionIdRef = useRef(0);
@@ -760,11 +861,16 @@ export function FloatingMascot() {
   useEffect(() => {
     if (!activeReaction) return;
 
-    const duration = reduceMotion
-      ? REDUCED_REACTION_DURATION
-      : activeReaction.type === 'workout-complete'
-        ? WORKOUT_REACTION_DURATION
-        : SET_REACTION_DURATION;
+    // Sevme tepkisi Reduce Motion'da da aynı süreyi kullanır: hareket kısalır
+    // ama maskotun "sevildim" hâlinde kalma süresi tutarlı olur.
+    const duration =
+      activeReaction.type === 'loved'
+        ? LOVE_REACTION_DURATION
+        : reduceMotion
+          ? REDUCED_REACTION_DURATION
+          : activeReaction.type === 'workout-complete'
+            ? WORKOUT_REACTION_DURATION
+            : SET_REACTION_DURATION;
 
     const timer = setTimeout(() => {
       reactionY.value = 0;
@@ -787,6 +893,14 @@ export function FloatingMascot() {
     const timer = setTimeout(() => setParticleRun(0), PARTICLE_LIFETIME);
     return () => clearTimeout(timer);
   }, [particleRun]);
+
+  // Kalpler de kısa ömürlüdür; süre dolunca bileşen unmount edilir.
+  useEffect(() => {
+    if (!loveRun) return;
+
+    const timer = setTimeout(() => setLoveRun(0), LOVE_PARTICLE_LIFETIME);
+    return () => clearTimeout(timer);
+  }, [loveRun]);
 
   // Maskot gizlenirse/kapatılırsa süren kutlama da temizlenir.
   useEffect(() => {
@@ -929,20 +1043,38 @@ export function FloatingMascot() {
         settleToEdge();
       });
 
+    const doubleTap = Gesture.Tap()
+      .numberOfTaps(2)
+      .maxDuration(400)
+      // İki dokunuş arasındaki en uzun bekleme; bundan uzunsa tek dokunma sayılır.
+      .maxDelay(260)
+      .onEnd((_event, success) => {
+        if (success) runOnJS(handleDoubleTap)();
+      });
+
     const tap = Gesture.Tap()
       .maxDuration(400)
       .onEnd((_event, success) => {
         if (success) runOnJS(handleTap)();
       });
 
-    // Exclusive: pan etkinleşirse tap çalışmaz, yani sürükleme sonrası
-    // yanlışlıkla balon açılmaz.
-    return Gesture.Exclusive(pan, tap);
+    /**
+     * Öncelik sırası: pan > çift dokunma > tek dokunma.
+     *
+     * `Gesture.Exclusive` sonraki gesture'ı öncekinin başarısız olmasını
+     * bekletir:
+     *  - Pan etkinleşirse hiçbir tap çalışmaz → sürükleme sonrası yanlışlıkla
+     *    balon açılmaz ve sevme tepkisi tetiklenmez.
+     *  - Tek dokunma, çift dokunmanın başarısız olmasını bekler → çift
+     *    dokunmanın ilk dokunuşu balonu açmaz.
+     */
+    return Gesture.Exclusive(pan, doubleTap, tap);
   }, [
     bounds,
     gestureStartX,
     gestureStartY,
     handleDragEnd,
+    handleDoubleTap,
     handleDragStart,
     handleTap,
     isPanActive,
@@ -1028,7 +1160,13 @@ export function FloatingMascot() {
 
   if (isHidden) return null;
 
-  const isCelebrationBubble = bubbleVariant === 'celebration';
+  // Yalnızca normal dokunma balonunda AI Koç CTA'sı bulunur.
+  const bubbleMessage =
+    bubbleVariant === 'celebration'
+      ? t('mascot.celebrationMessage')
+      : bubbleVariant === 'love'
+        ? t('mascot.lovedMessage')
+        : undefined;
 
   return (
     <View
@@ -1047,9 +1185,9 @@ export function FloatingMascot() {
           <MascotSpeechBubble
             edge={position.edge}
             horizontalOffset={bubbleHorizontalOffset}
-            message={isCelebrationBubble ? t('mascot.celebrationMessage') : undefined}
+            message={bubbleMessage}
             onPressCta={handleOpenCoach}
-            showCta={!isCelebrationBubble}
+            showCta={bubbleVariant === 'tap'}
           />
         )}
 
@@ -1059,6 +1197,10 @@ export function FloatingMascot() {
             reduceMotion={reduceMotion}
             size={TOUCH_SIZE}
           />
+        )}
+
+        {loveRun > 0 && (
+          <MascotLoveParticles key={loveRun} reduceMotion={reduceMotion} size={TOUCH_SIZE} />
         )}
 
         {/* Katmanlar:

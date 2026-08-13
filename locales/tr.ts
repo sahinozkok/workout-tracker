@@ -555,6 +555,7 @@ export const tr = {
     bubbleMessage: 'Bugünkü antrenmana hazır mısın?',
     bubbleCta: 'AI Koç’a git',
     celebrationMessage: 'Antrenman tamamlandı! Harika iş!',
+    lovedMessage: 'Bunu sevdim!',
   },
 };
 
