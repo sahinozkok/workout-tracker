@@ -557,5 +557,37 @@ export const en: TranslationSchema = {
     bubbleCta: 'Open AI Coach',
     celebrationMessage: 'Workout complete! Great work!',
     lovedMessage: 'I liked that!',
+    contextMessages: {
+      home: [
+        'I’m here for today’s goal.',
+        'Let’s take one small step together.',
+        'How about checking your plan?',
+      ],
+      programs: [
+        'If your program is ready, so am I.',
+        'A good plan makes things easier.',
+        'You can shape your program around your needs.',
+      ],
+      workout: [
+        'We’re moving forward set by set!',
+        'Every completed set is another step.',
+        'I’m right here—keep going!',
+      ],
+      history: [
+        'Your progress is building up here.',
+        'Every workout leaves a small mark.',
+        'Look how far you’ve come!',
+      ],
+      coach: [
+        'I’m here—ask me anything.',
+        'We can talk about your training.',
+        'Let’s think it through together.',
+      ],
+      profile: [
+        'You’re in control here.',
+        'You can adjust the app to fit you.',
+        'Let your preferences reflect you.',
+      ],
+    },
   },
 };
