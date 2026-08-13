@@ -129,6 +129,30 @@ const ACTIVE_WORKOUT_PATTERN = /^\/program\/[^/]+\/day\/[^/]+$/;
  */
 const ROOT_STACK_PATTERN = /^\/(program|settings)(\/|$)/;
 
+/** `locales/*.ts` içindeki `mascot.contextMessages` grup anahtarları. */
+type MascotMessageGroup = 'home' | 'programs' | 'workout' | 'history' | 'coach' | 'profile';
+
+/**
+ * Route → mesaj grubu. Deterministiktir; hiçbir kullanıcı veya antrenman
+ * verisi okumaz, yalnızca `pathname` değerine bakar.
+ *
+ * Sıra önemli: aktif antrenman ekranı (`/program/x/day/y`) genel program
+ * route'undan **önce** kontrol edilir, aksi hâlde program grubuna düşerdi.
+ * Bilinmeyen route `undefined` döner ve çağıran taraf `mascot.bubbleMessage`
+ * fallback'ini kullanır.
+ */
+function resolveMessageGroup(pathname: string): MascotMessageGroup | undefined {
+  if (ACTIVE_WORKOUT_PATTERN.test(pathname)) return 'workout';
+  if (pathname === '/') return 'home';
+  if (pathname === '/programs' || pathname === '/program' || pathname.startsWith('/program/')) {
+    return 'programs';
+  }
+  if (pathname === '/history') return 'history';
+  if (pathname === '/coach') return 'coach';
+  if (pathname === '/profile' || pathname === '/settings') return 'profile';
+  return undefined;
+}
+
 type Bounds = { maxX: number; maxY: number; minX: number; minY: number };
 
 type BubbleVariant = 'tap' | 'celebration' | 'love';
@@ -183,7 +207,7 @@ function nearestAngle(current: number, target: number) {
  */
 export function FloatingMascot() {
   const { enabled, isReady, isThinking, position, reaction, savePosition } = useMascot();
-  const { t } = useTranslation();
+  const { t, tList } = useTranslation();
   const insets = useSafeAreaInsets();
   const { height, width } = useWindowDimensions();
   const pathname = usePathname();
@@ -366,6 +390,23 @@ export function FloatingMascot() {
   // Açık varyant ref'te de tutulur: tap handler'ı state updater içinde yan etki
   // üretmeden mevcut değeri okur ve kimliği sabit kalır.
   const bubbleVariantRef = useRef<BubbleVariant>(undefined);
+  /**
+   * Dokunma anında seçilen mesaj. State'te tutulur, böylece balon açık kaldığı
+   * sürece her render'da aynı kalır. `undefined` ise balon varsayılan
+   * `mascot.bubbleMessage` metnine düşer.
+   */
+  const [tapMessage, setTapMessage] = useState<string>();
+  /** Grup başına en son gösterilen mesaj; arka arkaya tekrarı engeller. */
+  const lastTapMessageRef = useRef<Partial<Record<MascotMessageGroup, string>>>({});
+  /**
+   * Route ref'ten okunur: `handleTap` kimliği sabit kalır, gesture her ekran
+   * değişiminde yeniden kurulmaz.
+   */
+  const pathnameRef = useRef(pathname);
+
+  useEffect(() => {
+    pathnameRef.current = pathname;
+  }, [pathname]);
 
   const clearBubbleTimer = useCallback(() => {
     if (bubbleTimerRef.current) {
@@ -403,6 +444,13 @@ export function FloatingMascot() {
     // Gizlenirken açık balon kapatılır.
     if (isHidden) showBubble(undefined);
   }, [isHidden, showBubble]);
+
+  useEffect(() => {
+    // Ekran değişince mesaj artık bulunulan ekrana ait olmadığı için yalnızca
+    // normal dokunma balonu kapatılır. `love` ve `celebration` balonları kendi
+    // sürelerini tamamlar; route değişimi onları bozmaz.
+    if (bubbleVariantRef.current === 'tap') showBubble(undefined);
+  }, [pathname, showBubble]);
 
   // Balon kapandığında "happy" durumu sona erer. AI hâlâ yazıyorsa düşünme
   // durumuna dönülür, aksi hâlde boşta durumuna.
@@ -642,6 +690,30 @@ export function FloatingMascot() {
     [peekEdgeShared, savePosition],
   );
 
+  /**
+   * Bulunulan ekrana uygun kısa mesajı seçer. Yalnızca dokunma anında
+   * çağrılır — render sırasında değil. Aynı grupta aynı mesaj arka arkaya
+   * seçilmez; grupta tek mesaj kalırsa güvenle o kullanılır. Grup veya liste
+   * yoksa `undefined` döner ve balon `mascot.bubbleMessage` fallback'ine düşer.
+   */
+  const pickTapMessage = useCallback(() => {
+    const group = resolveMessageGroup(pathnameRef.current ?? '');
+    if (!group) return undefined;
+
+    const messages = tList(`mascot.contextMessages.${group}`);
+    if (messages.length === 0) return undefined;
+
+    const previous = lastTapMessageRef.current[group];
+    // Bir önceki mesaj havuzdan çıkarılır; tek mesaj kalırsa havuz boşalır ve
+    // güvenli biçimde tam listeye dönülür.
+    const pool = messages.filter((message) => message !== previous);
+    const source = pool.length > 0 ? pool : messages;
+    const chosen = source[Math.floor(Math.random() * source.length)];
+
+    lastTapMessageRef.current[group] = chosen;
+    return chosen;
+  }, [tList]);
+
   const handleTap = useCallback(() => {
     // Aktif bir set/kutlama tepkisi varken dokunma tamamen yok sayılır:
     // haptic üretmez, balonu değiştirmez, tepki shared value'larına dokunmaz.
@@ -663,8 +735,13 @@ export function FloatingMascot() {
     setState('happy');
     // Tekrar dokunulunca açılıp kapanır. Kutlama balonu açıksa normal
     // balona geçilmez; kutlama mesajı kendi süresini tamamlar.
-    showBubble(bubbleVariantRef.current ? undefined : 'tap');
-  }, [reactionScale, reactionY, reduceMotion, showBubble]);
+    const nextVariant = bubbleVariantRef.current ? undefined : 'tap';
+    // Mesaj yalnızca balon açılırken, yani dokunma anında seçilir. Render
+    // sırasında hiçbir rastgelelik çalışmaz ve seçilen mesaj state'te
+    // tutulduğu için balon kapanana kadar değişmez.
+    if (nextVariant === 'tap') setTapMessage(pickTapMessage());
+    showBubble(nextVariant);
+  }, [pickTapMessage, reactionScale, reactionY, reduceMotion, showBubble]);
 
   /**
    * Tek seferlik tepkiyi oynatır. Tepki katmanı `translateY`, `scale` ve
@@ -1161,12 +1238,15 @@ export function FloatingMascot() {
   if (isHidden) return null;
 
   // Yalnızca normal dokunma balonunda AI Koç CTA'sı bulunur.
+  // Normal dokunma balonunda ekrana özel mesaj gösterilir. `tapMessage`
+  // dokunma anında seçilir; `undefined` ise balon `mascot.bubbleMessage`
+  // fallback'ini kullanır.
   const bubbleMessage =
     bubbleVariant === 'celebration'
       ? t('mascot.celebrationMessage')
       : bubbleVariant === 'love'
         ? t('mascot.lovedMessage')
-        : undefined;
+        : tapMessage;
 
   return (
     <View

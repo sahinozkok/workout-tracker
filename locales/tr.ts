@@ -556,6 +556,43 @@ export const tr = {
     bubbleCta: 'AI Koç’a git',
     celebrationMessage: 'Antrenman tamamlandı! Harika iş!',
     lovedMessage: 'Bunu sevdim!',
+    /**
+     * Tek dokunmada bulunulan ekrana göre seçilen kısa mesajlar. Tamamen
+     * cihaz içi: yalnızca route'a bakılır, kullanıcı veya antrenman verisi
+     * okunmaz. Grup bulunamazsa `bubbleMessage` kullanılır.
+     */
+    contextMessages: {
+      home: [
+        'Bugünkü hedefin için buradayım.',
+        'Birlikte küçük bir adım atalım.',
+        'Planına göz atmaya ne dersin?',
+      ],
+      programs: [
+        'Programın hazırsa ben de hazırım.',
+        'İyi bir plan işleri kolaylaştırır.',
+        'Programını kendine göre şekillendirebilirsin.',
+      ],
+      workout: [
+        'Set set ilerliyoruz!',
+        'Her tamamlanan set bir adım daha.',
+        'Ben buradayım, sen devam et!',
+      ],
+      history: [
+        'İlerlemen burada birikiyor.',
+        'Her antrenman küçük bir iz bırakır.',
+        'Ne kadar ilerlediğine bir bak!',
+      ],
+      coach: [
+        'Buradayım, aklına geleni sor.',
+        'Antrenmanın hakkında konuşabiliriz.',
+        'Birlikte düşünelim.',
+      ],
+      profile: [
+        'Burada kontrol sende.',
+        'Uygulamayı kendine göre ayarlayabilirsin.',
+        'Tercihlerin seni yansıtsın.',
+      ],
+    },
   },
 };
 
