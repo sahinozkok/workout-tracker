@@ -556,5 +556,6 @@ export const en: TranslationSchema = {
     bubbleMessage: 'Ready for today’s workout?',
     bubbleCta: 'Open AI Coach',
     celebrationMessage: 'Workout complete! Great work!',
+    lovedMessage: 'I liked that!',
   },
 };
