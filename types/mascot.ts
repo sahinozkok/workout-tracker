@@ -22,42 +22,84 @@ export const MASCOT_REACTION_PRIORITY: Record<MascotReactionType, number> = {
   'set-complete': 1,
 };
 
-/** Maskotun yaslandığı ekran kenarı. */
-export type MascotSide = 'left' | 'right';
+/** Maskotun yaslanabileceği dört ekran kenarı. */
+export type MascotEdge = 'left' | 'right' | 'top' | 'bottom';
+
+const MASCOT_EDGES: MascotEdge[] = ['left', 'right', 'top', 'bottom'];
 
 /**
  * Konum çözünürlükten bağımsız saklanır: ham piksel koordinatı kaydedilirse
  * farklı ekran boyutunda maskot güvenli alanın dışına düşerdi.
  */
 export type MascotPosition = {
-  side: MascotSide;
-  /** Kullanılabilir dikey alan içindeki oran; her zaman 0–1 arasına sıkıştırılır. */
-  verticalRatio: number;
+  edge: MascotEdge;
+  /**
+   * Kenar boyunca kullanılabilir alandaki oran; her zaman 0–1.
+   * left/right için dikey, top/bottom için yatay konumu belirler.
+   */
+  edgeRatio: number;
 };
 
 export const DEFAULT_MASCOT_POSITION: MascotPosition = {
-  side: 'right',
-  verticalRatio: 0.72,
+  edge: 'right',
+  edgeRatio: 0.72,
 };
 
-export function clampVerticalRatio(value: number) {
-  if (!Number.isFinite(value)) return DEFAULT_MASCOT_POSITION.verticalRatio;
+/**
+ * Peek durumunda kenara göre temel dönüş (derece, saat yönü pozitif).
+ * Kaynak görselde karakter dik durur: kafa üstte, gövdenin altı aşağıda.
+ * Hedef her kenarda gövdenin altını yüzeyin arkasına, kafayı ekranın içine
+ * bakacak biçimde çevirmektir.
+ */
+export const MASCOT_EDGE_ROTATION: Record<MascotEdge, number> = {
+  left: 90, // gövde altı solda gizli, kafa sağa (içeri) bakar
+  right: -90, // gövde altı sağda gizli, kafa sola (içeri) bakar
+  top: 180, // ters durur; gövde altı yukarıda gizli, kafa aşağı bakar
+  bottom: 0, // normal dik; gövde altı aşağıda gizli, kafa yukarı bakar
+};
+
+/** left/right dikey eksende, top/bottom yatay eksende konumlanır. */
+export function isVerticalEdge(edge: MascotEdge) {
+  return edge === 'left' || edge === 'right';
+}
+
+export function clampEdgeRatio(value: number) {
+  if (!Number.isFinite(value)) return DEFAULT_MASCOT_POSITION.edgeRatio;
   return Math.min(1, Math.max(0, value));
 }
 
-/** Bilinmeyen/bozuk AsyncStorage içeriğini güvenli bir konuma indirger. */
+/**
+ * Bilinmeyen/bozuk AsyncStorage içeriğini güvenli bir konuma indirger ve
+ * **eski iki kenarlı biçimi** yeni dört kenarlı biçime taşır.
+ *
+ * Eski kayıt: `{ side: 'left' | 'right', verticalRatio: number }`
+ * Yeni kayıt: `{ edge: MascotEdge, edgeRatio: number }`
+ *
+ * Aynı AsyncStorage anahtarı kullanılmaya devam eder; mevcut kullanıcının
+ * konumu güncelleme sonrası kaybolmaz ve bir kez yeni biçimde kaydedildikten
+ * sonra yeni biçimden okunur.
+ */
 export function normalizeMascotPosition(value: unknown): MascotPosition {
   if (!value || typeof value !== 'object') return DEFAULT_MASCOT_POSITION;
 
-  const candidate = value as Partial<MascotPosition>;
-  const side: MascotSide = candidate.side === 'left' ? 'left' : 'right';
+  const candidate = value as Record<string, unknown>;
 
-  return {
-    side,
-    verticalRatio: clampVerticalRatio(
-      typeof candidate.verticalRatio === 'number'
+  // Yeni biçim önceliklidir; yoksa eski `side` alanı kenara çevrilir.
+  const edge = MASCOT_EDGES.includes(candidate.edge as MascotEdge)
+    ? (candidate.edge as MascotEdge)
+    : candidate.side === 'left'
+      ? 'left'
+      : candidate.side === 'right'
+        ? 'right'
+        : DEFAULT_MASCOT_POSITION.edge;
+
+  // Yeni `edgeRatio` yoksa eski `verticalRatio` aynı anlamda kullanılır.
+  const rawRatio =
+    typeof candidate.edgeRatio === 'number'
+      ? candidate.edgeRatio
+      : typeof candidate.verticalRatio === 'number'
         ? candidate.verticalRatio
-        : DEFAULT_MASCOT_POSITION.verticalRatio,
-    ),
-  };
+        : DEFAULT_MASCOT_POSITION.edgeRatio;
+
+  return { edge, edgeRatio: clampEdgeRatio(rawRatio) };
 }
