@@ -546,6 +546,15 @@ export const tr = {
     totalSets: 'Toplam set',
     workoutDays: '{count} antrenman günü',
   },
+  mascot: {
+    settingsTitle: 'Maskot',
+    settingsLabel: 'Maskotu uygulamada göster',
+    settingsCaption: 'Antrenman arkadaşını ekranlarda gösterir.',
+    accessibilityLabel: 'Maskot',
+    accessibilityHint: 'Konuşma balonunu açmak için dokun, taşımak için basılı tutup sürükle.',
+    bubbleMessage: 'Bugünkü antrenmana hazır mısın?',
+    bubbleCta: 'AI Koç’a git',
+  },
 };
 
 export type TranslationSchema = typeof tr;

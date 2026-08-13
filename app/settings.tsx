@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Layout, ThemeColors } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useLanguage } from '@/context/language-context';
+import { useMascot } from '@/context/mascot-context';
 import { useProfile } from '@/context/profile-context';
 import { ThemePreference } from '@/context/theme-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
@@ -20,6 +21,7 @@ const LANGUAGE_OPTIONS: { labelKey: string; value: AppLanguage }[] = [
 export default function SettingsScreen() {
   const { signOut } = useAuth();
   const { restTimerEnabled, savePreferredLanguage, setRestTimerEnabled } = useProfile();
+  const { enabled: mascotEnabled, setEnabled: setMascotEnabled } = useMascot();
   const { colors, preference, setPreference } = useAppTheme();
   const { language, setLanguage, t } = useLanguage();
   const styles = createStyles(colors);
@@ -145,6 +147,25 @@ export default function SettingsScreen() {
             thumbColor={Platform.OS === 'android' ? colors.onPrimary : undefined}
             trackColor={{ false: colors.surfaceMuted, true: colors.primary }}
             value={restTimerEnabled}
+          />
+        </View>
+
+        <View style={styles.divider} />
+
+        <View style={styles.settingRow}>
+          <View style={styles.settingIcon}>
+            <Ionicons name="happy-outline" size={18} color={colors.accent} />
+          </View>
+          <View style={styles.settingText}>
+            <Text style={styles.settingTitle}>{t('mascot.settingsTitle')}</Text>
+            <Text style={styles.caption}>{t('mascot.settingsCaption')}</Text>
+          </View>
+          <Switch
+            accessibilityLabel={t('mascot.settingsLabel')}
+            onValueChange={(enabled) => void setMascotEnabled(enabled)}
+            thumbColor={Platform.OS === 'android' ? colors.onPrimary : undefined}
+            trackColor={{ false: colors.surfaceMuted, true: colors.primary }}
+            value={mascotEnabled}
           />
         </View>
 

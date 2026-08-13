@@ -6,8 +6,10 @@ import 'react-native-reanimated';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
+import { FloatingMascot } from '@/components/mascot/floating-mascot';
 import { AuthProvider, useAuth } from '@/context/auth-context';
 import { LanguageProvider, useLanguage, useTranslation } from '@/context/language-context';
+import { MascotProvider } from '@/context/mascot-context';
 import { ProfileProvider, useProfile } from '@/context/profile-context';
 import { ThemePreferenceProvider } from '@/context/theme-context';
 import { WorkoutProvider } from '@/context/workout-context';
@@ -35,7 +37,9 @@ function UserScopedApp() {
     <ProfileProvider key={user?.id ?? 'signed-out'}>
       <LanguageSync />
       <WorkoutProvider>
-        <AppNavigation />
+        <MascotProvider>
+          <AppNavigation />
+        </MascotProvider>
       </WorkoutProvider>
     </ProfileProvider>
   );
@@ -126,6 +130,13 @@ function AppNavigation() {
           />
         </Stack.Protected>
       </Stack>
+      {/*
+        Maskot Stack'ten sonra kardeş olarak çizilir: her ekranın üzerinde kalır
+        ama `box-none` kapsayıcısı sayesinde alttaki butonların dokunmasını
+        engellemez. Yalnızca oturum varken render edilir, bu yüzden giriş ve
+        kayıt ekranlarında hiç görünmez.
+      */}
+      {Boolean(session) && <FloatingMascot />}
       <StatusBar style={isDark ? 'light' : 'dark'} />
     </ThemeProvider>
   );
