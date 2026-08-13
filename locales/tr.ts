@@ -561,6 +561,22 @@ export const tr = {
      * cihaz içi: yalnızca route'a bakılır, kullanıcı veya antrenman verisi
      * okunmaz. Grup bulunamazsa `bubbleMessage` kullanılır.
      */
+    /**
+     * Ana Sayfa'da bugünkü program ve disiplin durumuna göre seçilen
+     * deterministik mesajlar. Aynı durum her zaman aynı mesajı verir.
+     */
+    dailyMessages: {
+      noActiveProgram: 'Bir programı aktif ettiğinde bugünkü planını birlikte takip ederiz.',
+      running: 'Antrenmanın devam ediyor. Ben buradayım!',
+      paused: 'Antrenmanın seni bekliyor; hazır olduğunda devam edebilirsin.',
+      rest: 'Bugün dinlenme günü. Toparlanmak da planın bir parçası.',
+      partial: 'Bugün başladın. Kalan setler hazır olduğunda seni bekliyor.',
+      completed: 'Bugünkü plan tamamlandı. Harika iş!',
+      completedStreak: '{count} günlük seri! İstikrarın güçleniyor.',
+      scheduledSingle: 'Bugün {day} günü. Hazır olduğunda başlayabiliriz.',
+      scheduledMultiple: 'Bugün {count} antrenman günün planlı. Hazır olduğunda başlayabiliriz.',
+      noSchedule: 'Bugün aktif programında planlanmış bir antrenman yok.',
+    },
     contextMessages: {
       home: [
         'Bugünkü hedefin için buradayım.',
