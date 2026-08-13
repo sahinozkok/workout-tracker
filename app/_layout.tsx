@@ -120,6 +120,10 @@ function AppNavigation() {
             name="program/[id]/day/[dayId]/add-exercise"
             options={{ headerBackTitle: t('nav.program'), title: t('nav.addExercise') }}
           />
+          <Stack.Screen
+            name="settings"
+            options={{ headerBackTitle: t('tabs.profile'), title: t('profile.settings') }}
+          />
         </Stack.Protected>
       </Stack>
       <StatusBar style={isDark ? 'light' : 'dark'} />

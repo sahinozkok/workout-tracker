@@ -1,10 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
+import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  Easing,
   FlatList,
   KeyboardAvoidingView,
   Modal,
@@ -39,15 +41,28 @@ import { buildExerciseProgressMetrics } from '@/utils/exercise-ai-metrics';
 import { buildWeeklyWorkoutMetrics } from '@/utils/weekly-workout-metrics';
 import { buildExerciseAnalytics } from '@/utils/workout-analytics';
 
+const coachAvatarSource = require('../../assets/images/ai-coach-avatar.png');
+
+/** Asistan mesajlarında ve "yazıyor" göstergesinde kullanılan ortak avatar. */
+function CoachAvatar({ styles }: { styles: ReturnType<typeof createStyles> }) {
+  return (
+    <Image
+      accessibilityElementsHidden
+      contentFit="contain"
+      importantForAccessibility="no"
+      source={coachAvatarSource}
+      style={styles.assistantAvatar}
+      transition={0}
+    />
+  );
+}
+
 export default function CoachScreen() {
   const { user } = useAuth();
   const { colors } = useAppTheme();
   const { t, tList } = useTranslation();
   const styles = createStyles(colors);
   const listRef = useRef<FlatList<CoachChatMessage>>(null);
-  // Klavye açıldığında sekme çubuğu da kapandığı için ofset, sabit bir sayı
-  // yerine sekme çubuğunun gerçek yüksekliğinden (güvenli alan dahil) alınır.
-  const bottomTabBarHeight = useBottomTabBarHeight();
 
   const [messages, setMessages] = useState<CoachChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -196,9 +211,17 @@ export default function CoachScreen() {
         </View>
       </View>
 
+      {/*
+        keyboardVerticalOffset bilerek 0'dır. Sekme çubuğu normal akışta yer
+        aldığı için bu ekranın (ve dolayısıyla KeyboardAvoidingView'ın) alt
+        kenarı zaten sekme çubuğunun üstünde biter. RN'in hesabı
+        `frameBottom - klavyeÜstü + offset` olduğundan, buraya sekme çubuğu
+        yüksekliği verilmesi aynı mesafeyi ikinci kez ekler ve composer ile
+        klavye arasında bir sekme çubuğu boyu boşluk bırakırdı.
+      */}
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? bottomTabBarHeight : 0}
+        keyboardVerticalOffset={0}
         style={styles.flex}>
         {isLoading ? (
           <View style={styles.centerState}>
@@ -234,7 +257,7 @@ export default function CoachScreen() {
               />
             }
             ListFooterComponent={
-              isSending ? <TypingIndicator colors={colors} label={t('coach.typing')} styles={styles} /> : null
+              isSending ? <TypingIndicator label={t('coach.typing')} styles={styles} /> : null
             }
             showsVerticalScrollIndicator={false}
           />
@@ -320,9 +343,7 @@ function MessageBubble({ colors, message, onRetry, retryLabel, styles }: BubbleP
   return (
     <View style={[styles.bubbleRow, isUser ? styles.bubbleRowUser : styles.bubbleRowAssistant]}>
       {!isUser && (
-        <View style={styles.assistantMark}>
-          <View style={styles.assistantMarkDot} />
-        </View>
+        <CoachAvatar styles={styles} />
       )}
       <View style={styles.bubbleColumn}>
         <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleAssistant]}>
@@ -343,23 +364,96 @@ function MessageBubble({ colors, message, onRetry, retryLabel, styles }: BubbleP
   );
 }
 
+/**
+ * "Yazıyor" göstergesi zamanlaması. Her noktanın döngüsü aynı uzunlukta
+ * (TYPING_RISE + TYPING_FALL + TYPING_REST) kalır; böylece noktalar
+ * soldan sağa sırayla zıplar ve zamanla birbirinden kaymaz.
+ */
+const TYPING_DOT_DELAYS = [0, 150, 300];
+const TYPING_RISE = 300;
+const TYPING_FALL = 300;
+const TYPING_REST = 500;
+const TYPING_LIFT = -5;
+// Web'de native driver desteklenmez; transform/opacity diğer platformlarda native kalır.
+const TYPING_USE_NATIVE_DRIVER = Platform.OS !== 'web';
+
+function TypingDot({
+  delay,
+  styles,
+}: {
+  delay: number;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const progress = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(progress, {
+          delay,
+          duration: TYPING_RISE,
+          easing: Easing.out(Easing.quad),
+          toValue: 1,
+          useNativeDriver: TYPING_USE_NATIVE_DRIVER,
+        }),
+        Animated.timing(progress, {
+          duration: TYPING_FALL,
+          easing: Easing.in(Easing.quad),
+          toValue: 0,
+          useNativeDriver: TYPING_USE_NATIVE_DRIVER,
+        }),
+        // Döngü boyunu sabitleyen bekleme: delay + REST - delay = REST.
+        Animated.timing(progress, {
+          delay: TYPING_REST - delay,
+          duration: 0,
+          toValue: 0,
+          useNativeDriver: TYPING_USE_NATIVE_DRIVER,
+        }),
+      ]),
+    );
+
+    animation.start();
+
+    return () => {
+      animation.stop();
+      progress.setValue(0);
+    };
+  }, [delay, progress]);
+
+  return (
+    <Animated.View
+      style={[
+        styles.typingDot,
+        {
+          opacity: progress.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }),
+          transform: [
+            { translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [0, TYPING_LIFT] }) },
+          ],
+        },
+      ]}
+    />
+  );
+}
+
 function TypingIndicator({
-  colors,
   label,
   styles,
 }: {
-  colors: ThemeColors;
   label: string;
   styles: ReturnType<typeof createStyles>;
 }) {
   return (
     <View style={[styles.bubbleRow, styles.bubbleRowAssistant]}>
-      <View style={styles.assistantMark}>
-        <View style={styles.assistantMarkDot} />
-      </View>
-      <View style={[styles.bubble, styles.bubbleAssistant, styles.typingBubble]}>
-        <ActivityIndicator color={colors.textSecondary} size="small" />
-        <Text style={styles.typingText}>{label}</Text>
+      <CoachAvatar styles={styles} />
+      {/* Metin görsel olarak gizli; çevrilmiş label ekran okuyucular için korunur. */}
+      <View
+        accessible
+        accessibilityLabel={label}
+        accessibilityLiveRegion="polite"
+        style={[styles.bubble, styles.bubbleAssistant, styles.typingBubble]}>
+        {TYPING_DOT_DELAYS.map((delay) => (
+          <TypingDot delay={delay} key={delay} styles={styles} />
+        ))}
       </View>
     </View>
   );
@@ -613,20 +707,11 @@ function createStyles(colors: ThemeColors) {
     centerStateText: { color: colors.textSecondary, ...Type.caption },
     listContent: { gap: 14, paddingHorizontal: Layout.screenPadding, paddingVertical: 14 },
     listContentEmpty: { flexGrow: 1, justifyContent: 'center' },
-    bubbleRow: { flexDirection: 'row', gap: 8 },
+    bubbleRow: { alignItems: 'flex-start', flexDirection: 'row', gap: 8 },
     bubbleRowUser: { justifyContent: 'flex-end', paddingLeft: 56 },
     bubbleRowAssistant: { justifyContent: 'flex-start', paddingRight: 40 },
-    assistantMark: {
-      alignItems: 'center',
-      borderColor: colors.primary,
-      borderRadius: 11,
-      borderWidth: StyleSheet.hairlineWidth,
-      height: 22,
-      justifyContent: 'center',
-      marginTop: 4,
-      width: 22,
-    },
-    assistantMarkDot: { backgroundColor: colors.primary, borderRadius: 2.5, height: 5, width: 5 },
+    // Karakter renkli kalır: tintColor veya arka plan uygulanmaz.
+    assistantAvatar: { alignSelf: 'flex-start', height: 48, marginTop: 0, width: 52 },
     bubbleColumn: { flexShrink: 1, gap: 6 },
     bubble: { borderRadius: 18, paddingHorizontal: 15, paddingVertical: 11 },
     bubbleUser: { backgroundColor: colors.primary, borderBottomRightRadius: 6 },
@@ -638,8 +723,8 @@ function createStyles(colors: ThemeColors) {
     },
     bubbleText: { color: colors.text, fontSize: 15, lineHeight: 21 },
     bubbleTextUser: { color: colors.onPrimary },
-    typingBubble: { alignItems: 'center', flexDirection: 'row', gap: 8 },
-    typingText: { color: colors.textSecondary, fontSize: 14 },
+    typingBubble: { alignItems: 'center', flexDirection: 'row', gap: 5, justifyContent: 'center' },
+    typingDot: { backgroundColor: colors.textTertiary, borderRadius: 3.5, height: 7, width: 7 },
     retryRow: { alignItems: 'center', flexDirection: 'row', gap: 5 },
     retryText: { color: colors.danger, fontSize: 12, fontWeight: '500' },
     welcome: { alignItems: 'center', gap: 10, paddingHorizontal: 8 },

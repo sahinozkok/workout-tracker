@@ -25,7 +25,7 @@ export type WeeklyWorkoutInsight = {
   headline: string;
   highlights: string[];
   nextSteps: string[];
-  provider: 'gemini' | 'mock';
+  provider: 'deterministic' | 'gemini' | 'mock';
   summary: string;
 };
 

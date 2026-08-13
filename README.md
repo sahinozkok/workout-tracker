@@ -106,11 +106,11 @@ For Gemini:
 
 1. Create a Gemini API key in Google AI Studio.
 2. Store it as `GEMINI_API_KEY` in Supabase Edge Function secrets.
-3. Optionally configure `GEMINI_MODEL` and `AI_DAILY_LIMIT`.
+3. Optionally configure `GEMINI_CHAT_MODELS`, `AI_DAILY_LIMIT`, and `SUMMARY_DAILY_LIMIT`.
 4. Deploy `supabase/functions/workout-coach/index.ts` as `workout-coach`.
 5. Set `EXPO_PUBLIC_AI_PROVIDER=gemini` in the local `.env` file.
 
-The coach calculates metrics on the server and uses the model to explain them. The mobile client cannot provide trusted workout totals directly.
+The coach calculates metrics on the server. Weekly and exercise summaries use deterministic templates without calling Gemini; conversational questions and program reviews use the configured model fallback list. The mobile client cannot provide trusted workout totals directly.
 
 ## Security
 

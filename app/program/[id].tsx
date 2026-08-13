@@ -12,12 +12,14 @@ import { getWeekdayLabel } from '@/constants/weekdays';
 import { useTranslation } from '@/context/language-context';
 import { useWorkout } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
-import { WorkoutVisual } from '@/types/workout';
-import { DEFAULT_PROGRAM_VISUAL, getDayVisual, getProgramVisual } from '@/utils/workout-visual';
+import { DisciplineStatus, WorkoutVisual } from '@/types/workout';
+import { toDateKey } from '@/utils/discipline';
+import { getWeekdayDateInCurrentWeek } from '@/utils/workout-schedule';
+import { DEFAULT_PROGRAM_VISUAL, getProgramVisual } from '@/utils/workout-visual';
 
 export default function ProgramDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { isProgramsLoading, programs, updateProgram } = useWorkout();
+  const { activeProgramId, disciplineStatuses, isProgramsLoading, programs, updateProgram } = useWorkout();
   const { colors, isDark } = useAppTheme();
   const { locale, t } = useTranslation();
   const styles = createStyles(colors);
@@ -56,6 +58,11 @@ export default function ProgramDetailScreen() {
   }
 
   const currentProgram = program;
+  const today = startOfToday();
+  const todayKey = toDateKey(today);
+  // Renkler yalnızca aktif programda anlamlıdır; disiplin durumu aktif
+  // programa göre hesaplanır ve mevcut hesaplama mantığı değiştirilmez.
+  const isActiveProgram = currentProgram.id === activeProgramId;
   const exerciseCount = currentProgram.days.reduce((total, day) => total + day.exercises.length, 0);
 
   function openProgramEditor() {
@@ -85,7 +92,11 @@ export default function ProgramDetailScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['bottom']}>
-      <Stack.Screen options={{ title: program.name }} />
+      {/*
+        Program adı yalnızca aşağıdaki özet alanında gösterilir. Üst çubuk
+        başlığı burada ezilmez; app/_layout.tsx içindeki çevrilmiş
+        `nav.programDetail` başlığı geçerli kalır, geri butonu korunur.
+      */}
       <ScrollView
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
@@ -155,42 +166,88 @@ export default function ProgramDetailScreen() {
         <Text style={styles.sectionTitle}>{t('programDetail.workoutDays')}</Text>
 
         <View style={styles.dayList}>
-          {program.days.map((day, dayIndex) => (
-            <Pressable
-              accessibilityHint={t('programDetail.openDayHint')}
-              accessibilityLabel={t('programDetail.openDayLabel', { name: day.name })}
-              accessibilityRole="button"
-              key={day.id}
-              onPress={() =>
-                router.push({
-                  pathname: '/program/[id]/day/[dayId]',
-                  params: { id: program.id, dayId: day.id },
-                })
-              }
-              style={({ pressed }) => [styles.dayRow, pressed && styles.pressed]}>
-              <View style={[styles.dayVisual, day.isOffDay && styles.dayVisualOff]}>
-                <WorkoutVisualDisplay
-                  color={day.isOffDay ? colors.textTertiary : colors.accent}
-                  size={18}
-                  visual={getDayVisual(day.visual, dayIndex)}
-                />
-              </View>
-              <View style={styles.dayText}>
-                <Text numberOfLines={1} style={[styles.dayName, day.isOffDay && styles.dayNameOff]}>
-                  {day.name}
-                </Text>
-                <Text style={styles.dayWeekday}>{getWeekdayLabel(day.scheduledWeekday, locale)}</Text>
-              </View>
-              {!day.isOffDay && (
-                <Text style={styles.dayCount}>{t('programDetail.exerciseCount', { count: day.exercises.length })}</Text>
-              )}
-              <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
-            </Pressable>
-          ))}
+          {program.days.map((day, dayIndex) => {
+            const dayDate =
+              day.scheduledWeekday === undefined
+                ? undefined
+                : getWeekdayDateInCurrentWeek(day.scheduledWeekday, today);
+            const dayDateKey = dayDate ? toDateKey(dayDate) : undefined;
+            const isToday = dayDateKey === todayKey;
+            const isFuture = Boolean(dayDate && dayDate.getTime() > today.getTime());
+            // Gelecek günlerde ve aktif olmayan programlarda durum üretilmez.
+            const status = isActiveProgram && dayDateKey && !isFuture ? disciplineStatuses[dayDateKey] : undefined;
+            const isLastDay = dayIndex === program.days.length - 1;
+
+            return (
+              <Pressable
+                accessibilityHint={t('programDetail.openDayHint')}
+                accessibilityLabel={t('programDetail.openDayLabel', { name: day.name })}
+                accessibilityRole="button"
+                key={day.id}
+                onPress={() =>
+                  router.push({
+                    pathname: '/program/[id]/day/[dayId]',
+                    params: { id: program.id, dayId: day.id },
+                  })
+                }
+                style={({ pressed }) => [styles.dayRow, pressed && styles.pressed]}>
+                <View style={styles.timelineColumn}>
+                  {!isLastDay && <View style={styles.timelineLine} />}
+                  <View
+                    style={[
+                      styles.dayNumber,
+                      { borderColor: getDayStatusColor(colors, status) },
+                      isToday && styles.dayNumberToday,
+                    ]}>
+                    <Text
+                      style={[
+                        styles.dayNumberText,
+                        { color: status ? getDayStatusColor(colors, status) : colors.textTertiary },
+                        isToday && styles.dayNumberTextToday,
+                      ]}>
+                      {dayIndex + 1}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.dayText}>
+                  <Text numberOfLines={1} style={[styles.dayName, day.isOffDay && styles.dayNameOff]}>
+                    {day.name}
+                  </Text>
+                  <Text numberOfLines={1} style={[styles.dayWeekday, isToday && styles.dayWeekdayToday]}>
+                    {isToday ? t('day.today') : getWeekdayLabel(day.scheduledWeekday, locale)}
+                    {day.isOffDay
+                      ? ''
+                      : ` · ${t('programDetail.exerciseCount', { count: day.exercises.length })}`}
+                  </Text>
+                </View>
+
+                <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+              </Pressable>
+            );
+          })}
         </View>
       </ScrollView>
     </SafeAreaView>
   );
+}
+
+function startOfToday() {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+/**
+ * Renkler mevcut tema ve mevcut disiplin durumlarından okunur.
+ * Durumu olmayan günler (gelecek günler ve henüz durum üretilmemiş günler
+ * dahil) nötr koyu gri kalır; asla turuncu/yeşil görünmez.
+ */
+function getDayStatusColor(colors: ThemeColors, status: DisciplineStatus | undefined) {
+  if (status === 'completed') return colors.disciplineCompleted;
+  if (status === 'partial') return colors.disciplinePartial;
+  if (status === 'skipped') return colors.disciplineSkipped;
+  return colors.separator;
 }
 
 function createStyles(colors: ThemeColors) {
@@ -263,30 +320,38 @@ function createStyles(colors: ThemeColors) {
     flexButton: { flex: 1 },
     primaryButtonText: { color: colors.onPrimary, fontSize: 15, fontWeight: '600' },
     sectionTitle: { color: colors.text, ...Type.sectionTitle, marginBottom: 8, marginTop: 24 },
-    dayList: { borderTopColor: colors.separator, borderTopWidth: StyleSheet.hairlineWidth },
+    dayList: { marginTop: 4 },
     dayRow: {
       alignItems: 'center',
-      borderBottomColor: colors.separator,
-      borderBottomWidth: StyleSheet.hairlineWidth,
       flexDirection: 'row',
       gap: 14,
-      minHeight: 60,
-      paddingVertical: 12,
+      minHeight: 64,
+      paddingVertical: 10,
     },
-    dayVisual: {
+    timelineColumn: { alignItems: 'center', height: 64, justifyContent: 'center', width: 34 },
+    timelineLine: {
+      backgroundColor: colors.separator,
+      bottom: -10,
+      position: 'absolute',
+      top: 42,
+      width: StyleSheet.hairlineWidth,
+    },
+    dayNumber: {
       alignItems: 'center',
-      backgroundColor: colors.accentSoft,
-      borderRadius: 16,
-      height: 32,
+      borderRadius: 17,
+      borderWidth: 2,
+      height: 34,
       justifyContent: 'center',
-      overflow: 'hidden',
-      width: 32,
+      width: 34,
     },
-    dayVisualOff: { backgroundColor: colors.surfaceMuted },
+    dayNumberToday: { borderColor: colors.primary },
+    dayNumberText: { fontSize: 14, fontWeight: '600' },
+    dayNumberTextToday: { color: colors.primary },
     dayText: { flex: 1, gap: 2 },
     dayName: { color: colors.text, fontSize: 15, fontWeight: '500' },
     dayNameOff: { color: colors.textTertiary },
-    dayWeekday: { color: colors.textTertiary, ...Type.footnote },
+    dayWeekday: { color: colors.textSecondary, ...Type.caption },
+    dayWeekdayToday: { color: colors.primary },
     dayCount: { color: colors.textSecondary, ...Type.caption },
     pressed: { opacity: 0.6 },
   });

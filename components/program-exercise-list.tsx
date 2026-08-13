@@ -39,6 +39,9 @@ export default function ProgramExerciseList({ exercises, onEdit, onReorder }: Pr
                   isActive && styles.exerciseRowActive,
                   pressed && styles.pressed,
                 ]}>
+                <View accessibilityElementsHidden style={styles.dragHandle}>
+                  {Array.from({ length: 6 }).map((_, index) => <View key={index} style={styles.dragDot} />)}
+                </View>
                 <View style={styles.exerciseIcon}>
                   <WorkoutVisualDisplay color={colors.accent} size={20} visual={getExerciseVisual(item.visual)} />
                 </View>
@@ -72,20 +75,22 @@ function createStyles(colors: ThemeColors) {
       borderBottomColor: colors.separator,
       borderBottomWidth: StyleSheet.hairlineWidth,
       flexDirection: 'row',
-      gap: 14,
-      minHeight: 64,
-      paddingVertical: 12,
+      gap: 10,
+      minHeight: 58,
+      paddingVertical: 10,
     },
     exerciseRowActive: { backgroundColor: colors.surfaceMuted },
     exerciseIcon: {
       alignItems: 'center',
       backgroundColor: colors.accentSoft,
       borderRadius: Layout.radiusSmall,
-      height: 34,
+      height: 28,
       justifyContent: 'center',
       overflow: 'hidden',
-      width: 34,
+      width: 28,
     },
+    dragHandle: { flexDirection: 'row', flexWrap: 'wrap', gap: 2, width: 8 },
+    dragDot: { backgroundColor: colors.textTertiary, borderRadius: 1, height: 2, width: 2 },
     exerciseInfo: { flex: 1, gap: 3 },
     exerciseName: { color: colors.text, fontSize: 15, fontWeight: '500' },
     exerciseTarget: { color: colors.textSecondary, ...Type.caption },
