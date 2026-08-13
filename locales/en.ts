@@ -547,4 +547,13 @@ export const en: TranslationSchema = {
     totalSets: 'Total sets',
     workoutDays: '{count} workout days',
   },
+  mascot: {
+    settingsTitle: 'Mascot',
+    settingsLabel: 'Show mascot in the app',
+    settingsCaption: 'Displays your workout companion across the app.',
+    accessibilityLabel: 'Mascot',
+    accessibilityHint: 'Tap to open the speech bubble, press and hold to drag it.',
+    bubbleMessage: 'Ready for today’s workout?',
+    bubbleCta: 'Open AI Coach',
+  },
 };
