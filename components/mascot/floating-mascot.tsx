@@ -12,6 +12,7 @@ import Animated, {
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
+  withDelay,
   withRepeat,
   withSequence,
   withSpring,
@@ -64,6 +65,18 @@ const THINKING_PEEK_FACTOR = 0.7;
 const PEEK_SPRING = { damping: 20, mass: 0.9, stiffness: 200 };
 /** Reduce Motion: kenara girip çıkma ve dönüş neredeyse anlık olur. */
 const REDUCED_PEEK_DURATION = 120;
+
+/**
+ * Maskot boşta beklerken arada sırada kenardan biraz daha fazla görünür.
+ * Seyrek ve düzensiz aralıklar hareketin mekanik bir döngü gibi görünmesini
+ * engeller.
+ */
+const AMBIENT_PEEK_MIN_DELAY = 9000;
+const AMBIENT_PEEK_DELAY_RANGE = 7000;
+const AMBIENT_PEEK_REVEAL_FRACTION = 0.32;
+const AMBIENT_PEEK_IN_DURATION = 360;
+const AMBIENT_PEEK_HOLD_DURATION = 700;
+const AMBIENT_PEEK_OUT_DURATION = 480;
 
 const TAP_LIFT = -9;
 const BUBBLE_TIMEOUT = 4000;
@@ -265,6 +278,8 @@ export function FloatingMascot() {
    * birbirlerini ezmezler.
    */
   const edgeRotation = useSharedValue(0);
+  /** 0 = normal peek, 1 = boşta biraz daha görünür. Kalıcı konuma yazılmaz. */
+  const ambientPeekProgress = useSharedValue(0);
   // İfade katmanı (sürekli düşünme eğilimi) — temel açının üzerine eklenir.
   const thinkingProgress = useSharedValue(0);
   // Tepki katmanı (tap/set/kutlama).
@@ -393,6 +408,54 @@ export function FloatingMascot() {
   const isFullyVisible =
     state === 'dragging' || Boolean(activeReaction) || Boolean(bubbleVariant);
 
+  /**
+   * Yalnızca gerçekten boşta ve kısmen gizliyken ambient peek oynar. Her yeni
+   * tur için farklı bekleme süresi seçilir; düzenli bir metronom hissi vermez.
+   */
+  useEffect(() => {
+    cancelAnimation(ambientPeekProgress);
+    ambientPeekProgress.value = 0;
+
+    const canPlay =
+      !isHidden &&
+      !isFullyVisible &&
+      !isThinking &&
+      !reduceMotion &&
+      state === 'idle';
+
+    if (!canPlay) return;
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const scheduleNextPeek = () => {
+      const delay = AMBIENT_PEEK_MIN_DELAY + Math.random() * AMBIENT_PEEK_DELAY_RANGE;
+      timer = setTimeout(() => {
+        ambientPeekProgress.value = withSequence(
+          withTiming(1, {
+            duration: AMBIENT_PEEK_IN_DURATION,
+            easing: Easing.out(Easing.quad),
+          }),
+          withDelay(
+            AMBIENT_PEEK_HOLD_DURATION,
+            withTiming(0, {
+              duration: AMBIENT_PEEK_OUT_DURATION,
+              easing: Easing.inOut(Easing.quad),
+            }),
+          ),
+        );
+        scheduleNextPeek();
+      }, delay);
+    };
+
+    scheduleNextPeek();
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      cancelAnimation(ambientPeekProgress);
+      ambientPeekProgress.value = 0;
+    };
+  }, [ambientPeekProgress, isFullyVisible, isHidden, isThinking, reduceMotion, state]);
+
   const peekMagnitude = useMemo(() => {
     if (isFullyVisible) return 0;
     return isThinking ? peekDistance * THINKING_PEEK_FACTOR : peekDistance;
@@ -470,6 +533,7 @@ export function FloatingMascot() {
       cancelAnimation(peekOffsetX);
       cancelAnimation(peekOffsetY);
       cancelAnimation(edgeRotation);
+      cancelAnimation(ambientPeekProgress);
       cancelAnimation(thinkingProgress);
       cancelAnimation(reactionY);
       cancelAnimation(reactionScale);
@@ -477,6 +541,7 @@ export function FloatingMascot() {
       cancelAnimation(reactionOpacity);
     },
     [
+      ambientPeekProgress,
       edgeRotation,
       peekOffsetX,
       peekOffsetY,
@@ -897,7 +962,18 @@ export function FloatingMascot() {
    * oluşamaz.
    */
   const peekStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: peekOffsetX.value }, { translateY: peekOffsetY.value }],
+    transform: [
+      {
+        translateX:
+          peekOffsetX.value *
+          (1 - AMBIENT_PEEK_REVEAL_FRACTION * ambientPeekProgress.value),
+      },
+      {
+        translateY:
+          peekOffsetY.value *
+          (1 - AMBIENT_PEEK_REVEAL_FRACTION * ambientPeekProgress.value),
+      },
+    ],
   }));
 
   /** Kenar yönü katmanı: yalnızca peek duruşunun temel açısı. */
