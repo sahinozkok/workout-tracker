@@ -36,6 +36,7 @@ import { useTranslation } from '@/context/language-context';
 import { useMascot } from '@/context/mascot-context';
 import { useWorkout } from '@/context/workout-context';
 import { useMascotAutoGreeting } from '@/hooks/use-mascot-auto-greeting';
+import { useMascotSleep } from '@/hooks/use-mascot-sleep';
 import {
   clampEdgeRatio,
   isVerticalEdge,
@@ -45,6 +46,7 @@ import {
   MascotReactionType,
   MascotState,
 } from '@/types/mascot';
+import { toDateKey } from '@/utils/discipline';
 import {
   getMascotDailyMessage,
   MascotDailyInput,
@@ -53,6 +55,13 @@ import {
 
 /** Görsel kaynak değişse de tuval aynı olduğu için layout ölçüleri sabit kalır. */
 const EXPRESSION_CROSSFADE_MS = 100;
+
+/**
+ * Uyku "nefesi": yalnızca çok hafif bir ölçek değişimi. Yerinden süzülme yok,
+ * bu yüzden peek konumu ve kenar rotasyonu etkilenmez.
+ */
+const SLEEP_BREATH_SCALE = 1.025;
+const SLEEP_BREATH_HALF_CYCLE = 2200; // tam döngü ≈ 4400 ms
 
 /** Görünür karakter ölçüsü. Kare kutu + `contain` → oran bozulmadan sığar. */
 const MASCOT_SIZE = 88;
@@ -374,6 +383,11 @@ export function FloatingMascot() {
   const ambientPeekProgress = useSharedValue(0);
   // İfade katmanı (sürekli düşünme eğilimi) — temel açının üzerine eklenir.
   const thinkingProgress = useSharedValue(0);
+  /**
+   * Uyku katmanı — yalnızca ölçek. Tepki katmanının `reactionScale` değerinden
+   * ayrıdır; ikisi birbirini ezmez.
+   */
+  const sleepScale = useSharedValue(1);
   // Tepki katmanı (tap/set/kutlama).
   const reactionY = useSharedValue(0);
   const reactionScale = useSharedValue(1);
@@ -571,8 +585,62 @@ export function FloatingMascot() {
     state === 'dragging' || Boolean(activeReaction) || Boolean(bubbleVariant);
 
   /**
+   * Bugün süren veya duraklatılmış bir antrenman varken maskot uyumaz; uyuyorsa
+   * `canSleep` yanlışa döndüğü için hemen uyanır. Yalnızca `WorkoutContext`'in
+   * zaten bellekteki oturumları okunur, yeni sorgu yapılmaz.
+   */
+  const hasActiveWorkout = useMemo(() => {
+    const todayKey = toDateKey(new Date());
+    return workoutSessions.some(
+      (session) =>
+        session.dateKey === todayKey &&
+        (session.status === 'running' || session.status === 'paused'),
+    );
+  }, [workoutSessions]);
+
+  const canSleep =
+    !isHidden &&
+    !bubbleVariant &&
+    !activeReaction &&
+    !isThinking &&
+    state !== 'dragging' &&
+    !hasActiveWorkout;
+
+  // Ambient peek effect'i `isAsleep` değerini okuduğu için uyku bloğu ondan
+  // önce durur.
+  const { isAsleep, wake } = useMascotSleep({ canSleep });
+
+  /**
+   * Uyku nefesi. Reduce Motion açıkken yalnızca `sleepy` görseline geçilir,
+   * tekrar eden animasyon çalışmaz.
+   */
+  useEffect(() => {
+    if (!isAsleep || reduceMotion || isHidden) {
+      cancelAnimation(sleepScale);
+      sleepScale.value = withTiming(1, { duration: 200 });
+      return;
+    }
+
+    sleepScale.value = 1;
+    sleepScale.value = withRepeat(
+      withTiming(SLEEP_BREATH_SCALE, {
+        duration: SLEEP_BREATH_HALF_CYCLE,
+        easing: Easing.inOut(Easing.sin),
+      }),
+      -1,
+      true,
+    );
+
+    return () => cancelAnimation(sleepScale);
+  }, [isAsleep, isHidden, reduceMotion, sleepScale]);
+
+  /**
    * Yalnızca gerçekten boşta ve kısmen gizliyken ambient peek oynar. Her yeni
    * tur için farklı bekleme süresi seçilir; düzenli bir metronom hissi vermez.
+   *
+   * Maskot uyurken hiç çalışmaz: uyku başladığı anda `isAsleep` değişimi bu
+   * effect'i yeniden kurar, cleanup bekleyen zamanlayıcıyı ve süren animasyonu
+   * temizler, `ambientPeekProgress` sıfırlanır. Geriye yalnızca nefes kalır.
    */
   useEffect(() => {
     cancelAnimation(ambientPeekProgress);
@@ -583,6 +651,7 @@ export function FloatingMascot() {
       !isFullyVisible &&
       !isThinking &&
       !reduceMotion &&
+      !isAsleep &&
       state === 'idle';
 
     if (!canPlay) return;
@@ -616,7 +685,7 @@ export function FloatingMascot() {
       cancelAnimation(ambientPeekProgress);
       ambientPeekProgress.value = 0;
     };
-  }, [ambientPeekProgress, isFullyVisible, isHidden, isThinking, reduceMotion, state]);
+  }, [ambientPeekProgress, isAsleep, isFullyVisible, isHidden, isThinking, reduceMotion, state]);
 
   const peekMagnitude = useMemo(() => {
     if (isFullyVisible) return 0;
@@ -696,6 +765,7 @@ export function FloatingMascot() {
       cancelAnimation(peekOffsetY);
       cancelAnimation(edgeRotation);
       cancelAnimation(ambientPeekProgress);
+      cancelAnimation(sleepScale);
       cancelAnimation(thinkingProgress);
       cancelAnimation(reactionY);
       cancelAnimation(reactionScale);
@@ -713,6 +783,7 @@ export function FloatingMascot() {
       reactionRotation,
       reactionScale,
       reactionY,
+      sleepScale,
       thinkingProgress,
     ],
   );
@@ -855,10 +926,15 @@ export function FloatingMascot() {
 
   useMascotAutoGreeting({ canGreet: canAutoGreet, onGreet: handleAutoGreeting });
 
+
   const handleTap = useCallback(() => {
     // Aktif bir set/kutlama tepkisi varken dokunma tamamen yok sayılır:
     // haptic üretmez, balonu değiştirmez, tepki shared value'larına dokunmaz.
     if (activeReactionRef.current) return;
+
+    // Önce anında uyanır; aşağıdaki mevcut zıplama uyanma hareketi olarak
+    // çalışır, ardından normal tap balonu açılır.
+    wake();
 
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
 
@@ -886,7 +962,7 @@ export function FloatingMascot() {
     // tutulduğu için balon kapanana kadar değişmez.
     if (nextVariant === 'tap') setTapPresentation(pickTapPresentation());
     showBubble(nextVariant);
-  }, [pickTapPresentation, reactionScale, reactionY, reduceMotion, showBubble]);
+  }, [pickTapPresentation, reactionScale, reactionY, reduceMotion, showBubble, wake]);
 
   /**
    * Tek seferlik tepkiyi oynatır. Tepki katmanı `translateY`, `scale` ve
@@ -1362,6 +1438,11 @@ export function FloatingMascot() {
     ],
   }));
 
+  /** Uyku katmanı: yalnızca nefes ölçeği. Konum ve rotasyona dokunmaz. */
+  const sleepStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: sleepScale.value }],
+  }));
+
   const reactionStyle = useAnimatedStyle(() => ({
     opacity: reactionOpacity.value,
     transform: [
@@ -1412,6 +1493,7 @@ export function FloatingMascot() {
   const expression = resolveMascotExpression({
     activeReactionType: activeReaction?.type,
     bubbleExpression: resolveBubbleExpression(bubbleVariant, tapPresentation),
+    isAsleep,
     isDragging: isDraggingRef.current,
     isThinking,
     state,
@@ -1469,17 +1551,19 @@ export function FloatingMascot() {
               style={styles.touchTarget}>
               <Animated.View style={edgeRotationStyle}>
                 <Animated.View style={thinkingStyle}>
-                  <Animated.View style={reactionStyle}>
-                    <Image
-                      accessibilityElementsHidden
-                      contentFit="contain"
-                      importantForAccessibility="no"
-                      source={MASCOT_EXPRESSION_SOURCES[expression]}
-                      style={{ height: mascotSize, width: mascotSize }}
-                      // Reduce Motion açıkken geçiş yok; kapalıyken yalnızca
-                      // çok kısa bir crossfade. Ölçek/konum animasyonu eklenmez.
-                      transition={reduceMotion ? 0 : EXPRESSION_CROSSFADE_MS}
-                    />
+                  <Animated.View style={sleepStyle}>
+                    <Animated.View style={reactionStyle}>
+                      <Image
+                        accessibilityElementsHidden
+                        contentFit="contain"
+                        importantForAccessibility="no"
+                        source={MASCOT_EXPRESSION_SOURCES[expression]}
+                        style={{ height: mascotSize, width: mascotSize }}
+                        // Reduce Motion açıkken geçiş yok; kapalıyken yalnızca
+                        // çok kısa bir crossfade. Ölçek/konum animasyonu eklenmez.
+                        transition={reduceMotion ? 0 : EXPRESSION_CROSSFADE_MS}
+                      />
+                    </Animated.View>
                   </Animated.View>
                 </Animated.View>
               </Animated.View>

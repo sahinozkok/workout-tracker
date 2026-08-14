@@ -71,6 +71,12 @@ type ExpressionInput = {
    * `celebration` → celebrating. Balon yoksa verilmez.
    */
   bubbleExpression?: MascotExpression;
+  /**
+   * Yerel uyku durumu. Uyku yalnızca sürükleme, reaction, balon, AI thinking
+   * ve aktif antrenman yokken mümkün olduğu için bu bayrak onlardan sonra,
+   * normal state'ten önce değerlendirilir.
+   */
+  isAsleep: boolean;
   isDragging: boolean;
   isThinking: boolean;
   state: MascotState;
@@ -85,8 +91,9 @@ type ExpressionInput = {
  *   3. AI thinking
  *   4. Açık balonun ifadesi (tap/auto sunumu, love → happy,
  *      celebration → celebrating)
- *   5. Normal state
- *   6. Varsayılan idle
+ *   5. Uyku
+ *   6. Normal state
+ *   7. Varsayılan idle
  *
  * Reaction balondan, sürükleme ise her şeyden yüksek önceliklidir; balon
  * kapandığında ifade normal state'e döner.
@@ -94,6 +101,7 @@ type ExpressionInput = {
 export function resolveMascotExpression({
   activeReactionType,
   bubbleExpression,
+  isAsleep,
   isDragging,
   isThinking,
   state,
@@ -102,12 +110,13 @@ export function resolveMascotExpression({
   if (activeReactionType) return REACTION_EXPRESSION[activeReactionType];
   if (isThinking) return 'thinking';
   if (bubbleExpression) return bubbleExpression;
+  if (isAsleep) return 'sleepy';
 
   if (state === 'celebrating') return 'celebrating';
   if (state === 'thinking') return 'thinking';
   if (state === 'happy') return 'happy';
-  // Normal boşta duruş kendinden emin.
-  if (state === 'idle') return 'smug';
+  // Normal boşta duruş sakin ve hafif gülümseyen yüzü kullanır.
+  if (state === 'idle') return 'happy';
 
   return 'idle';
 }
