@@ -1,0 +1,113 @@
+import { MascotReactionType, MascotState } from '@/types/mascot';
+import { MascotDailyContext } from '@/utils/mascot-daily-context';
+
+export type MascotExpression =
+  | 'idle'
+  | 'smug'
+  | 'happy'
+  | 'thinking'
+  | 'celebrating'
+  | 'sleepy'
+  | 'mischievous';
+
+/**
+ * Bütün `require` çağrıları statik ve açıktır; Metro dinamik yol çözemediği
+ * için hiçbir koşulda yol birleştirmesi yapılmaz. Görsellerin hepsi aynı
+ * 584 × 512 şeffaf tuvale sahip olduğu için kaynak değişimi layout'u oynatmaz.
+ */
+export const MASCOT_EXPRESSION_SOURCES: Record<MascotExpression, number> = {
+  idle: require('../../assets/images/mascot/mascot-idle.png'),
+  smug: require('../../assets/images/mascot/mascot-smug.png'),
+  happy: require('../../assets/images/mascot/mascot-happy.png'),
+  thinking: require('../../assets/images/mascot/mascot-thinking.png'),
+  celebrating: require('../../assets/images/mascot/mascot-celebrating.png'),
+  sleepy: require('../../assets/images/mascot/mascot-sleepy.png'),
+  mischievous: require('../../assets/images/mascot/mascot-mischievous.png'),
+};
+
+/** Tek seferlik tepkilerin ifadeleri. */
+const REACTION_EXPRESSION: Record<MascotReactionType, MascotExpression> = {
+  loved: 'happy',
+  'set-complete': 'mischievous',
+  'workout-complete': 'celebrating',
+};
+
+/** Ana Sayfa günlük bağlamlarının ifadeleri. */
+const DAILY_EXPRESSION: Record<MascotDailyContext['kind'], MascotExpression> = {
+  'no-active-program': 'mischievous',
+  paused: 'mischievous',
+  partial: 'mischievous',
+  'scheduled-single': 'mischievous',
+  'scheduled-multiple': 'mischievous',
+  running: 'smug',
+  completed: 'happy',
+  'completed-streak': 'happy',
+  rest: 'sleepy',
+  'no-schedule': 'sleepy',
+};
+
+/** Günlük bağlam üretilemediğinde ve genel route mesajlarında kullanılır. */
+export const DEFAULT_MESSAGE_EXPRESSION: MascotExpression = 'smug';
+
+export function getDailyContextExpression(context: MascotDailyContext): MascotExpression {
+  return DAILY_EXPRESSION[context.kind];
+}
+
+/**
+ * Balonla birlikte seçilen sunum. Mesaj ve ifade **aynı anda, aynı nesnede**
+ * belirlenir; böylece render sırasında yeniden seçim veya rastgelelik olmaz.
+ */
+export type MascotPresentation = {
+  expression: MascotExpression;
+  message?: string;
+};
+
+type ExpressionInput = {
+  /** Oynamakta olan tek seferlik tepkinin türü. */
+  activeReactionType?: MascotReactionType;
+  /**
+   * Açık balonun ifadesi. Çağıran taraf bunu balon türünden çözer:
+   * `tap`/`auto` → mesajla birlikte seçilen sunum ifadesi, `love` → happy,
+   * `celebration` → celebrating. Balon yoksa verilmez.
+   */
+  bubbleExpression?: MascotExpression;
+  isDragging: boolean;
+  isThinking: boolean;
+  state: MascotState;
+};
+
+/**
+ * Görsel ifadeyi tek noktadan çözer. Saf fonksiyondur.
+ *
+ * Öncelik:
+ *   1. Sürükleme
+ *   2. Aktif reaction
+ *   3. AI thinking
+ *   4. Açık balonun ifadesi (tap/auto sunumu, love → happy,
+ *      celebration → celebrating)
+ *   5. Normal state
+ *   6. Varsayılan idle
+ *
+ * Reaction balondan, sürükleme ise her şeyden yüksek önceliklidir; balon
+ * kapandığında ifade normal state'e döner.
+ */
+export function resolveMascotExpression({
+  activeReactionType,
+  bubbleExpression,
+  isDragging,
+  isThinking,
+  state,
+}: ExpressionInput): MascotExpression {
+  if (isDragging || state === 'dragging') return 'idle';
+  if (activeReactionType) return REACTION_EXPRESSION[activeReactionType];
+  if (isThinking) return 'thinking';
+  if (bubbleExpression) return bubbleExpression;
+
+  if (state === 'celebrating') return 'celebrating';
+  if (state === 'thinking') return 'thinking';
+  if (state === 'happy') return 'happy';
+  // Normal boşta duruş kendinden emin.
+  if (state === 'idle') return 'smug';
+
+  return 'idle';
+}

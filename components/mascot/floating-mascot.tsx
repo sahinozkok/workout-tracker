@@ -22,6 +22,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BUBBLE_MAX_WIDTH, MascotSpeechBubble } from '@/components/mascot/mascot-speech-bubble';
 import { MascotCelebrationParticles } from '@/components/mascot/mascot-celebration-particles';
+import {
+  DEFAULT_MESSAGE_EXPRESSION,
+  getDailyContextExpression,
+  MASCOT_EXPRESSION_SOURCES,
+  MascotExpression,
+  MascotPresentation,
+  resolveMascotExpression,
+} from '@/components/mascot/mascot-expressions';
 import { MascotLoveParticles } from '@/components/mascot/mascot-love-particles';
 import { Layout } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
@@ -43,7 +51,8 @@ import {
   resolveMascotDailyContext,
 } from '@/utils/mascot-daily-context';
 
-const mascotSource = require('../../assets/images/mascot/mascot-idle.png');
+/** Görsel kaynak değişse de tuval aynı olduğu için layout ölçüleri sabit kalır. */
+const EXPRESSION_CROSSFADE_MS = 100;
 
 /** Görünür karakter ölçüsü. Kare kutu + `contain` → oran bozulmadan sığar. */
 const MASCOT_SIZE = 88;
@@ -169,6 +178,26 @@ type BubbleVariant = 'tap' | 'celebration' | 'love' | 'auto';
 
 /** `runId` sayesinde aynı tür tepki tekrarlansa bile süre efekti yeniden kurulur. */
 type ActiveReaction = { runId: number; type: MascotReactionType };
+
+/**
+ * Açık balonun ifadesi.
+ *
+ * `tap` ve `auto` balonları mesajla birlikte seçilen sunum ifadesini kullanır.
+ * `love` ve `celebration` balonları ise kendi reaction'larından **daha uzun**
+ * açık kalabildiği için (kutlama balonu 3800 ms, kutlama animasyonu 1220 ms)
+ * sabit ifadelerini korur; aksi hâlde balon hâlâ ekrandayken görsel normal
+ * duruşa dönerdi. Balon yoksa `undefined` döner ve ifade normal state'e düşer.
+ */
+function resolveBubbleExpression(
+  variant: BubbleVariant | undefined,
+  presentation: MascotPresentation | undefined,
+): MascotExpression | undefined {
+  if (!variant) return undefined;
+  if (variant === 'love') return 'happy';
+  if (variant === 'celebration') return 'celebrating';
+  // Geriye yalnızca `tap` ve `auto` kalır.
+  return presentation?.expression;
+}
 
 /** Kenar + oran → konteyner içindeki kutu koordinatı. */
 function resolveEdgePosition(edge: MascotEdge, edgeRatio: number, bounds: Bounds) {
@@ -415,7 +444,7 @@ export function FloatingMascot() {
    * sürece her render'da aynı kalır. `undefined` ise balon varsayılan
    * `mascot.bubbleMessage` metnine düşer.
    */
-  const [tapMessage, setTapMessage] = useState<string>();
+  const [tapPresentation, setTapPresentation] = useState<MascotPresentation>();
   /** Grup başına en son gösterilen mesaj; arka arkaya tekrarı engeller. */
   const lastTapMessageRef = useRef<Partial<Record<MascotMessageGroup, string>>>({});
   /**
@@ -752,7 +781,7 @@ export function FloatingMascot() {
    * seçilmez; grupta tek mesaj kalırsa güvenle o kullanılır. Grup veya liste
    * yoksa `undefined` döner ve balon `mascot.bubbleMessage` fallback'ine düşer.
    */
-  const pickTapMessage = useCallback(() => {
+  const pickTapPresentation = useCallback((): MascotPresentation | undefined => {
     const group = resolveMessageGroup(pathnameRef.current ?? '');
     if (!group) return undefined;
 
@@ -764,7 +793,8 @@ export function FloatingMascot() {
       const daily = resolveMascotDailyContext({ ...workoutDataRef.current, today: new Date() });
       if (daily) {
         const { key, params } = getMascotDailyMessage(daily);
-        return t(key, params);
+        // Mesaj ve ifade aynı anda, aynı nesnede seçilir.
+        return { expression: getDailyContextExpression(daily), message: t(key, params) };
       }
     }
 
@@ -779,7 +809,8 @@ export function FloatingMascot() {
     const chosen = source[Math.floor(Math.random() * source.length)];
 
     lastTapMessageRef.current[group] = chosen;
-    return chosen;
+    // Genel route mesajlarında kendinden emin duruş kullanılır.
+    return { expression: DEFAULT_MESSAGE_EXPRESSION, message: chosen };
     // `t` ve `tList` yalnızca dil değişince kimlik değiştirir; workout verisi
     // ref'ten okunduğu için burası her set tamamlandığında yeniden kurulmaz.
   }, [t, tList]);
@@ -789,12 +820,14 @@ export function FloatingMascot() {
    * sistemini yeniden kullanır; bağlam hazır değilse çevrilmiş fallback'e
    * düşer. Route havuzlarının tekrarsız rastgele sistemine hiç dokunmaz.
    */
-  const pickAutoGreetingMessage = useCallback(() => {
+  const pickAutoGreetingPresentation = useCallback((): MascotPresentation => {
     const daily = resolveMascotDailyContext({ ...workoutDataRef.current, today: new Date() });
-    if (!daily) return t('mascot.autoGreeting');
+    if (!daily) {
+      return { expression: DEFAULT_MESSAGE_EXPRESSION, message: t('mascot.autoGreeting') };
+    }
 
     const { key, params } = getMascotDailyMessage(daily);
-    return t(key, params);
+    return { expression: getDailyContextExpression(daily), message: t(key, params) };
   }, [t]);
 
   /**
@@ -803,9 +836,9 @@ export function FloatingMascot() {
    * Yalnızca kısa bir balon açar.
    */
   const handleAutoGreeting = useCallback(() => {
-    setTapMessage(pickAutoGreetingMessage());
+    setTapPresentation(pickAutoGreetingPresentation());
     showBubble('auto');
-  }, [pickAutoGreetingMessage, showBubble]);
+  }, [pickAutoGreetingPresentation, showBubble]);
 
   /**
    * Otomatik selamlama yalnızca Ana Sayfa'da ve maskot gerçekten boştayken
@@ -851,9 +884,9 @@ export function FloatingMascot() {
     // Mesaj yalnızca balon açılırken, yani dokunma anında seçilir. Render
     // sırasında hiçbir rastgelelik çalışmaz ve seçilen mesaj state'te
     // tutulduğu için balon kapanana kadar değişmez.
-    if (nextVariant === 'tap') setTapMessage(pickTapMessage());
+    if (nextVariant === 'tap') setTapPresentation(pickTapPresentation());
     showBubble(nextVariant);
-  }, [pickTapMessage, reactionScale, reactionY, reduceMotion, showBubble]);
+  }, [pickTapPresentation, reactionScale, reactionY, reduceMotion, showBubble]);
 
   /**
    * Tek seferlik tepkiyi oynatır. Tepki katmanı `translateY`, `scale` ve
@@ -1372,7 +1405,17 @@ export function FloatingMascot() {
       ? t('mascot.celebrationMessage')
       : bubbleVariant === 'love'
         ? t('mascot.lovedMessage')
-        : tapMessage;
+        : tapPresentation?.message;
+
+  // İfade tek noktadan, saf bir seçiciyle çözülür. Burada rastgelelik yoktur:
+  // mesajın ifadesi zaten dokunma anında `tapPresentation` içinde seçilmiştir.
+  const expression = resolveMascotExpression({
+    activeReactionType: activeReaction?.type,
+    bubbleExpression: resolveBubbleExpression(bubbleVariant, tapPresentation),
+    isDragging: isDraggingRef.current,
+    isThinking,
+    state,
+  });
 
   return (
     <View
@@ -1431,9 +1474,11 @@ export function FloatingMascot() {
                       accessibilityElementsHidden
                       contentFit="contain"
                       importantForAccessibility="no"
-                      source={mascotSource}
+                      source={MASCOT_EXPRESSION_SOURCES[expression]}
                       style={{ height: mascotSize, width: mascotSize }}
-                      transition={0}
+                      // Reduce Motion açıkken geçiş yok; kapalıyken yalnızca
+                      // çok kısa bir crossfade. Ölçek/konum animasyonu eklenmez.
+                      transition={reduceMotion ? 0 : EXPRESSION_CROSSFADE_MS}
                     />
                   </Animated.View>
                 </Animated.View>
