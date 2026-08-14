@@ -556,6 +556,8 @@ export const tr = {
     bubbleCta: 'AI Koç’a git',
     celebrationMessage: 'Antrenman tamamlandı! Harika iş!',
     lovedMessage: 'Bunu sevdim!',
+    /** Günlük bağlam henüz hazır değilken otomatik selamlamanın fallback'i. */
+    autoGreeting: 'Ben buradayım!',
     /**
      * Tek dokunmada bulunulan ekrana göre seçilen kısa mesajlar. Tamamen
      * cihaz içi: yalnızca route'a bakılır, kullanıcı veya antrenman verisi

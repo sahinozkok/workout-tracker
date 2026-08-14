@@ -557,6 +557,7 @@ export const en: TranslationSchema = {
     bubbleCta: 'Open AI Coach',
     celebrationMessage: 'Workout complete! Great work!',
     lovedMessage: 'I liked that!',
+    autoGreeting: 'I’m right here!',
     dailyMessages: {
       noActiveProgram: 'Activate a program and we can follow today’s plan together.',
       running: 'Your workout is in progress. I’m right here!',

@@ -27,6 +27,7 @@ import { Layout } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { useMascot } from '@/context/mascot-context';
 import { useWorkout } from '@/context/workout-context';
+import { useMascotAutoGreeting } from '@/hooks/use-mascot-auto-greeting';
 import {
   clampEdgeRatio,
   isVerticalEdge,
@@ -87,6 +88,8 @@ const AMBIENT_PEEK_OUT_DURATION = 480;
 
 const TAP_LIFT = -9;
 const BUBBLE_TIMEOUT = 4000;
+/** Otomatik selamlama balonu kısa kalır ve kendiliğinden kapanır. */
+const AUTO_GREETING_BUBBLE_TIMEOUT = 3000;
 const CELEBRATION_BUBBLE_TIMEOUT = 3800;
 const DRAG_SCALE = 1.05;
 /** Bu mesafeden kısa hareketler sürükleme sayılmaz; tap olarak geçer. */
@@ -161,7 +164,8 @@ function resolveMessageGroup(pathname: string): MascotMessageGroup | undefined {
 
 type Bounds = { maxX: number; maxY: number; minX: number; minY: number };
 
-type BubbleVariant = 'tap' | 'celebration' | 'love';
+/** `auto` = kullanıcı dokunmadan gösterilen tek seferlik selamlama. */
+type BubbleVariant = 'tap' | 'celebration' | 'love' | 'auto';
 
 /** `runId` sayesinde aynı tür tepki tekrarlansa bile süre efekti yeniden kurulur. */
 type ActiveReaction = { runId: number; type: MascotReactionType };
@@ -477,7 +481,9 @@ export function FloatingMascot() {
           ? CELEBRATION_BUBBLE_TIMEOUT
           : variant === 'love'
             ? LOVE_REACTION_DURATION
-            : BUBBLE_TIMEOUT;
+            : variant === 'auto'
+              ? AUTO_GREETING_BUBBLE_TIMEOUT
+              : BUBBLE_TIMEOUT;
       bubbleTimerRef.current = setTimeout(() => {
         bubbleVariantRef.current = undefined;
         setBubbleVariant(undefined);
@@ -495,9 +501,11 @@ export function FloatingMascot() {
 
   useEffect(() => {
     // Ekran değişince mesaj artık bulunulan ekrana ait olmadığı için yalnızca
-    // normal dokunma balonu kapatılır. `love` ve `celebration` balonları kendi
-    // sürelerini tamamlar; route değişimi onları bozmaz.
-    if (bubbleVariantRef.current === 'tap') showBubble(undefined);
+    // ekrana bağlı balonlar (`tap` ve `auto`) kapatılır. `love` ve
+    // `celebration` balonları kendi sürelerini tamamlar; route değişimi
+    // onları bozmaz.
+    const variant = bubbleVariantRef.current;
+    if (variant === 'tap' || variant === 'auto') showBubble(undefined);
   }, [pathname, showBubble]);
 
   // Balon kapandığında "happy" durumu sona erer. AI hâlâ yazıyorsa düşünme
@@ -776,6 +784,44 @@ export function FloatingMascot() {
     // ref'ten okunduğu için burası her set tamamlandığında yeniden kurulmaz.
   }, [t, tList]);
 
+  /**
+   * Otomatik selamlama mesajı. Ana Sayfa'nın mevcut günlük farkındalık
+   * sistemini yeniden kullanır; bağlam hazır değilse çevrilmiş fallback'e
+   * düşer. Route havuzlarının tekrarsız rastgele sistemine hiç dokunmaz.
+   */
+  const pickAutoGreetingMessage = useCallback(() => {
+    const daily = resolveMascotDailyContext({ ...workoutDataRef.current, today: new Date() });
+    if (!daily) return t('mascot.autoGreeting');
+
+    const { key, params } = getMascotDailyMessage(daily);
+    return t(key, params);
+  }, [t]);
+
+  /**
+   * Kullanıcı dokunmadan çalışır: haptic üretmez, maskotun konumunu
+   * değiştirmez, AsyncStorage'a yazmaz, hiçbir AI/Supabase isteği göndermez.
+   * Yalnızca kısa bir balon açar.
+   */
+  const handleAutoGreeting = useCallback(() => {
+    setTapMessage(pickAutoGreetingMessage());
+    showBubble('auto');
+  }, [pickAutoGreetingMessage, showBubble]);
+
+  /**
+   * Otomatik selamlama yalnızca Ana Sayfa'da ve maskot gerçekten boştayken
+   * planlanır. Bu koşullardan biri bozulursa hook bekleyen zamanlayıcıyı
+   * iptal eder; aktif hiçbir tepki kesilmez.
+   */
+  const canAutoGreet =
+    !isHidden &&
+    resolveMessageGroup(pathname ?? '') === 'home' &&
+    !bubbleVariant &&
+    !activeReaction &&
+    !isThinking &&
+    state !== 'dragging';
+
+  useMascotAutoGreeting({ canGreet: canAutoGreet, onGreet: handleAutoGreeting });
+
   const handleTap = useCallback(() => {
     // Aktif bir set/kutlama tepkisi varken dokunma tamamen yok sayılır:
     // haptic üretmez, balonu değiştirmez, tepki shared value'larına dokunmaz.
@@ -797,7 +843,11 @@ export function FloatingMascot() {
     setState('happy');
     // Tekrar dokunulunca açılıp kapanır. Kutlama balonu açıksa normal
     // balona geçilmez; kutlama mesajı kendi süresini tamamlar.
-    const nextVariant = bubbleVariantRef.current ? undefined : 'tap';
+    // Otomatik selamlama balonu açıksa yalnızca kapanmaz: normal tek-dokunma
+    // mesajı doğrudan onun yerini alır.
+    const currentVariant = bubbleVariantRef.current;
+    const nextVariant =
+      currentVariant === undefined || currentVariant === 'auto' ? 'tap' : undefined;
     // Mesaj yalnızca balon açılırken, yani dokunma anında seçilir. Render
     // sırasında hiçbir rastgelelik çalışmaz ve seçilen mesaj state'te
     // tutulduğu için balon kapanana kadar değişmez.
@@ -835,6 +885,20 @@ export function FloatingMascot() {
         if (type !== 'workout-complete' && bubbleVariantRef.current === 'love') {
           showBubble(undefined);
         }
+      }
+
+      /**
+       * Ekrana bağlı balonlar (`tap` ve otomatik selamlama `auto`) yeni bir
+       * tepki başlarken kapatılır; aksi hâlde animasyonun üzerinde asılı kalır.
+       *
+       * `loved` ve `workout-complete` aşağıda kendi balonlarını açıyor ve
+       * `showBubble` zaten eski balonu tek işlemde devraldığı için onlarda
+       * ayrıca kapatma yapılmaz — aynı balon iki kez kapatılmaz.
+       */
+      const opensOwnBubble = type === 'loved' || type === 'workout-complete';
+      const currentBubble = bubbleVariantRef.current;
+      if (!opensOwnBubble && (currentBubble === 'tap' || currentBubble === 'auto')) {
+        showBubble(undefined);
       }
 
       // Her oynatma yeni bir runId alır: süre efekti yeniden kurulur ve
