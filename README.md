@@ -7,6 +7,7 @@ A cross-platform workout planning and progress-tracking application built with R
 ## Highlights
 
 - Email and password authentication with persistent Supabase sessions
+- Email confirmation and password-recovery flows with environment-aware redirects
 - Multi-day workout programs with one active program driving the schedule
 - Exercise library, custom exercises, and bulk exercise selection
 - Long-press drag-and-drop exercise ordering
@@ -20,8 +21,10 @@ A cross-platform workout planning and progress-tracking application built with R
 - Turkish and English interface localization
 - Light, dark, and system theme preferences
 - Persistent profile avatars and banners, including animated GIF support
+- Friend discovery, requests, private friend profiles, and shared discipline calendars
 - Conversational AI coach grounded in verified Supabase workout data
 - AI weekly summaries and exercise progress analysis
+- Rosa, a persistent interactive mascot with contextual messages, reactions, sleep, and edge-peek animations
 
 ## Tech Stack
 
@@ -38,6 +41,7 @@ A cross-platform workout planning and progress-tracking application built with R
 | AI | Google Gemini API |
 | Local persistence | AsyncStorage |
 | Notifications | Expo Notifications |
+| Animation and gestures | React Native Reanimated, React Native Gesture Handler |
 
 ## Architecture
 
@@ -47,6 +51,7 @@ Expo application
     +-- Supabase Auth
     +-- PostgreSQL + Row Level Security
     +-- Supabase Storage (avatars and profile banners)
+    +-- Security-definer RPCs (friend requests and limited discipline sharing)
     +-- Supabase Edge Function: workout-coach
             |
             +-- Validates the authenticated user
@@ -57,6 +62,8 @@ Expo application
 ```
 
 The Gemini API key is never included in the Expo application. AI requests are sent through an authenticated Supabase Edge Function.
+
+Friend profiles expose only the profile fields and discipline statuses required by the feature. Private programs, workout sets, notes, and AI conversations are not shared with friends.
 
 ## Getting Started
 
@@ -112,10 +119,22 @@ For Gemini:
 
 The coach calculates metrics on the server. Weekly and exercise summaries use deterministic templates without calling Gemini; conversational questions and program reviews use the configured model fallback list. The mobile client cannot provide trusted workout totals directly.
 
+## Social and Discipline Sharing
+
+Users can search for other profiles, send or respond to friend requests, remove friends, and open accepted friends' profiles. A dedicated synchronized table shares only bounded discipline-calendar statuses with accepted friends. Friendship mutations run through authenticated PostgreSQL functions instead of direct client table writes.
+
+Direct messaging is intentionally outside the current release scope.
+
+## Rosa Mascot
+
+Rosa is a navigation-level interactive mascot that can move between screen edges without blocking the application interface. Her state system responds to completed sets and workouts, AI activity, inactivity, sleep, taps, and the current screen. Mascot preferences and position are user-scoped.
+
 ## Security
 
 - Row Level Security is enabled for user-owned tables.
 - Users can only read and modify their own private workout data.
+- Friendship changes are validated by authenticated database functions.
+- Accepted friends can read only bounded shared discipline statuses and public profile fields.
 - Storage policies restrict uploads and deletion to each user's own folder.
 - The public Expo application only receives the Supabase publishable key.
 - Gemini and Supabase privileged keys stay in server-side secrets.
@@ -149,7 +168,7 @@ utils/                  Analytics, scheduling, timers, and formatting
 
 ## Current Status
 
-The primary workout flow, Supabase persistence, profile media, localization, discipline tracking, workout history, rest timers, and AI coach are functional. Upcoming work includes broader automated testing, offline workout synchronization, accessibility review, and release preparation.
+The primary workout flow, Supabase persistence, profile media, localization, discipline tracking, workout history, rest timers, friend connections, password recovery, Rosa, and the AI coach are functional. The project is not yet an App Store release. Upcoming work includes broader automated testing, offline workout synchronization, accessibility review, social messaging, and release preparation.
 
 ## Disclaimer
 

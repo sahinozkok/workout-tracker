@@ -18,6 +18,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { DisciplineCalendar } from '@/components/discipline-calendar';
 import { ProgressRing } from '@/components/progress-ring';
 import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
@@ -350,6 +351,13 @@ export default function ProfileScreen() {
             </View>
           </View>
 
+          {/* Disiplin takvimi düzenleme formunun dışındadır; form kapalıyken de
+              görünür ve mevcut kullanıcı için etkileşimlidir. Profilde kompakt
+              yoğunluk kullanılır: dar telefonlarda hafta/ay/yıl taşmaz. */}
+          <View style={styles.calendarSection}>
+            <DisciplineCalendar density="compact" />
+          </View>
+
           {isProfileEditorOpen && (
           <>
           <Text style={styles.introText}>{t('profile.intro')}</Text>
@@ -482,6 +490,22 @@ export default function ProfileScreen() {
           </>
           )}
 
+          {/* Arkadaşlar: ScrollView içeriğinin EN SON öğesi. Düzenleyici
+              kapalıyken takvimden, açıkken "Profili kaydet"ten sonra gelir.
+              Yeni sekme eklenmez; kök Stack'teki /friends ekranına gider. */}
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => router.push('/friends')}
+            style={({ pressed }) => [styles.friendsRow, pressed && styles.pressed]}>
+            <View style={styles.friendsIcon}>
+              <Ionicons name="people-outline" size={18} color={colors.primary} />
+            </View>
+            <View style={styles.friendsText}>
+              <Text style={styles.friendsTitle}>{t('friends.profileRow')}</Text>
+              <Text style={styles.caption}>{t('friends.profileRowCaption')}</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+          </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -492,7 +516,9 @@ function createStyles(colors: ThemeColors) {
   return StyleSheet.create({
     safeArea: { backgroundColor: colors.background, flex: 1 },
     flex: { flex: 1 },
-    content: { paddingBottom: 40, paddingTop: 0 },
+    // Arkadaşlar satırı en altta olduğu için alt sekme çubuğunun ve alt güvenli
+    // alanın üzerinde rahat bir boşluk bırakılır.
+    content: { paddingBottom: 56, paddingTop: 0 },
     introText: {
       color: colors.textSecondary,
       ...Type.caption,
@@ -639,6 +665,32 @@ function createStyles(colors: ThemeColors) {
       minHeight: 52,
     },
     saveButtonText: { color: colors.onPrimary, fontSize: 16, fontWeight: '600' },
+    friendsRow: {
+      alignItems: 'center',
+      borderColor: colors.separator,
+      borderRadius: Layout.radiusMedium,
+      borderWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row',
+      gap: 12,
+      marginHorizontal: Layout.screenPadding,
+      marginTop: 24,
+      minHeight: Layout.minTouchSize,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+    },
+    friendsIcon: {
+      alignItems: 'center',
+      backgroundColor: colors.primarySoft,
+      borderRadius: Layout.radiusSmall,
+      height: 34,
+      justifyContent: 'center',
+      width: 34,
+    },
+    friendsText: { flex: 1, gap: 2 },
+    friendsTitle: { color: colors.text, fontSize: 15, fontWeight: '600' },
+    // Takvim ekranın diğer bölümleriyle aynı yatay payı kullanır; içerik
+    // genişliği kompakt ölçüleri belirler.
+    calendarSection: { marginTop: 8, paddingHorizontal: Layout.screenPadding },
     pressed: { opacity: 0.6 },
   });
 }
