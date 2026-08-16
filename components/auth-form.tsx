@@ -36,7 +36,11 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
   const isRegister = mode === 'register';
 
   async function handleSubmit() {
-    const normalizedEmail = email.trim().toLocaleLowerCase('tr-TR');
+    // `toLocaleLowerCase('tr-TR')` KULLANILMAZ: Türkçe yerelinde büyük `I`
+    // harfi `ı`ya dönüşüp e-posta adresini bozardı (ORNEK@… → ornek@… yerine
+    // ornek@… değil `ornek`teki `i`ler `ı` olurdu). E-posta adresleri her
+    // zaman değişmez (invariant) küçük harfe çevrilir.
+    const normalizedEmail = email.trim().toLowerCase();
     const normalizedName = displayName.trim();
 
     if (isSubmitting) return;
@@ -197,6 +201,17 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
               </Text>
               <Ionicons name="arrow-forward" size={19} color={colors.onPrimary} />
             </Pressable>
+
+            {/* Yalnızca giriş modunda görünür. */}
+            {!isRegister && (
+              <Pressable
+                accessibilityLabel={t('auth.forgotPasswordAccessibility')}
+                accessibilityRole="link"
+                onPress={() => router.push('/forgot-password')}
+                style={({ pressed }) => [styles.forgotPasswordButton, pressed && styles.pressed]}>
+                <Text style={styles.forgotPasswordText}>{t('auth.forgotPassword')}</Text>
+              </Pressable>
+            )}
           </View>
 
           <View style={styles.switchModeRow}>
@@ -282,6 +297,15 @@ function createStyles(colors: ThemeColors) {
       minHeight: 52,
     },
     submitButtonText: { color: colors.onPrimary, fontSize: 16, fontWeight: '600' },
+    forgotPasswordButton: {
+      alignItems: 'center',
+      alignSelf: 'center',
+      justifyContent: 'center',
+      // Dokunma alanı en az 44 pt.
+      minHeight: Layout.minTouchSize,
+      paddingHorizontal: 12,
+    },
+    forgotPasswordText: { color: colors.textSecondary, fontSize: 14, fontWeight: '500' },
     switchModeRow: { alignItems: 'center', flexDirection: 'row', gap: 6, justifyContent: 'center', marginTop: 24 },
     switchModeText: { color: colors.textSecondary, fontSize: 14 },
     switchModeLink: { color: colors.primary, fontSize: 14, fontWeight: '600' },

@@ -46,8 +46,13 @@ const DAILY_EXPRESSION: Record<MascotDailyContext['kind'], MascotExpression> = {
   'no-schedule': 'sleepy',
 };
 
-/** Günlük bağlam üretilemediğinde ve genel route mesajlarında kullanılır. */
-export const DEFAULT_MESSAGE_EXPRESSION: MascotExpression = 'smug';
+/**
+ * Genel route mesajlarında ve günlük bağlam üretilemediğinde kullanılır.
+ * `smug` görselinin ağzı açık olduğu için burada kapalı ağızlı, hafif
+ * gülümseyen `happy` tercih edilir; bilinçli seçilmiş diğer ifadeler
+ * (mischievous / celebrating / thinking / sleepy) etkilenmez.
+ */
+export const DEFAULT_MESSAGE_EXPRESSION: MascotExpression = 'happy';
 
 export function getDailyContextExpression(context: MascotDailyContext): MascotExpression {
   return DAILY_EXPRESSION[context.kind];

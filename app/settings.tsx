@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { MASCOT_NAME } from '@/constants/mascot';
 import { Layout, ThemeColors } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useLanguage } from '@/context/language-context';
@@ -157,11 +158,11 @@ export default function SettingsScreen() {
             <Ionicons name="happy-outline" size={18} color={colors.accent} />
           </View>
           <View style={styles.settingText}>
-            <Text style={styles.settingTitle}>{t('mascot.settingsTitle')}</Text>
-            <Text style={styles.caption}>{t('mascot.settingsCaption')}</Text>
+            <Text style={styles.settingTitle}>{t('mascot.settingsTitle', { name: MASCOT_NAME })}</Text>
+            <Text style={styles.caption}>{t('mascot.settingsCaption', { name: MASCOT_NAME })}</Text>
           </View>
           <Switch
-            accessibilityLabel={t('mascot.settingsLabel')}
+            accessibilityLabel={t('mascot.settingsLabel', { name: MASCOT_NAME })}
             onValueChange={(enabled) => void setMascotEnabled(enabled)}
             thumbColor={Platform.OS === 'android' ? colors.onPrimary : undefined}
             trackColor={{ false: colors.surfaceMuted, true: colors.primary }}

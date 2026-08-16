@@ -31,6 +31,7 @@ import {
   resolveMascotExpression,
 } from '@/components/mascot/mascot-expressions';
 import { MascotLoveParticles } from '@/components/mascot/mascot-love-particles';
+import { MASCOT_NAME } from '@/constants/mascot';
 import { Layout } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { useMascot } from '@/context/mascot-context';
@@ -1545,7 +1546,7 @@ export function FloatingMascot() {
             <Animated.View
               accessible
               accessibilityHint={t('mascot.accessibilityHint')}
-              accessibilityLabel={t('mascot.accessibilityLabel')}
+              accessibilityLabel={t('mascot.accessibilityLabel', { name: MASCOT_NAME })}
               accessibilityRole="button"
               onAccessibilityTap={handleTap}
               style={styles.touchTarget}>

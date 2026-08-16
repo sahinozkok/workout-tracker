@@ -24,6 +24,7 @@ The migrations currently cover:
 - Persistent AI coach messages
 - Turkish and English profile language preferences
 - Animated GIF media support and a 20 MB profile-media limit
+- Friend requests, accepted-friend profile access, and bounded discipline-calendar sharing
 
 ## Storage
 
@@ -38,7 +39,7 @@ The application supports JPEG, PNG, WebP, GIF, HEIC, and HEIF files up to 20 MB.
 
 ## Row Level Security
 
-Row Level Security is enabled on user-owned application tables. The anonymous role does not receive direct table access, and authenticated users can only access their own private records.
+Row Level Security is enabled on user-owned application tables. The anonymous role does not receive direct table access, and authenticated users can only access their own private records. Friendship mutations use authenticated database functions; accepted friends receive read-only access to the limited profile and discipline data required by the social screens, not private programs or workout records.
 
 Never place a `service_role` key or database password in the Expo `.env` file. Only the publishable Supabase key belongs in the client application.
 
