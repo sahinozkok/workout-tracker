@@ -116,5 +116,8 @@ export function useMascotSleep({ canSleep }: Options) {
     [],
   );
 
-  return { isAsleep, wake };
+  // `isAppActive` de dışa verilir: uygulama ön planda mı bilgisini isteyen
+  // diğer maskot animasyonları (uyanık nefesi) ikinci bir AppState dinleyicisi
+  // kurmak zorunda kalmaz. Uyku davranışı bundan etkilenmez.
+  return { isAppActive, isAsleep, wake };
 }
