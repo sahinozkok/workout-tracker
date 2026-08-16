@@ -8,4 +8,4 @@
  * Not: bu, uygulamanın ürün adı değildir — app config, bundle adı ve paket
  * bilgileri bundan etkilenmez.
  */
-export const MASCOT_NAME = 'Rosa';
+export const MASCOT_NAME = 'Rosea';
