@@ -31,7 +31,7 @@ export const en: TranslationSchema = {
     profile: 'Profile',
   },
   auth: {
-    brand: 'SET JOURNAL',
+    brand: 'ROSEA',
     loginTitle: 'Welcome back',
     loginSubtitle: 'Sign in to continue with your programs and workout history.',
     registerTitle: 'Create your account',

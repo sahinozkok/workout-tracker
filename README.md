@@ -1,4 +1,4 @@
-# Set Gunlugu — Workout Tracker
+# Rosea — AI-Powered Workout Tracker
 
 A cross-platform workout planning and progress-tracking application built with React Native, Expo, TypeScript, and Supabase. It combines structured workout programming, live session tracking, discipline analytics, persistent profiles, and a Gemini-powered conversational AI coach.
 
@@ -24,7 +24,7 @@ A cross-platform workout planning and progress-tracking application built with R
 - Friend discovery, requests, private friend profiles, and shared discipline calendars
 - Conversational AI coach grounded in verified Supabase workout data
 - AI weekly summaries and exercise progress analysis
-- Rosa, a persistent interactive mascot with contextual messages, reactions, sleep, and edge-peek animations
+- Rosea, a persistent interactive mascot with contextual messages, reactions, sleep, and edge-peek animations
 
 ## Tech Stack
 
@@ -125,9 +125,9 @@ Users can search for other profiles, send or respond to friend requests, remove 
 
 Direct messaging is intentionally outside the current release scope.
 
-## Rosa Mascot
+## Rosea Mascot
 
-Rosa is a navigation-level interactive mascot that can move between screen edges without blocking the application interface. Her state system responds to completed sets and workouts, AI activity, inactivity, sleep, taps, and the current screen. Mascot preferences and position are user-scoped.
+Rosea is a navigation-level interactive mascot that can move between screen edges without blocking the application interface. Her state system responds to completed sets and workouts, AI activity, inactivity, sleep, taps, and the current screen. Mascot preferences and position are user-scoped.
 
 ## Security
 
@@ -168,7 +168,7 @@ utils/                  Analytics, scheduling, timers, and formatting
 
 ## Current Status
 
-The primary workout flow, Supabase persistence, profile media, localization, discipline tracking, workout history, rest timers, friend connections, password recovery, Rosa, and the AI coach are functional. The project is not yet an App Store release. Upcoming work includes broader automated testing, offline workout synchronization, accessibility review, social messaging, and release preparation.
+The primary workout flow, Supabase persistence, profile media, localization, discipline tracking, workout history, rest timers, friend connections, password recovery, Rosea, and the AI coach are functional. The project is not yet an App Store release. Upcoming work includes broader automated testing, offline workout synchronization, accessibility review, social messaging, and release preparation.
 
 ## Disclaimer
 

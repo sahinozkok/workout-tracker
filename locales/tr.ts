@@ -30,7 +30,7 @@ export const tr = {
     profile: 'Profil',
   },
   auth: {
-    brand: 'SET GÜNLÜĞÜ',
+    brand: 'ROSEA',
     loginTitle: 'Tekrar hoş geldin',
     loginSubtitle: 'Programlarına ve antrenman geçmişine devam etmek için giriş yap.',
     registerTitle: 'Hesabını oluştur',

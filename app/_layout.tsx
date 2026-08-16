@@ -193,7 +193,7 @@ function AppNavigation() {
         kayıt ekranlarında hiç görünmez.
 
         Kurtarma oturumu da gerçek bir oturumdur; `isPasswordRecovery`
-        kontrolü olmasaydı Rosa şifre sıfırlama ekranında görünür ve
+        kontrolü olmasaydı Rosea şifre sıfırlama ekranında görünür ve
         `MascotProvider` mount edilmediği için `useMascot()` hata fırlatırdı.
       */}
       {Boolean(session) && !isPasswordRecovery && <FloatingMascot />}
