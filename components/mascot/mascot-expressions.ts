@@ -1,3 +1,4 @@
+import { MascotBlinkFrame } from '@/hooks/use-mascot-blink';
 import { MascotReactionType, MascotState } from '@/types/mascot';
 import { MascotDailyContext } from '@/utils/mascot-daily-context';
 
@@ -24,6 +25,34 @@ export const MASCOT_EXPRESSION_SOURCES: Record<MascotExpression, number> = {
   sleepy: require('../../assets/images/mascot/mascot-sleepy.png'),
   mischievous: require('../../assets/images/mascot/mascot-mischievous.png'),
 };
+
+/**
+ * Göz kırpma kareleri. Aynı 584 × 512 şeffaf tuvali kullanırlar ve karakterin
+ * baş/kanat hizası `mascot-happy.png` ile eşleşecek biçimde mekanik olarak
+ * hizalanmıştır; bu yüzden kare değişimi layout'u oynatmaz.
+ *
+ * `require` çağrıları burada da statiktir — Metro dinamik yol çözemez.
+ */
+const MASCOT_BLINK_SOURCES: Record<Exclude<MascotBlinkFrame, 'open'>, number> = {
+  half: require('../../assets/images/mascot/rosea-blink-half.png'),
+  closed: require('../../assets/images/mascot/rosea-blink-closed.png'),
+};
+
+/**
+ * Gösterilecek görseli tek noktadan çözer. Saf fonksiyondur.
+ *
+ * Göz kırpma **yalnızca** `happy` ifadesinin üzerine biner: uyku, düşünme,
+ * sürükleme, mischievous, smug ve celebrating kareleri hiçbir koşulda blink
+ * karesiyle değiştirilmez. Çağıran taraf zaten aynı koşulu uyguluyor; buradaki
+ * kontrol ikinci bir güvenlik katmanıdır.
+ */
+export function resolveMascotImageSource(
+  expression: MascotExpression,
+  blinkFrame: MascotBlinkFrame,
+): number {
+  if (expression === 'happy' && blinkFrame !== 'open') return MASCOT_BLINK_SOURCES[blinkFrame];
+  return MASCOT_EXPRESSION_SOURCES[expression];
+}
 
 /** Tek seferlik tepkilerin ifadeleri. */
 const REACTION_EXPRESSION: Record<MascotReactionType, MascotExpression> = {

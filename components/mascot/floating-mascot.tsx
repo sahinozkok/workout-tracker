@@ -25,10 +25,10 @@ import { MascotCelebrationParticles } from '@/components/mascot/mascot-celebrati
 import {
   DEFAULT_MESSAGE_EXPRESSION,
   getDailyContextExpression,
-  MASCOT_EXPRESSION_SOURCES,
   MascotExpression,
   MascotPresentation,
   resolveMascotExpression,
+  resolveMascotImageSource,
 } from '@/components/mascot/mascot-expressions';
 import { MascotLoveParticles } from '@/components/mascot/mascot-love-particles';
 import { MASCOT_NAME } from '@/constants/mascot';
@@ -37,6 +37,7 @@ import { useTranslation } from '@/context/language-context';
 import { useMascot } from '@/context/mascot-context';
 import { useWorkout } from '@/context/workout-context';
 import { useMascotAutoGreeting } from '@/hooks/use-mascot-auto-greeting';
+import { useMascotBlink } from '@/hooks/use-mascot-blink';
 import { useMascotSleep } from '@/hooks/use-mascot-sleep';
 import {
   clampEdgeRatio,
@@ -104,6 +105,9 @@ const AMBIENT_PEEK_REVEAL_FRACTION = 0.32;
 const AMBIENT_PEEK_IN_DURATION = 360;
 const AMBIENT_PEEK_HOLD_DURATION = 700;
 const AMBIENT_PEEK_OUT_DURATION = 480;
+/** Göz kırpma bu pencerede devreye girmez; iki hareket üst üste binmez. */
+const AMBIENT_PEEK_TOTAL_DURATION =
+  AMBIENT_PEEK_IN_DURATION + AMBIENT_PEEK_HOLD_DURATION + AMBIENT_PEEK_OUT_DURATION;
 
 const TAP_LIFT = -9;
 const BUBBLE_TIMEOUT = 4000;
@@ -277,6 +281,8 @@ export function FloatingMascot() {
   /** Açık balonun türü. Kutlama balonu normal balonu devralır. */
   const [bubbleVariant, setBubbleVariant] = useState<BubbleVariant>();
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+  /** Ambient peek şu anda oynuyor mu? Yalnızca göz kırpmayı bekletmek için. */
+  const [isAmbientPeeking, setIsAmbientPeeking] = useState(false);
   /**
    * Oynamakta olan tek seferlik tepki. `runId` her oynatmada artar; süre
    * efekti buna bağlı olduğu için aynı tür tekrar oynatılsa bile eski
@@ -655,13 +661,21 @@ export function FloatingMascot() {
       !isAsleep &&
       state === 'idle';
 
-    if (!canPlay) return;
+    if (!canPlay) {
+      setIsAmbientPeeking(false);
+      return;
+    }
 
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let activeTimer: ReturnType<typeof setTimeout> | undefined;
 
     const scheduleNextPeek = () => {
       const delay = AMBIENT_PEEK_MIN_DELAY + Math.random() * AMBIENT_PEEK_DELAY_RANGE;
       timer = setTimeout(() => {
+        // Yalnızca "şu anda peek oynuyor" bilgisi işaretlenir; animasyonun
+        // kendisi ve süreleri değişmez. Göz kırpma bu sırada devreye girmez.
+        setIsAmbientPeeking(true);
+        activeTimer = setTimeout(() => setIsAmbientPeeking(false), AMBIENT_PEEK_TOTAL_DURATION);
         ambientPeekProgress.value = withSequence(
           withTiming(1, {
             duration: AMBIENT_PEEK_IN_DURATION,
@@ -683,6 +697,8 @@ export function FloatingMascot() {
 
     return () => {
       if (timer) clearTimeout(timer);
+      if (activeTimer) clearTimeout(activeTimer);
+      setIsAmbientPeeking(false);
       cancelAnimation(ambientPeekProgress);
       ambientPeekProgress.value = 0;
     };
@@ -1476,6 +1492,41 @@ export function FloatingMascot() {
     return clamped - boxX;
   }, [bounds, container.innerWidth, position.edge, position.edgeRatio]);
 
+  // İfade tek noktadan, saf bir seçiciyle çözülür. Burada rastgelelik yoktur:
+  // mesajın ifadesi zaten dokunma anında `tapPresentation` içinde seçilmiştir.
+  // Erken `return`'den ÖNCE hesaplanır, çünkü göz kırpma koşulu buna bakar ve
+  // hook'lar koşullu dönüşün üstünde kalmalıdır.
+  const expression = resolveMascotExpression({
+    activeReactionType: activeReaction?.type,
+    bubbleExpression: resolveBubbleExpression(bubbleVariant, tapPresentation),
+    isAsleep,
+    isDragging: isDraggingRef.current,
+    isThinking,
+    state,
+  });
+
+  /**
+   * Göz kırpma yalnızca maskot gerçekten uyanık ve boşta beklerken çalışır.
+   * Tek bir yerde toplanan bu koşul bozulduğu anda hook animasyonu iptal eder
+   * ve görsel mevcut gerçek ifadeye döner.
+   *
+   * `state === 'idle'` sürükleme, kutlama, tek dokunma ve düşünme durumlarını
+   * birlikte eler; `expression === 'happy'` ise uyku, thinking, mischievous,
+   * smug ve celebrating karelerinin üzerine blink binmesini engeller. Aktif
+   * balonun ifadesi `happy` dışında bir şeyse yine devre dışı kalır.
+   */
+  const canBlink =
+    !isHidden &&
+    !reduceMotion &&
+    !isAsleep &&
+    !isThinking &&
+    !activeReaction &&
+    !isAmbientPeeking &&
+    state === 'idle' &&
+    expression === 'happy';
+
+  const { frame: blinkFrame, isInstant: isBlinkInstant } = useMascotBlink({ canBlink });
+
   if (isHidden) return null;
 
   // Yalnızca normal dokunma balonunda AI Koç CTA'sı bulunur.
@@ -1488,17 +1539,6 @@ export function FloatingMascot() {
       : bubbleVariant === 'love'
         ? t('mascot.lovedMessage')
         : tapPresentation?.message;
-
-  // İfade tek noktadan, saf bir seçiciyle çözülür. Burada rastgelelik yoktur:
-  // mesajın ifadesi zaten dokunma anında `tapPresentation` içinde seçilmiştir.
-  const expression = resolveMascotExpression({
-    activeReactionType: activeReaction?.type,
-    bubbleExpression: resolveBubbleExpression(bubbleVariant, tapPresentation),
-    isAsleep,
-    isDragging: isDraggingRef.current,
-    isThinking,
-    state,
-  });
 
   return (
     <View
@@ -1558,11 +1598,14 @@ export function FloatingMascot() {
                         accessibilityElementsHidden
                         contentFit="contain"
                         importantForAccessibility="no"
-                        source={MASCOT_EXPRESSION_SOURCES[expression]}
+                        source={resolveMascotImageSource(expression, blinkFrame)}
                         style={{ height: mascotSize, width: mascotSize }}
                         // Reduce Motion açıkken geçiş yok; kapalıyken yalnızca
                         // çok kısa bir crossfade. Ölçek/konum animasyonu eklenmez.
-                        transition={reduceMotion ? 0 : EXPRESSION_CROSSFADE_MS}
+                        // Göz kırpma kareleri 65–90 ms sürdüğü için 100 ms'lik
+                        // crossfade onları yutardı: blink boyunca geçiş anlıktır,
+                        // normal ifade değişimleri eski davranışı korur.
+                        transition={reduceMotion || isBlinkInstant ? 0 : EXPRESSION_CROSSFADE_MS}
                       />
                     </Animated.View>
                   </Animated.View>
