@@ -65,6 +65,19 @@ const EXPRESSION_CROSSFADE_MS = 100;
 const SLEEP_BREATH_SCALE = 1.025;
 const SLEEP_BREATH_HALF_CYCLE = 2200; // tam döngü ≈ 4400 ms
 
+/**
+ * Uyanık nefesi: uyku nefesinden çok daha küçük ve **ayrı** bir katman.
+ *
+ * Yalnızca ölçek kullanılır — `translateX/Y` yoktur, bu yüzden kayıtlı konum,
+ * kenardan bakma mesafesi ve kenar rotasyonu hiç etkilenmez. Gövde nefes
+ * alırken hafifçe uzayıp incelir: dikeyde büyürken yatayda çok az daralır.
+ */
+const AWAKE_BREATH_SCALE_Y = 1.014;
+const AWAKE_BREATH_SCALE_X = 0.994;
+const AWAKE_BREATH_HALF_CYCLE = 1650; // tam döngü ≈ 3300 ms
+/** Koşul bozulduğunda ölçeğin tam 1'e döndüğü kısa, yumuşak geçiş. */
+const AWAKE_BREATH_RELEASE_DURATION = 260;
+
 /** Görünür karakter ölçüsü. Kare kutu + `contain` → oran bozulmadan sığar. */
 const MASCOT_SIZE = 88;
 /** Aktif antrenman ekranında set kontrollerini kapatmayan küçük mod. */
@@ -395,6 +408,12 @@ export function FloatingMascot() {
    * ayrıdır; ikisi birbirini ezmez.
    */
   const sleepScale = useSharedValue(1);
+  /**
+   * Uyanık nefes katmanı — 0 = nötr, 1 = nefesin tepesi. Uyku nefesinin
+   * `sleepScale` değerinden **ayrıdır**: ikisi asla aynı değeri yazmaz ve
+   * `!isAsleep` koşulu sayesinde aynı anda çalışamazlar.
+   */
+  const awakeBreathProgress = useSharedValue(0);
   // Tepki katmanı (tap/set/kutlama).
   const reactionY = useSharedValue(0);
   const reactionScale = useSharedValue(1);
@@ -615,7 +634,7 @@ export function FloatingMascot() {
 
   // Ambient peek effect'i `isAsleep` değerini okuduğu için uyku bloğu ondan
   // önce durur.
-  const { isAsleep, wake } = useMascotSleep({ canSleep });
+  const { isAppActive, isAsleep, wake } = useMascotSleep({ canSleep });
 
   /**
    * Uyku nefesi. Reduce Motion açıkken yalnızca `sleepy` görseline geçilir,
@@ -640,6 +659,51 @@ export function FloatingMascot() {
 
     return () => cancelAnimation(sleepScale);
   }, [isAsleep, isHidden, reduceMotion, sleepScale]);
+
+  /**
+   * Uyanık nefesi. Uyku nefesinin **tam karşılığı ama ayrı** bir katmandır:
+   * kendi shared value'sunu kullanır ve `!isAsleep` koşulu yüzünden ikisi
+   * aynı anda çalışamaz.
+   *
+   * Yalnızca ölçek animasyonudur; `translateX/Y` yoktur, bu yüzden kayıtlı
+   * konum, peek mesafesi ve kenar rotasyonu hiç değişmez. Göz kırpma farklı
+   * bir katmanda (görsel kaynağı) çalıştığı için ikisi birbirini kesmez.
+   *
+   * Koşullardan biri bozulduğu anda tekrar eden animasyon iptal edilir ve
+   * ölçek kısa, yumuşak bir geçişle tam 1'e döner.
+   */
+  const canBreathe =
+    !isHidden &&
+    isAppActive &&
+    !isAsleep &&
+    !reduceMotion &&
+    !activeReaction &&
+    !bubbleVariant &&
+    !isThinking &&
+    state !== 'dragging';
+
+  useEffect(() => {
+    if (!canBreathe) {
+      cancelAnimation(awakeBreathProgress);
+      awakeBreathProgress.value = withTiming(0, {
+        duration: AWAKE_BREATH_RELEASE_DURATION,
+        easing: Easing.out(Easing.quad),
+      });
+      return;
+    }
+
+    awakeBreathProgress.value = 0;
+    awakeBreathProgress.value = withRepeat(
+      withTiming(1, {
+        duration: AWAKE_BREATH_HALF_CYCLE,
+        easing: Easing.inOut(Easing.sin),
+      }),
+      -1,
+      true,
+    );
+
+    return () => cancelAnimation(awakeBreathProgress);
+  }, [awakeBreathProgress, canBreathe]);
 
   /**
    * Yalnızca gerçekten boşta ve kısmen gizliyken ambient peek oynar. Her yeni
@@ -783,6 +847,7 @@ export function FloatingMascot() {
       cancelAnimation(edgeRotation);
       cancelAnimation(ambientPeekProgress);
       cancelAnimation(sleepScale);
+      cancelAnimation(awakeBreathProgress);
       cancelAnimation(thinkingProgress);
       cancelAnimation(reactionY);
       cancelAnimation(reactionScale);
@@ -791,6 +856,7 @@ export function FloatingMascot() {
     },
     [
       ambientPeekProgress,
+      awakeBreathProgress,
       edgeRotation,
       peekOffsetX,
       peekOffsetY,
@@ -1460,6 +1526,24 @@ export function FloatingMascot() {
     transform: [{ scale: sleepScale.value }],
   }));
 
+  /**
+   * Uyanık nefes katmanı: yalnızca küçük `scaleX`/`scaleY`. Konum, peek ve
+   * rotasyon değerlerine hiç dokunmaz; diğer katmanların transform dizilerini
+   * ezmez.
+   *
+   * Ölçek merkezi kutunun **alt kenarındadır** (`styles.breathOrigin`). Bu
+   * katman kenar rotasyonunun içinde olduğu için "alt", maskot hangi kenarda
+   * olursa olsun karakterin yüzeyin arkasında kalan kuyruk ucudur: nefes
+   * gövdeyi ekranın içine doğru genişletir, kenardan kopuyormuş gibi
+   * görünmez.
+   */
+  const awakeBreathStyle = useAnimatedStyle(() => ({
+    transform: [
+      { scaleX: interpolate(awakeBreathProgress.value, [0, 1], [1, AWAKE_BREATH_SCALE_X]) },
+      { scaleY: interpolate(awakeBreathProgress.value, [0, 1], [1, AWAKE_BREATH_SCALE_Y]) },
+    ],
+  }));
+
   const reactionStyle = useAnimatedStyle(() => ({
     opacity: reactionOpacity.value,
     transform: [
@@ -1576,7 +1660,8 @@ export function FloatingMascot() {
         )}
 
         {/* Katmanlar:
-            Kalıcı konum → Kenardan bakma → Kenar yönü → Düşünme → Tepki → Görsel.
+            Kalıcı konum → Kenardan bakma → Kenar yönü → Düşünme → Uyku nefesi
+            → Uyanık nefesi → Tepki → Görsel.
             Her katman yalnızca kendi transform'unu sürer, hiçbiri diğerini ezmez.
             Balon ve partiküller dönüş katmanlarının dışındadır: hiç dönmezler.
             Dokunma hedefi peek katmanının içindedir, yani karakterle birlikte
@@ -1593,20 +1678,22 @@ export function FloatingMascot() {
               <Animated.View style={edgeRotationStyle}>
                 <Animated.View style={thinkingStyle}>
                   <Animated.View style={sleepStyle}>
-                    <Animated.View style={reactionStyle}>
-                      <Image
-                        accessibilityElementsHidden
-                        contentFit="contain"
-                        importantForAccessibility="no"
-                        source={resolveMascotImageSource(expression, blinkFrame)}
-                        style={{ height: mascotSize, width: mascotSize }}
-                        // Reduce Motion açıkken geçiş yok; kapalıyken yalnızca
-                        // çok kısa bir crossfade. Ölçek/konum animasyonu eklenmez.
-                        // Göz kırpma kareleri 65–90 ms sürdüğü için 100 ms'lik
-                        // crossfade onları yutardı: blink boyunca geçiş anlıktır,
-                        // normal ifade değişimleri eski davranışı korur.
-                        transition={reduceMotion || isBlinkInstant ? 0 : EXPRESSION_CROSSFADE_MS}
-                      />
+                    <Animated.View style={[styles.breathOrigin, awakeBreathStyle]}>
+                      <Animated.View style={reactionStyle}>
+                        <Image
+                          accessibilityElementsHidden
+                          contentFit="contain"
+                          importantForAccessibility="no"
+                          source={resolveMascotImageSource(expression, blinkFrame)}
+                          style={{ height: mascotSize, width: mascotSize }}
+                          // Reduce Motion açıkken geçiş yok; kapalıyken yalnızca
+                          // çok kısa bir crossfade. Ölçek/konum animasyonu eklenmez.
+                          // Göz kırpma kareleri 65–90 ms sürdüğü için 100 ms'lik
+                          // crossfade onları yutardı: blink boyunca geçiş anlıktır,
+                          // normal ifade değişimleri eski davranışı korur.
+                          transition={reduceMotion || isBlinkInstant ? 0 : EXPRESSION_CROSSFADE_MS}
+                        />
+                      </Animated.View>
                     </Animated.View>
                   </Animated.View>
                 </Animated.View>
@@ -1633,6 +1720,12 @@ const styles = StyleSheet.create({
     width: TOUCH_SIZE,
   },
   peekLayer: { height: TOUCH_SIZE, width: TOUCH_SIZE },
+  /**
+   * Uyanık nefesinin ölçek merkezi: kutunun alt orta noktası. Kenar
+   * rotasyonunun içinde olduğu için bu nokta her zaman karakterin gizli kuyruk
+   * ucudur; nefes hareketi görünen baş tarafında toplanır.
+   */
+  breathOrigin: { transformOrigin: 'center bottom' },
   touchTarget: {
     alignItems: 'center',
     height: TOUCH_SIZE,
