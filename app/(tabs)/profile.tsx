@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { DisciplineCalendar } from '@/components/discipline-calendar';
+import { ProfileDisciplineCard } from '@/components/profile-discipline-card';
 import { ProgressRing } from '@/components/progress-ring';
 import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
@@ -351,11 +351,14 @@ export default function ProfileScreen() {
             </View>
           </View>
 
-          {/* Disiplin takvimi düzenleme formunun dışındadır; form kapalıyken de
-              görünür ve mevcut kullanıcı için etkileşimlidir. Profilde kompakt
-              yoğunluk kullanılır: dar telefonlarda hafta/ay/yıl taşmaz. */}
+          {/* Disiplin kartı düzenleme formunun dışındadır; form kapalıyken de
+              görünür ve mevcut kullanıcı için etkileşimlidir. Profil ekranına
+              **özel** bir bileşen kullanılır: Ana Sayfa takvimiyle hiçbir stil
+              veya ölçü paylaşmaz, yalnızca gerçek veri ve tarih hesaplarını
+              paylaşır. Bu sayede karttaki hiçbir değişiklik Ana Sayfa'yı
+              etkileyemez. */}
           <View style={styles.calendarSection}>
-            <DisciplineCalendar density="compact" />
+            <ProfileDisciplineCard />
           </View>
 
           {isProfileEditorOpen && (

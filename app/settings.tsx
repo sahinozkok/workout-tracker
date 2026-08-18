@@ -158,11 +158,21 @@ export default function SettingsScreen() {
             <Ionicons name="happy-outline" size={18} color={colors.accent} />
           </View>
           <View style={styles.settingText}>
-            <Text style={styles.settingTitle}>{t('mascot.settingsTitle', { name: MASCOT_NAME })}</Text>
+            {/* Etiket duruma göre değişir: görünürken "tatile gönder",
+                gizliyken "geri getir". Saklanan boolean tercih aynen korunur —
+                yalnızca metin duruma bakar, değer hiçbir yerde terslenmez. */}
+            <Text style={styles.settingTitle}>
+              {t(mascotEnabled ? 'mascot.holidaySend' : 'mascot.holidayReturn', {
+                name: MASCOT_NAME,
+              })}
+            </Text>
             <Text style={styles.caption}>{t('mascot.settingsCaption', { name: MASCOT_NAME })}</Text>
           </View>
           <Switch
-            accessibilityLabel={t('mascot.settingsLabel', { name: MASCOT_NAME })}
+            accessibilityLabel={t(
+              mascotEnabled ? 'mascot.holidaySend' : 'mascot.holidayReturn',
+              { name: MASCOT_NAME },
+            )}
             onValueChange={(enabled) => void setMascotEnabled(enabled)}
             thumbColor={Platform.OS === 'android' ? colors.onPrimary : undefined}
             trackColor={{ false: colors.surfaceMuted, true: colors.primary }}

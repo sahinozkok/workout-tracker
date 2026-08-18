@@ -134,6 +134,7 @@ export const tr = {
   },
   calendar: {
     title: 'Disiplin takvimi',
+    shortTitle: 'Disiplin',
     week: 'Hafta',
     month: 'Ay',
     year: 'Yıl',
@@ -613,7 +614,9 @@ export const tr = {
   mascot: {
     settingsTitle: '{name}',
     settingsLabel: '{name}’yı uygulamada göster',
-    settingsCaption: 'Antrenman arkadaşın {name} ekranlarda görünür.',
+    settingsCaption: '{name}’yı uygulamada gizler. İstediğin zaman geri getirebilirsin.',
+    holidaySend: '{name}’yı tatile gönder',
+    holidayReturn: '{name}’yı geri getir',
     accessibilityLabel: '{name}, antrenman arkadaşın',
     accessibilityHint: 'Konuşma balonunu açmak için dokun, taşımak için basılı tutup sürükle.',
     bubbleMessage: 'Bugünkü antrenmana hazır mısın?',

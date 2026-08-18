@@ -38,6 +38,15 @@ export const Colors = {
     disciplineSkipped: '#C7C7CC',
     disciplineEmpty: '#E5E5EA',
     disciplineFuture: '#F2F2F7',
+    /**
+     * Profil disiplin kartının yıl ızgarasına ÖZEL boş/gelecek hücre renkleri.
+     * Kartın zemini `surfaceMuted` olduğu için varsayılan `disciplineEmpty`
+     * (koyu temada birebir aynı renk) hücreleri görünmez kılıyordu. Bu ikisi
+     * yalnızca profil kartında kullanılır; Ana Sayfa takvimi varsayılanlarda
+     * kalır.
+     */
+    profileCalendarEmpty: '#D3D3DA',
+    profileCalendarFuture: '#E2E2E9',
     tint: '#007AFF',
     icon: '#8E8E93',
     tabIconDefault: '#8E8E93',
@@ -75,6 +84,9 @@ export const Colors = {
     disciplinePartial: '#FF9F0A',
     disciplineEmpty: '#1C1C1E',
     disciplineFuture: '#0E0E10',
+    /** Bkz. açık tema notu. Kart zemininden (#1C1C1E) belirgin biçimde koyu. */
+    profileCalendarEmpty: '#060608',
+    profileCalendarFuture: '#0C0C0E',
     tint: '#0A84FF',
     icon: '#8E8E93',
     tabIconDefault: '#6A6A6E',

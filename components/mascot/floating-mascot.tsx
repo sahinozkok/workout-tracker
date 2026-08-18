@@ -2,7 +2,14 @@ import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import { usePathname, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Keyboard, Platform, StyleSheet, useWindowDimensions, View } from 'react-native';
+import {
+  Keyboard,
+  Platform,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+  ViewStyle,
+} from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   cancelAnimation,
@@ -10,6 +17,7 @@ import Animated, {
   interpolate,
   runOnJS,
   useAnimatedStyle,
+  useDerivedValue,
   useReducedMotion,
   useSharedValue,
   withDelay,
@@ -25,6 +33,11 @@ import { MascotCelebrationParticles } from '@/components/mascot/mascot-celebrati
 import {
   DEFAULT_MESSAGE_EXPRESSION,
   getDailyContextExpression,
+  isMascotPitchFrame,
+  MASCOT_TURN_SOURCES,
+  MascotTurnFrame,
+  resolveMascotGillCycle,
+  resolveMascotTurnPlan,
   MascotExpression,
   MascotPresentation,
   resolveMascotExpression,
@@ -38,7 +51,7 @@ import { useMascot } from '@/context/mascot-context';
 import { useWorkout } from '@/context/workout-context';
 import { useMascotAutoGreeting } from '@/hooks/use-mascot-auto-greeting';
 import { useMascotBlink } from '@/hooks/use-mascot-blink';
-import { useMascotSleep } from '@/hooks/use-mascot-sleep';
+import { SLEEP_DROWSY_DURATION, useMascotSleep } from '@/hooks/use-mascot-sleep';
 import {
   clampEdgeRatio,
   isVerticalEdge,
@@ -78,6 +91,24 @@ const AWAKE_BREATH_HALF_CYCLE = 1650; // tam döngü ≈ 3300 ms
 /** Koşul bozulduğunda ölçeğin tam 1'e döndüğü kısa, yumuşak geçiş. */
 const AWAKE_BREATH_RELEASE_DURATION = 260;
 
+/**
+ * Uykuya hazırlanma: tek seferlik sakin bir esneme. Uyanık ve uyku
+ * nefeslerinden **ayrı** bir katman ve ayrı shared value kullanır.
+ *
+ * Toplam süre `SLEEP_DROWSY_DURATION` ile birebir aynıdır; dizi bittiğinde
+ * değer tam 0'a (ölçek 1) döner, böylece uyku nefesi temiz devralır.
+ */
+const DROWSY_SCALE_Y = 1.02;
+const DROWSY_SCALE_X = 0.99;
+/** Esnemeye yumuşak giriş ve çıkış. Görsel hareketin kendisini açıkça anlatır. */
+const DROWSY_STRETCH_IN = 650;
+const DROWSY_STRETCH_OUT = 650;
+/** Açık ağızlı esneme karesinin okunabilmesi için ortadaki sakin bekleme. */
+const DROWSY_HOLD =
+  SLEEP_DROWSY_DURATION - DROWSY_STRETCH_IN - DROWSY_STRETCH_OUT; // 1700 ms
+/** Geçiş iptal edilirse ölçek bu sürede tam 1'e döner. */
+const DROWSY_RELEASE_DURATION = 220;
+
 /** Görünür karakter ölçüsü. Kare kutu + `contain` → oran bozulmadan sığar. */
 const MASCOT_SIZE = 88;
 /** Aktif antrenman ekranında set kontrollerini kapatmayan küçük mod. */
@@ -108,19 +139,12 @@ const PEEK_SPRING = { damping: 20, mass: 0.9, stiffness: 200 };
 const REDUCED_PEEK_DURATION = 120;
 
 /**
- * Maskot boşta beklerken arada sırada kenardan biraz daha fazla görünür.
- * Seyrek ve düzensiz aralıklar hareketin mekanik bir döngü gibi görünmesini
- * engeller.
+ * Uyanma toparlanması. Bu süre boyunca yalnızca uyanma hareketi oynar; normal
+ * tap zıplaması ve mesaj balonu ancak bittikten sonra devreye girer.
  */
-const AMBIENT_PEEK_MIN_DELAY = 9000;
-const AMBIENT_PEEK_DELAY_RANGE = 7000;
-const AMBIENT_PEEK_REVEAL_FRACTION = 0.32;
-const AMBIENT_PEEK_IN_DURATION = 360;
-const AMBIENT_PEEK_HOLD_DURATION = 700;
-const AMBIENT_PEEK_OUT_DURATION = 480;
-/** Göz kırpma bu pencerede devreye girmez; iki hareket üst üste binmez. */
-const AMBIENT_PEEK_TOTAL_DURATION =
-  AMBIENT_PEEK_IN_DURATION + AMBIENT_PEEK_HOLD_DURATION + AMBIENT_PEEK_OUT_DURATION;
+const WAKE_DURATION = 760; // 600–900 ms aralığında
+/** Reduce Motion: aşamalı hareket yerine yalnızca kısa bir ifade geçişi. */
+const WAKE_REDUCED_DURATION = 220;
 
 const TAP_LIFT = -9;
 const BUBBLE_TIMEOUT = 4000;
@@ -128,8 +152,301 @@ const BUBBLE_TIMEOUT = 4000;
 const AUTO_GREETING_BUBBLE_TIMEOUT = 3000;
 const CELEBRATION_BUBBLE_TIMEOUT = 3800;
 const DRAG_SCALE = 1.05;
-/** Bu mesafeden kısa hareketler sürükleme sayılmaz; tap olarak geçer. */
-const DRAG_MIN_DISTANCE = 8;
+/**
+ * Sürükleme fiziği — yalnızca **sunum** katmanı. Konum verisi (positionX/Y),
+ * kayıtlı `edgeRatio` ve snap hesabı bu değerlerden hiç etkilenmez; dokunma
+ * hedefi parmağı birebir takip etmeye devam eder.
+ */
+/** Hızın normalize edileceği referans (pt/sn). Üstü clamp'lenir. */
+const DRAG_VELOCITY_REFERENCE = 900;
+/**
+ * Normalize hız doğrudan kullanılmaz; önce bu katsayıyla alçak geçiren
+ * filtreden geçirilir. Ham `velocityX/Y` kare kare çok gürültülü olduğu için
+ * filtresiz kullanım titreme ve ani yön sıçraması üretiyordu. 0,22 ≈ 4–5
+ * karelik yumuşatma: gövde "süzülür" ama parmaktan kopmaz.
+ */
+const DRAG_VELOCITY_SMOOTHING = 0.28;
+/**
+ * Gövdenin hareket yönünün tersine kalma mesafesi. `mascotSize` oranı olarak
+ * saklanır: normal (88) ve kompakt (64) boyutta aynı görünür.
+ *
+ * Yatay ve dikey ayrı tutulur — sarkaç etkisi yanlarda okunur, dikeyde ise
+ * kafanın yerinde kalması için belirgin biçimde daha küçüktür.
+ * 88 pt referansında ≈ 13 pt yatay, ≈ 8 pt dikey.
+ */
+const DRAG_LAG_X_FRACTION = 13 / 88;
+const DRAG_LAG_Y_FRACTION = 8 / 88;
+/**
+ * Görsel eğim sınırı (derece). Açı ölçekten bağımsızdır, bu yüzden oranlanmaz.
+ * Dönüş merkezi kafa bölgesi olduğu için bu eğim alt gövdeyi pivotun altında
+ * belirgin biçimde yana savurur; asıl "sarkaç" hissini üreten budur.
+ *
+ * Eğri ve yay aynen korunarak yalnızca bu tavan yükseltildi; ölçülen sonuç
+ * (uçtan uca simülasyon, yay aşımı dahil):
+ *   yavaş (280 pt/sn) → 10,0°   belirgin (700) → 19,9°
+ *   hızlı (1800)      → 23,5°   doygun tavan  → 24,0°
+ */
+const DRAG_TILT_MAX = 24;
+/**
+ * Eğimin hız duyarlılık eğrisi (üs). 1 = doğrusal.
+ *
+ * Doğrusal eşleme istenen his eğrisini vermiyordu: ya yavaş sürükleme ölü
+ * kalıyor ya da orta hızda tavana yapışıyordu. 0,75'lik hafif sıkıştırma orta
+ * bandı yukarı çekerken tepeyi korur. Ölçülen sonuç (yay ve filtre gecikmesi
+ * dahil, uçtan uca simülasyon):
+ *
+ *   deadzone altı → 0,0°     yavaş (280 pt/sn) → 10,0°
+ *   belirgin savurma (700)   → 19,9°
+ *   çok hızlı (1800)         → 23,5°     doygun → 24,0°
+ *
+ * Eğri **yalnızca eğime** uygulanır; gecikme, yön ve duruş tespiti doğrusal
+ * hızı kullanmaya devam eder, böylece o davranışlar değişmez.
+ */
+const DRAG_TILT_CURVE = 0.75;
+/**
+ * Gecikmeyi ve eğimi yumuşatan yay; ataleti de bu üretir. Sönüm oranı ≈ 0,72
+ * (hafif underdamped): parmak yavaşlayınca gövde ona doğru yetişir, küçük bir
+ * overshoot yapar ve dengelenir.
+ *
+ * Genlik aynı kalırken **tepki hızı** artırıldı (ω₀ 12,8 → 19,5 rad/sn). Eski
+ * yay o kadar yavaştı ki tipik bir savurma bitmeden hedefe yaklaşamıyordu:
+ * ölçüldüğünde eğim, sabit 12° tavanına rağmen hiçbir hızda 11,9°'yi
+ * geçemiyordu. Sönüm oranı bilinçli olarak korundu, yani his değişmedi —
+ * yalnızca gövde parmağa gerçekten yetişiyor.
+ */
+const DRAG_PHYSICS_SPRING = { damping: 14, mass: 0.5, stiffness: 190 };
+/**
+ * Kafa pivotunun kutu üstünden uzaklığı, karakterin baş-kuyruk ekseninin
+ * oranı olarak. Eksenin üst ~%20'si kafa bölgesidir; dönüş oraya oturunca
+ * kafa neredeyse yerinde kalır ve alt gövde sarkaç gibi savrulur.
+ */
+const HEAD_PIVOT_AXIS_FRACTION = 0.2;
+/**
+ * Hız bu eşiğin altındaysa fizik nötre çekilir: parmak sabit tutulduğunda
+ * gövde kendi kendine hareket etmez, sakinleşir.
+ */
+const DRAG_VELOCITY_DEADZONE = 40;
+/**
+ * Hareket durduğunda gövdenin parmağa **yetişmesi**: alt gövde son hareket
+ * yönüne doğru nötrü biraz aşar, sonra sakinleşir. Sabit bir döngü değildir —
+ * yalnızca ölü bölgeye GİRİŞTE bir kez oynar.
+ *
+ * Eğim ve gecikme birlikte hareket eder; ikisi aynı diziyi paylaşınca
+ * "gövde savruldu ve yerine oturdu" hissi tek bir okunur harekete dönüşür.
+ */
+const DRAG_RECOIL_TILT = 10;
+const DRAG_RECOIL_LAG_FRACTION = 5 / 88;
+const DRAG_RECOIL_IN = 130;
+const DRAG_RECOIL_OUT = 260;
+/**
+ * Bu normalize hızın altındaki hareket "duruyor" sayılır. Yalnızca bu
+ * ikili durum değiştiğinde JS'e atlanır; pan karesi başına asla.
+ */
+const DRAG_STILL_THRESHOLD = 0.22;
+
+/**
+ * Havada kafasından tutulurken **kurtulmaya çalışma**. Sürekli bir animasyon
+ * döngüsü DEĞİLDİR: parmak sabit kaldıkça planlanan, aralarında Rosea'nın
+ * sakin durduğu tek seferlik kısa dizilerdir.
+ *
+ * Hareketin tamamı kafa pivotu etrafındaki **saf dönüştür**: kafa ve dokunma
+ * noktası yerinde kalır, savrulan yalnızca alt gövde ve kuyruktur. Görsel
+ * kaynak değişmez — hızlı sprite değişiminin ürettiği biçim bozulması yok.
+ */
+const IDLE_WIGGLE_FIRST_DELAY = 1250; // ~1–1,5 sn sabit tutunca ilk deneme
+const IDLE_WIGGLE_MIN_GAP = 2000;
+const IDLE_WIGGLE_GAP_RANGE = 2000; // sonraki deneme 2–4 sn sonra
+/**
+ * Dört vuruşlu dizi (toplam 780 ms):
+ *   gövde bir yana belirgin yatar → ters yöne DAHA güçlü geçer
+ *   → küçük karşı salınım → sakince hizalanır.
+ * Asimetri bilinçli: eşit genlikli gidiş-geliş metronom gibi okunuyordu.
+ */
+const IDLE_WIGGLE_LEAN = 9;
+const IDLE_WIGGLE_SWING = 13;
+const IDLE_WIGGLE_COUNTER = 5;
+const IDLE_WIGGLE_LEAN_MS = 180;
+const IDLE_WIGGLE_SWING_MS = 240;
+const IDLE_WIGGLE_COUNTER_MS = 160;
+const IDLE_WIGGLE_SETTLE_MS = 200;
+const IDLE_WIGGLE_TOTAL =
+  IDLE_WIGGLE_LEAN_MS + IDLE_WIGGLE_SWING_MS + IDLE_WIGGLE_COUNTER_MS + IDLE_WIGGLE_SETTLE_MS;
+/** Parmak yeniden hareket ederse dizi bu kısa sürede nötre çekilir. */
+const IDLE_WIGGLE_RELEASE = 140;
+
+/**
+ * Bırakınca **dört aşamalı** kenara yerleşme.
+ *
+ * `waiting`  — bırakıldığı yerde, ön görünüşte, kıpırdamadan bekler.
+ * `turning`  — hedefe göre gövdesini döner (ara karelerle).
+ * `leaving`  — bulunduğu noktadan hedef kenarın tamamen dışına **tek
+ *              kesintisiz hareketle** ve sabit hızla yürür.
+ * `emerging` — görünmezken ön görünüşe ve doğru kenar açısına geçer, ardından
+ *              hedef kenardan yüzü ekrana dönük belirir.
+ *
+ * Dışarı gidiş bilinçli olarak **tek** `withTiming` çağrısıdır. Daha önce bu
+ * yol `travel` (kenara kadar) + `exiting` (kenardan dışarı) diye ikiye
+ * bölünmüştü; iki ayrı animasyon arasında hız zorunlu olarak sıfırlandığı için
+ * Rosea kenarın yakınında durup yeniden hızlanıyordu.
+ *
+ * Yolculuk boyunca **tek** kare kullanılır (dönüş planının son karesi); yürüme
+ * hissi kare değişimiyle değil, o tek görsel üzerinde ritmik bob + salınım
+ * transformlarıyla üretilir.
+ */
+
+/**
+ * Bırakıldıktan sonra hedefe yönelmeden önceki sakin bekleme. Bu süre boyunca
+ * konum, görsel ve ritim tamamen sabittir — Rosea bırakıldığı yerde durur.
+ */
+const SETTLE_WAIT_DURATION = 1200;
+/**
+ * Sol/sağ (yaw) dönüş karelerinin her birinin ekranda kalma süresi. Son kare de
+ * bu kadar tutulur, böylece yolculuk başlamadan önce yeni duruş okunur.
+ *
+ * Toplam dönüş = kare sayısı × bu süre → önden yana (2 kare) = 260 ms.
+ * Üst/alt (pitch) dönüş kendi sürelerini kullanır: `PITCH_FRAME_MS`.
+ */
+const TURN_FRAME_MS = 130;
+/**
+ * Yolculuk sırasında solungaç karesinin değişme aralığı. Dönüş karelerinden
+ * bilinçli olarak daha yavaş: bu bir duruş değişimi değil, sakin bir nefes
+ * ritmidir. Kareler arası geçiş `<Image>`'ın mevcut crossfade'ini kullanır.
+ */
+const GILL_FRAME_MS = 180;
+/**
+ * Üst/alt hedefte gövdenin **öne/arkaya** dönüşü (pitch).
+ *
+ * Dönüş tamamen sprite kareleriyle anlatılır: `pitch-front-mid` → `pitch-edge`
+ * → `pitch-back-mid` → `back`. Hiçbir `scaleX`/`scaleY` ezmesi uygulanmaz;
+ * Rosea'nın boyutu ve konumu dönüş boyunca değişmez.
+ *
+ * Toplam dönüş = 3 × `PITCH_FRAME_MS` + `PITCH_SETTLE_MS` = 420 ms. Son kare
+ * biraz daha uzun tutulur, böylece yolculuk başlamadan önce yeni duruş okunur.
+ */
+const PITCH_FRAME_MS = 100;
+const PITCH_SETTLE_MS = 120;
+/**
+ * Pitch kareleri arasındaki crossfade. Normal ifade geçişinden bilinçli olarak
+ * kısadır: 100 ms'lik karelerde daha uzun bir geçiş ara kareleri birbirine
+ * bulandırır ve dönüşü yine yumuşak bir morph gibi gösterirdi.
+ */
+const PITCH_CROSSFADE_MS = 60;
+
+/**
+ * Sabit yürüyüş hızı (pt/sn). Süre mesafeden türetilir — böylece yakın da olsa
+ * uzak da olsa Rosea hep aynı tempoda yürür.
+ */
+const SETTLE_TRAVEL_SPEED = 190;
+/**
+ * Süre sınırları yalnızca güvenlik içindir; belirleyici olan `mesafe / hız`
+ * hesabıdır. Alt sınır çok kısa mesafede hareketin "seğirme" gibi görünmesini,
+ * üst sınır beklenmedik biçimde büyük bir mesafede yolculuğun aşırı uzamasını
+ * engeller.
+ *
+ * Ölçüldü: en yakın kenar seçildiği ve `edgeRatio` mevcut konumdan türediği
+ * için gerçek yolculuk mesafesi dar bir aralıkta kalıyor (typ. 145–280 pt).
+ * 190 pt/sn'de bu ≈ 760–1460 ms eder; üst sınır hiç devreye girmez — yani uzun
+ * yolculuklar asla hızlandırılmaz. Alt sınır bilinçli olarak aralığın en altında tutuldu:
+ * daha yüksek bir taban, kısa yolculukları gereksizce yavaşlatıp yolculuklar
+ * arasındaki tempo farkını büyütüyordu.
+ */
+const SETTLE_TRAVEL_MIN_DURATION = 1000;
+const SETTLE_TRAVEL_MAX_DURATION = 3400;
+/** Reduce Motion: aynı tek parça hareket, belirgin biçimde kısa. */
+const SETTLE_TRAVEL_REDUCED_DURATION = 260;
+/**
+ * Yürüyüş ritmi. Bob ve salınım **tek** bir ilerleme değerinden türetilir,
+ * böylece ikisi hiçbir koşulda faz kaymaz.
+ */
+const TRAVEL_GAIT_HALF_CYCLE = 300;
+const TRAVEL_BOB = 1.6; // pt
+const TRAVEL_SWAY = 1.5; // derece
+/** Kenardan yeniden belirme. Bu aşama dışarı gidişten ayrı kalır. */
+const EMERGE_MIN_DURATION = 650;
+const EMERGE_MAX_DURATION = 900;
+const EMERGE_DURATION_PER_PT = 14;
+/**
+ * Reduce Motion: bütün aşamalar korunur (işlevsellik aynı) ama kısa ve sade
+ * olur — yürüyüş ritmi ve ara dönüş kareleri hiç oynamaz.
+ */
+const EMERGE_REDUCED_DURATION = 180;
+
+/**
+ * NOT — yolculuk açısı için kör bir kenar → derece haritası **yoktur.**
+ *
+ * Yeni yan kareler zaten baktıkları yöne dönük çizildiği için sol/sağ hedefte
+ * ek rotasyon gerekmez; arka kare kafası yukarı çizili olduğu için yalnızca alt
+ * kenarda yarım tur gerekir. Bu yüzden kaynak ve rotasyon tek noktada, birlikte
+ * çözülür: `resolveMascotTurnPlan`.
+ */
+
+/**
+ * Dışarı gidişin bitiş noktasında kutunun konteyner sınırını aşması gereken
+ * pay. Kutunun tamamı zaten dışarı çıkıyor; bu pay, yolculuk açısında dönmüş
+ * silüetin kutu dışına taşan kısmı (≈8,5 pt), henüz nötre dönmemiş olabilen
+ * sürükleme gecikmesi ve bob için ek güvenlik bırakır — Rosea hiçbir koşulda
+ * "yarı görünür" hâlde taşınmaz.
+ */
+const EXIT_CLEARANCE = 32;
+/**
+ * Aşama B'nin başlangıcı için pay. Burada sürükleme fiziği çoktan nötrdür,
+ * bu yüzden görünür kısmın üzerine küçük bir pay yeter.
+ */
+const EMERGE_CLEARANCE = 8;
+/**
+ * Bu mesafeden kısa hareketler sürükleme sayılmaz; tap olarak geçer.
+ *
+ * Kenara yerleşme artık bilinçli bir ``ekrandan çık → geri belirme`` akışı
+ * başlattığı için telefon üzerindeki doğal parmak titremesinin pan olarak
+ * kabul edilmemesi özellikle önemlidir. 8 pt iOS'ta normal bir dokunuşta bile
+ * aşılabiliyordu; 14 pt gerçek sürüklemeyi hâlâ rahat bırakırken yanlış çıkış
+ * animasyonlarını engeller.
+ */
+const DRAG_MIN_DISTANCE = 14;
+
+/**
+ * Okşama hareketi tanıma.
+ *
+ * Sevme tepkisi artık çift dokunmayla DEĞİL, Rosea'nın üzerinde parmakla
+ * ileri-geri sürtmeyle tetiklenir. Tanıma **mevcut pan gesture'ının içinde**
+ * yapılır; ayrı bir gesture eklenmez, böylece pan / tek dokunma / okşama
+ * arasında yeni bir yarış (race) oluşmaz.
+ *
+ * Tek yönlü normal bir sürükleme bu eşiklerin hiçbirini karşılamaz: gerçek bir
+ * ileri-geri hareket gerekir ve parmak başladığı noktanın yakınında kalmalıdır.
+ */
+/**
+ * Hareketin üç modu. Karar verilene kadar (`undecided`) Rosea'ya **hiç
+ * dokunulmaz**: ne konumu değişir, ne fizik başlar, ne `handleDragStart`
+ * çağrılır. Mod bir kez `petting` veya `dragging` olduktan sonra aynı hareket
+ * içinde bir daha değişmez.
+ */
+const MODE_UNDECIDED = 0;
+const MODE_PETTING = 1;
+const MODE_DRAGGING = 2;
+
+/** Aynı eksende en az bu kadar yön dönüşü. Tek bir ileri-geri yeter. */
+const PET_MIN_REVERSALS = 1;
+/** Parmağın kat ettiği toplam yol (pt). */
+const PET_MIN_PATH = 40;
+/** Tanıma anında başlangıca net uzaklık en fazla (pt). */
+const PET_MAX_NET = 28;
+/** Hareket boyunca başlangıçtan en fazla uzaklaşma (pt). */
+const PET_MAX_EXCURSION = 36;
+/** Yön sayımına katılması için bir adımın en küçük uzunluğu (pt); gürültü elenir. */
+const PET_MIN_STEP = 2;
+const PET_MIN_DURATION = 180;
+const PET_MAX_DURATION = 1800;
+/**
+ * Henüz **hiç yön dönüşü yokken** net uzaklık bunu aşarsa hareket açıkça tek
+ * yönlüdür ve sürüklemeye geçilir.
+ */
+const DRAG_COMMIT_NET = 48;
+/**
+ * En az bir anlamlı yön dönüşü başladıysa kullanıcıya okşamayı tamamlaması için
+ * alan tanınır; ancak parmak bu kadar uzağa çıkarsa niyet artık sürüklemedir.
+ */
+const DRAG_COMMIT_NET_AFTER_REVERSAL = 58;
 
 /**
  * Çift dokunma "sevme" tepkisi. Tepki ve balon aynı süreyi paylaşır, böylece
@@ -199,6 +516,17 @@ function resolveMessageGroup(pathname: string): MascotMessageGroup | undefined {
 }
 
 type Bounds = { maxX: number; maxY: number; minX: number; minY: number };
+
+/**
+ * Kenara yerleşmenin aşamaları. Tek bir değer olarak tutulur: iki aşama aynı
+ * anda etkin olamaz ve geçişler atomiktir.
+ *
+ * `leaving` bulunduğu noktadan **tamamen ekran dışına çıkana kadar** olan tek
+ * kesintisiz harekettir. Bilinçli olarak bölünmez: ayrı bir "kenara git" ve
+ * "kenardan çık" aşaması, aralarında hızın sıfırlandığı görünür bir duraklama
+ * üretiyordu.
+ */
+type SettlePhase = 'waiting' | 'turning' | 'leaving' | 'emerging';
 
 /** `auto` = kullanıcı dokunmadan gösterilen tek seferlik selamlama. */
 type BubbleVariant = 'tap' | 'celebration' | 'love' | 'auto';
@@ -294,8 +622,6 @@ export function FloatingMascot() {
   /** Açık balonun türü. Kutlama balonu normal balonu devralır. */
   const [bubbleVariant, setBubbleVariant] = useState<BubbleVariant>();
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
-  /** Ambient peek şu anda oynuyor mu? Yalnızca göz kırpmayı bekletmek için. */
-  const [isAmbientPeeking, setIsAmbientPeeking] = useState(false);
   /**
    * Oynamakta olan tek seferlik tepki. `runId` her oynatmada artar; süre
    * efekti buna bağlı olduğu için aynı tür tekrar oynatılsa bile eski
@@ -310,6 +636,47 @@ export function FloatingMascot() {
    * gelen olaylar bu senkron bayrağa göre düşürülür.
    */
   const isDraggingRef = useRef(false);
+  /**
+   * Uyanma zinciri. Ref'te tutulur: kare bazlı bir değer değildir ve React
+   * state'e yazılsaydı uyanma boyunca gereksiz render üretirdi.
+   */
+  const isWakingRef = useRef(false);
+  const wakeTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  /** Unmount sonrası state yazılmaması için. */
+  const isMountedRef = useRef(true);
+  /**
+   * Kenara yerleşme durum makinesi:
+   *   idle/dragging → 'waiting' → 'turning' → 'leaving'
+   *                 → (görünmezken taşıma) → 'emerging' → settled
+   *
+   * Tek bir **düşük frekanslı** React state'idir; aşama geçişleri dışında hiç
+   * yazılmaz. Konum ve rotasyon animasyonlarının tamamı shared value üzerinde
+   * yürür.
+   */
+  const [settlePhase, setSettlePhase] = useState<SettlePhase>();
+  /** Aynı bilginin senkron kopyası (effect/callback guard'ları için). */
+  const settlePhaseRef = useRef<SettlePhase | undefined>(undefined);
+  /**
+   * O an gösterilen dönüş/yolculuk karesi. **Düşük frekanslı** React state'idir:
+   * bir yerleşme boyunca en fazla dört kez yazılır. `undefined` ise canonical ön
+   * görünüş gösterilir.
+   */
+  const [turnFrame, setTurnFrame] = useState<MascotTurnFrame>();
+  /** Bırakma sonrası kısa beklemenin zamanlayıcısı. */
+  const settleWaitTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  /** Dönüş kare zincirinin tek zamanlayıcısı; ikinci bir zincir oluşamaz. */
+  const turnFrameTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  /** Solungaç döngüsünün tek zamanlayıcısı; ikinci bir döngü oluşamaz. */
+  const gillTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  /** Havada kurtulma dizisinin tek zamanlayıcısı (dizi + sonraki planlama). */
+  const idleWiggleTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  /** Kurtulma denemesinin yönü; kontrollü biçimde dönüşümlü değişir. */
+  const idleWiggleSideRef = useRef<1 | -1>(1);
+  /**
+   * Yerleşme geçiş kimliği: iptal edilen geçişin geç gelen callback'i ne
+   * aşama ilerletir ne de kayıt yapar.
+   */
+  const transitionIdRef = useRef(0);
   /** 0 = parçacık yok. Her kutlama yeni bir kimlik alır, böylece yeniden başlar. */
   const [particleRun, setParticleRun] = useState(0);
   const particleRunRef = useRef(0);
@@ -326,9 +693,14 @@ export function FloatingMascot() {
     isThinkingRef.current = isThinking;
   }, [isThinking]);
 
+
   useEffect(() => {
     activeReactionRef.current = activeReaction;
   }, [activeReaction]);
+
+  useEffect(() => {
+    settlePhaseRef.current = settlePhase;
+  }, [settlePhase]);
 
   const isCompact = ACTIVE_WORKOUT_PATTERN.test(pathname ?? '');
   const mascotSize = isCompact ? COMPACT_MASCOT_SIZE : MASCOT_SIZE;
@@ -399,8 +771,6 @@ export function FloatingMascot() {
    * birbirlerini ezmezler.
    */
   const edgeRotation = useSharedValue(0);
-  /** 0 = normal peek, 1 = boşta biraz daha görünür. Kalıcı konuma yazılmaz. */
-  const ambientPeekProgress = useSharedValue(0);
   // İfade katmanı (sürekli düşünme eğilimi) — temel açının üzerine eklenir.
   const thinkingProgress = useSharedValue(0);
   /**
@@ -414,6 +784,11 @@ export function FloatingMascot() {
    * `!isAsleep` koşulu sayesinde aynı anda çalışamazlar.
    */
   const awakeBreathProgress = useSharedValue(0);
+  /**
+   * Uykuya hazırlanma katmanı — 0 = nötr, 1 = esnemenin tepesi. Uyku ve uyanık
+   * nefesinin değerlerinden ayrıdır; üçü aynı anda çalışamaz.
+   */
+  const drowsyProgress = useSharedValue(0);
   // Tepki katmanı (tap/set/kutlama).
   const reactionY = useSharedValue(0);
   const reactionScale = useSharedValue(1);
@@ -428,6 +803,86 @@ export function FloatingMascot() {
    * pan hiç etkinleşmeden tap kazandığında temizlik yapmamak için gerekir.
    */
   const isPanActive = useSharedValue(false);
+
+  /**
+   * Sürükleme fiziği hedefleri. Pan worklet'inden UI thread üzerinde yazılır;
+   * hiçbir React state güncellemesi üretmez.
+   */
+  const dragTargetLagX = useSharedValue(0);
+  const dragTargetLagY = useSharedValue(0);
+  const dragTargetTilt = useSharedValue(0);
+  /** Son yatay yön işareti (UI thread kopyası); geri savrulmanın yönü budur. */
+  const dragDirectionShared = useSharedValue(0);
+  /** Hareket ediyor mu (1) yoksa duruyor mu (0)? Yalnızca değişimde JS'e atlar. */
+  const dragMovingShared = useSharedValue(0);
+  /**
+   * Okşama tanıma durumu — tamamı UI thread'de tutulur, pan karesi başına
+   * hiçbir React state güncellemesi üretmez. `petRecognized` bir kez true
+   * olduğunda tekrar değerlendirilmez: her harekette en fazla bir sevme tepkisi.
+   */
+  const petPath = useSharedValue(0);
+  const petReversals = useSharedValue(0);
+  const petAxisSign = useSharedValue(0);
+  const petLastX = useSharedValue(0);
+  const petLastY = useSharedValue(0);
+  const petMaxExcursion = useSharedValue(0);
+  const petStartedAt = useSharedValue(0);
+  /** `MODE_UNDECIDED` / `MODE_PETTING` / `MODE_DRAGGING`. */
+  const petMode = useSharedValue(MODE_UNDECIDED);
+  /**
+   * Sürüklemeye geçildiği andaki parmak ötelemesi. Sonraki hareket bu noktadan
+   * itibaren uygulanır, böylece Rosea karar anında parmağa **sıçramaz**.
+   */
+  const dragOffsetX = useSharedValue(0);
+  const dragOffsetY = useSharedValue(0);
+  /**
+   * Havada kurtulma gerilmesi (derece). Sürükleme eğiminden **ayrı** bir
+   * katmandır: ikisi aynı değeri yazmaz, eğim stilinde toplanırlar.
+   */
+  const idleWiggle = useSharedValue(0);
+  /** Dizi şu anda oynuyor mu? Parmak kımıldayınca UI thread'de anında iptal. */
+  const idleWiggleActive = useSharedValue(false);
+  /**
+   * Alçak geçiren filtreden geçmiş normalize hız. Ham `velocityX/Y` doğrudan
+   * kullanılmaz; fizik hedefleri **yalnızca** bu yumuşatılmış değerden türetilir.
+   */
+  const dragSmoothVx = useSharedValue(0);
+  const dragSmoothVy = useSharedValue(0);
+  /**
+   * `mascotSize`'a göre ölçeklenmiş fizik sınırları. Shared value olarak
+   * tutulur: pan worklet'i React değerini okuyamaz ve gesture nesnesi ekran
+   * değişiminde yeniden kurulmak zorunda kalmaz.
+   */
+  const dragLagXMax = useSharedValue(DRAG_LAG_X_FRACTION * MASCOT_SIZE);
+  const dragLagYMax = useSharedValue(DRAG_LAG_Y_FRACTION * MASCOT_SIZE);
+  const dragRecoilLag = useSharedValue(DRAG_RECOIL_LAG_FRACTION * MASCOT_SIZE);
+  /**
+   * Kenara yürüyüş katmanı. Kenar rotasyonundan (`edgeRotation`) **ayrıdır** ve
+   * yalnızca yolculuk sırasında açı alır; yolculuk bitince 0'a döner ve sahneyi
+   * kenar rotasyonuna bırakır. İkisi hiçbir koşulda aynı değeri yazmaz.
+   */
+  const travelRotation = useSharedValue(0);
+  /**
+   * Yürüyüş ritmi: 0 ↔ 1 arasında salınır. Bob ve gövde salınımı **tek** bu
+   * değerden türetilir, bu yüzden asla faz kayması olmaz.
+   */
+  const travelGait = useSharedValue(0);
+  /**
+   * `reduceMotion`'ın UI thread kopyası. Pan worklet'i React değerini
+   * okuyamaz; bu kopya sayesinde gesture nesnesi de her tercih değişiminde
+   * yeniden kurulmaz.
+   */
+  const reduceMotionShared = useSharedValue(false);
+
+  useEffect(() => {
+    reduceMotionShared.value = reduceMotion;
+  }, [reduceMotion, reduceMotionShared]);
+
+  useEffect(() => {
+    dragLagXMax.value = DRAG_LAG_X_FRACTION * mascotSize;
+    dragLagYMax.value = DRAG_LAG_Y_FRACTION * mascotSize;
+    dragRecoilLag.value = DRAG_RECOIL_LAG_FRACTION * mascotSize;
+  }, [dragLagXMax, dragLagYMax, dragRecoilLag, mascotSize]);
 
   // Kayıtlı konum ref'te tutulur: sürükleme sonrası state güncellemesi
   // yeniden yerleştirme efektini tetiklemesin, maskot zıplamasın.
@@ -447,6 +902,17 @@ export function FloatingMascot() {
     if (hasPositionedRef.current) {
       // Ekran boyutu / güvenli alan / sekme çubuğu değişti: kayıtlı oran
       // yeniden hesaplanıp yeni güvenli sınırların içine yaylanarak taşınır.
+      // Süren bir yerleşme geçişi varsa hedefleri eski ölçüye göre hesaplanmış
+      // olur; kimlik artırılarak geçersizleştirilir ve geç callback'i kayıt
+      // yapamaz. Geçiş boyunca hiçbir kayıt yapılmadığı için kayıtlı konuma
+      // dönmek tutarlıdır.
+      if (settlePhaseRef.current) {
+        transitionIdRef.current += 1;
+        settlePhaseRef.current = undefined;
+        setSettlePhase(undefined);
+        cancelAnimation(positionX);
+        cancelAnimation(positionY);
+      }
       positionX.value = withSpring(x, SPRING);
       positionY.value = withSpring(y, SPRING);
       return;
@@ -563,6 +1029,28 @@ export function FloatingMascot() {
 
   useEffect(() => clearBubbleTimer, [clearBubbleTimer]);
 
+  // Unmount: bekleyen bütün maskot zamanlayıcıları temizlenir, state yazılmaz.
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      // Geç gelen yerleşme callback'i de bu artışla geçersizleşir: unmount
+      // sonrası ne aşama ilerler ne de konum kaydedilir.
+      transitionIdRef.current += 1;
+      for (const timer of [
+        wakeTimerRef,
+        idleWiggleTimerRef,
+        settleWaitTimerRef,
+        turnFrameTimerRef,
+        gillTimerRef,
+      ]) {
+        if (!timer.current) continue;
+        clearTimeout(timer.current);
+        timer.current = undefined;
+      }
+    };
+  }, []);
+
   useEffect(() => {
     // Gizlenirken açık balon kapatılır.
     if (isHidden) showBubble(undefined);
@@ -595,20 +1083,88 @@ export function FloatingMascot() {
    * Karakterin baş-kuyruk ekseni boyunca kenarın dışına kaydırılacağı mesafe.
    * Kutunun kenarı ile konteyner sınırı arasındaki boşluk + gizlenecek uzunluk.
    */
-  const peekDistance = useMemo(() => {
+  const { emergeTravel, peekDistance } = useMemo(() => {
     const axisLength = mascotSize / MASCOT_ASPECT;
     const gapToBoundary = EDGE_MARGIN + (TOUCH_SIZE - axisLength) / 2;
     const visible = Math.max(PEEK_MIN_VISIBLE, axisLength * PEEK_VISIBLE_FRACTION);
-    return gapToBoundary + Math.max(0, axisLength - visible);
+    return {
+      peekDistance: gapToBoundary + Math.max(0, axisLength - visible),
+      /**
+       * Peek duruşundan **tamamen görünmez** olana kadar kenar normali boyunca
+       * gereken ek mesafe: ekranda kalan görünür kısım + küçük bir pay.
+       * Aşama B tam bu noktadan başlar, böylece Rosea yoktan belirmez.
+       */
+      emergeTravel: visible + EMERGE_CLEARANCE,
+    };
   }, [mascotSize]);
+
+  /**
+   * Kafa pivotunun kutu içindeki dikey konumu. Görsel `contain` ile kare kutuya
+   * genişlikten sığdığı için çizimin üst kenarı kutunun tam ortasından
+   * `axisLength / 2` yukarıdadır; kafa oradan biraz aşağıda başlar.
+   *
+   * **Dizi biçimi zorunludur, metin biçimi KULLANILMAZ.** React Native'in
+   * `processTransformOrigin` çözümleyicisi metin değerleri
+   * `/(top|bottom|left|right|center|\d+(?:%|px)|0)/gi` ile tarar; bu kalıp
+   * ondalık nokta kabul etmez. `"50% 26.8547...px"` gibi bir metin, tam kısım
+   * atlanarak **kesirli basamaklardan** eşleşir ve pivot 26,85 px yerine
+   * 854794520547948 px olur. Değer bu kadar uzaktayken katman kimlik
+   * dönüşümündeyken (ölçek/dönüş tam olarak nötrken) zararsız görünür, fakat
+   * sürükleme fiziği ilk kez sıfırdan farklı bir eğim/gecikme yazdığı anda
+   * karakter astronomik bir mesafeye taşınır ve tamamen kaybolur.
+   *
+   * Dizi biçimi çözümleyiciye hiç girmez, doğrudan doğrulamadan geçer. Değer
+   * ayrıca tam sayıya yuvarlanır: ileride yanlışlıkla metne çevrilse bile aynı
+   * çözümleme hatasına düşmez. Yuvarlama görsel olarak fark edilmez.
+   *
+   * Not: `react-native-web` bu metni doğrudan CSS'e geçirdiği için hata yalnızca
+   * gerçek cihazda (iOS/Android) görülüyordu; web'de sorun görünmüyordu.
+   */
+  const dragPivotStyle = useMemo<ViewStyle>(() => {
+    const axisLength = mascotSize / MASCOT_ASPECT;
+    const artTop = (TOUCH_SIZE - axisLength) / 2;
+    return {
+      transformOrigin: ['50%', Math.round(artTop + axisLength * HEAD_PIVOT_AXIS_FRACTION), 0],
+    };
+    // Stil nesnesi de memo'lanır: her render'da yeni nesne üretmek native
+    // tarafta gereksiz transform yeniden çözümlemesi tetikliyordu.
+  }, [mascotSize]);
+
+  /** Worklet ve geç callback'lerin güncel ölçüyü okuması için senkron kopyalar. */
+  const peekDistanceRef = useRef(peekDistance);
+  const emergeTravelRef = useRef(emergeTravel);
+  const containerRef = useRef(container);
+  const boundsRef = useRef(bounds);
+
+  useEffect(() => {
+    peekDistanceRef.current = peekDistance;
+    emergeTravelRef.current = emergeTravel;
+    containerRef.current = container;
+    boundsRef.current = bounds;
+  }, [bounds, container, emergeTravel, peekDistance]);
 
   /**
    * Sunum hedefi tek kaynaktan türetilir; peek/full için ayrı boolean state
    * tutulmaz. Tamamen görünür durumlarda maskot dik (0°) durur, çünkü zıplama
    * ve kutlama hareketleri yalnızca dik duruşta doğru okunur.
    */
+  /**
+   * Yerleşme aşamaları her şeyden baskındır ve deterministiktir:
+   *  - `waiting` / `turning` / `leaving`: Rosea tam görünür. Kenar rotasyonu ve
+   *    peek devrede DEĞİLDİR; duruşu tamamen ayrı `travelRotation` katmanı
+   *    sürer, böylece iki dönüş kaynağı birbirini ezmez.
+   *  - `emerging`: hedef kenarın duruşu **zaten** uygulanmıştır; Rosea dışarıdan
+   *    doğru açıyla belirir.
+   */
   const isFullyVisible =
-    state === 'dragging' || Boolean(activeReaction) || Boolean(bubbleVariant);
+    settlePhase === 'emerging'
+      ? false
+      : settlePhase !== undefined
+        ? true
+        : state === 'dragging' ||
+          // `loved` bilinçli olarak HARİÇ: çift dokunma yalnızca kalp üretir,
+          // maskotu kenardan içeri çekmez ve peek duruşunu değiştirmez.
+          Boolean(activeReaction && activeReaction.type !== 'loved');
 
   /**
    * Bugün süren veya duraklatılmış bir antrenman varken maskot uyumaz; uyuyorsa
@@ -634,7 +1190,35 @@ export function FloatingMascot() {
 
   // Ambient peek effect'i `isAsleep` değerini okuduğu için uyku bloğu ondan
   // önce durur.
-  const { isAppActive, isAsleep, wake } = useMascotSleep({ canSleep });
+  const { isAppActive, isAsleep, isDrowsy, isSettling, wake } = useMascotSleep({ canSleep });
+
+  /**
+   * Uykuya hazırlanma esnemesi. Tek seferliktir: yukarı doğru hafifçe uzayıp
+   * tam 1'e yerleşir, böylece `isAsleep` başladığında uyku nefesi ölçek 1'den
+   * devralır. Reduce Motion açıkken hareket hiç oynatılmaz — zamanlayıcı akışı
+   * ve `yawning` ifadesi aynen çalışmaya devam eder.
+   */
+  useEffect(() => {
+    if (!isDrowsy || reduceMotion || isHidden) {
+      cancelAnimation(drowsyProgress);
+      drowsyProgress.value = withTiming(0, {
+        duration: DROWSY_RELEASE_DURATION,
+        easing: Easing.out(Easing.quad),
+      });
+      return;
+    }
+
+    drowsyProgress.value = 0;
+    drowsyProgress.value = withSequence(
+      withTiming(1, { duration: DROWSY_STRETCH_IN, easing: Easing.inOut(Easing.sin) }),
+      withDelay(
+        DROWSY_HOLD,
+        withTiming(0, { duration: DROWSY_STRETCH_OUT, easing: Easing.inOut(Easing.sin) }),
+      ),
+    );
+
+    return () => cancelAnimation(drowsyProgress);
+  }, [drowsyProgress, isDrowsy, isHidden, reduceMotion]);
 
   /**
    * Uyku nefesi. Reduce Motion açıkken yalnızca `sleepy` görseline geçilir,
@@ -676,6 +1260,10 @@ export function FloatingMascot() {
     !isHidden &&
     isAppActive &&
     !isAsleep &&
+    // Uykuya hazırlanma başladığı anda uyanık nefesi durur; esneme onun
+    // yerini alır.
+    !isDrowsy &&
+    !isSettling &&
     !reduceMotion &&
     !activeReaction &&
     !bubbleVariant &&
@@ -706,72 +1294,18 @@ export function FloatingMascot() {
   }, [awakeBreathProgress, canBreathe]);
 
   /**
-   * Yalnızca gerçekten boşta ve kısmen gizliyken ambient peek oynar. Her yeni
-   * tur için farklı bekleme süresi seçilir; düzenli bir metronom hissi vermez.
-   *
-   * Maskot uyurken hiç çalışmaz: uyku başladığı anda `isAsleep` değişimi bu
-   * effect'i yeniden kurar, cleanup bekleyen zamanlayıcıyı ve süren animasyonu
-   * temizler, `ambientPeekProgress` sıfırlanır. Geriye yalnızca nefes kalır.
+   * Kenarda dururkenki peek mesafesi — `isFullyVisible` koşulundan bağımsızdır.
+   * Aşama B, görünmezken nihai duruşu **anında** uygulayabilmek için tam bu
+   * değeri kullanır; böylece Rosea belirirken dönmez veya kayarak yerleşmez.
    */
+  const restingPeekMagnitude = isThinking ? peekDistance * THINKING_PEEK_FACTOR : peekDistance;
+  const restingPeekRef = useRef(restingPeekMagnitude);
+
   useEffect(() => {
-    cancelAnimation(ambientPeekProgress);
-    ambientPeekProgress.value = 0;
+    restingPeekRef.current = restingPeekMagnitude;
+  }, [restingPeekMagnitude]);
 
-    const canPlay =
-      !isHidden &&
-      !isFullyVisible &&
-      !isThinking &&
-      !reduceMotion &&
-      !isAsleep &&
-      state === 'idle';
-
-    if (!canPlay) {
-      setIsAmbientPeeking(false);
-      return;
-    }
-
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let activeTimer: ReturnType<typeof setTimeout> | undefined;
-
-    const scheduleNextPeek = () => {
-      const delay = AMBIENT_PEEK_MIN_DELAY + Math.random() * AMBIENT_PEEK_DELAY_RANGE;
-      timer = setTimeout(() => {
-        // Yalnızca "şu anda peek oynuyor" bilgisi işaretlenir; animasyonun
-        // kendisi ve süreleri değişmez. Göz kırpma bu sırada devreye girmez.
-        setIsAmbientPeeking(true);
-        activeTimer = setTimeout(() => setIsAmbientPeeking(false), AMBIENT_PEEK_TOTAL_DURATION);
-        ambientPeekProgress.value = withSequence(
-          withTiming(1, {
-            duration: AMBIENT_PEEK_IN_DURATION,
-            easing: Easing.out(Easing.quad),
-          }),
-          withDelay(
-            AMBIENT_PEEK_HOLD_DURATION,
-            withTiming(0, {
-              duration: AMBIENT_PEEK_OUT_DURATION,
-              easing: Easing.inOut(Easing.quad),
-            }),
-          ),
-        );
-        scheduleNextPeek();
-      }, delay);
-    };
-
-    scheduleNextPeek();
-
-    return () => {
-      if (timer) clearTimeout(timer);
-      if (activeTimer) clearTimeout(activeTimer);
-      setIsAmbientPeeking(false);
-      cancelAnimation(ambientPeekProgress);
-      ambientPeekProgress.value = 0;
-    };
-  }, [ambientPeekProgress, isAsleep, isFullyVisible, isHidden, isThinking, reduceMotion, state]);
-
-  const peekMagnitude = useMemo(() => {
-    if (isFullyVisible) return 0;
-    return isThinking ? peekDistance * THINKING_PEEK_FACTOR : peekDistance;
-  }, [isFullyVisible, isThinking, peekDistance]);
+  const peekMagnitude = isFullyVisible ? 0 : restingPeekMagnitude;
 
   /**
    * Peek yönü. Sürükleme boyunca sabit kalır; yalnızca iki güvenli noktada
@@ -845,9 +1379,15 @@ export function FloatingMascot() {
       cancelAnimation(peekOffsetX);
       cancelAnimation(peekOffsetY);
       cancelAnimation(edgeRotation);
-      cancelAnimation(ambientPeekProgress);
       cancelAnimation(sleepScale);
       cancelAnimation(awakeBreathProgress);
+      cancelAnimation(dragTargetLagX);
+      cancelAnimation(dragTargetLagY);
+      cancelAnimation(dragTargetTilt);
+      cancelAnimation(idleWiggle);
+      cancelAnimation(travelRotation);
+      cancelAnimation(travelGait);
+      cancelAnimation(drowsyProgress);
       cancelAnimation(thinkingProgress);
       cancelAnimation(reactionY);
       cancelAnimation(reactionScale);
@@ -855,9 +1395,15 @@ export function FloatingMascot() {
       cancelAnimation(reactionOpacity);
     },
     [
-      ambientPeekProgress,
       awakeBreathProgress,
+      dragTargetLagX,
+      dragTargetLagY,
+      dragTargetTilt,
+      drowsyProgress,
       edgeRotation,
+      idleWiggle,
+      travelGait,
+      travelRotation,
       peekOffsetX,
       peekOffsetY,
       positionX,
@@ -900,15 +1446,257 @@ export function FloatingMascot() {
     [reactionOpacity, reactionRotation, reactionScale, reactionY],
   );
 
+  /** Havada kurtulma dizisinin bekleyen zamanlayıcısını temizler. */
+  const clearIdleWiggleTimer = useCallback(() => {
+    if (!idleWiggleTimerRef.current) return;
+    clearTimeout(idleWiggleTimerRef.current);
+    idleWiggleTimerRef.current = undefined;
+  }, []);
+
+  /** Diziyi hem zamanlayıcı hem animasyon tarafında kesin olarak durdurur. */
+  const stopIdleWiggle = useCallback(() => {
+    clearIdleWiggleTimer();
+    idleWiggleActive.value = false;
+    cancelAnimation(idleWiggle);
+    idleWiggle.value = 0;
+  }, [clearIdleWiggleTimer, idleWiggle, idleWiggleActive]);
+
+  /**
+   * Havada kafasından tutulurken tek seferlik **kurtulma denemesi**:
+   *
+   *   gövde bir yana belirgin yatar (9°)
+   *   → ters yöne daha güçlü geçer (13°)
+   *   → küçük bir karşı salınım yapar (5°)
+   *   → sakince hizalanır (0°)                            toplam 780 ms
+   *
+   * Sürekli bir döngü DEĞİLDİR; her oynatma bittikten sonra sıradaki deneme
+   * 2–4 sn'lik düzensiz bir aralıkla planlanır ve arada Rosea sakin durur.
+   * Görsel kaynak değişmez; dizi kafa pivotu etrafında saf dönüş olduğu için
+   * dokunma noktası yerinde kalır, savrulan yalnızca alt gövdedir.
+   *
+   * Yön dönüşümlüdür: art arda gelen denemeler aynı tarafa yatmaz.
+   */
+  const playIdleWiggle = useCallback(() => {
+    if (!isMountedRef.current || !isDraggingRef.current) return;
+
+    // Rastgelelik render'da değil, yalnızca planlama anında.
+    idleWiggleSideRef.current = idleWiggleSideRef.current === 1 ? -1 : 1;
+    const side = idleWiggleSideRef.current;
+
+    idleWiggleActive.value = true;
+    idleWiggle.value = withSequence(
+      withTiming(side * IDLE_WIGGLE_LEAN, {
+        duration: IDLE_WIGGLE_LEAN_MS,
+        easing: Easing.out(Easing.quad),
+      }),
+      withTiming(-side * IDLE_WIGGLE_SWING, {
+        duration: IDLE_WIGGLE_SWING_MS,
+        easing: Easing.inOut(Easing.quad),
+      }),
+      withTiming(side * IDLE_WIGGLE_COUNTER, {
+        duration: IDLE_WIGGLE_COUNTER_MS,
+        easing: Easing.inOut(Easing.sin),
+      }),
+      withTiming(0, { duration: IDLE_WIGGLE_SETTLE_MS, easing: Easing.out(Easing.quad) }),
+    );
+
+    // Tek zamanlayıcı zinciri: aynı anda ikinci bir dizi oluşamaz.
+    idleWiggleTimerRef.current = setTimeout(() => {
+      idleWiggleTimerRef.current = undefined;
+      idleWiggleActive.value = false;
+      if (!isMountedRef.current || !isDraggingRef.current) return;
+      idleWiggleTimerRef.current = setTimeout(
+        playIdleWiggle,
+        IDLE_WIGGLE_MIN_GAP + Math.random() * IDLE_WIGGLE_GAP_RANGE,
+      );
+    }, IDLE_WIGGLE_TOTAL);
+  }, [idleWiggle, idleWiggleActive]);
+
+  /**
+   * Pan worklet'i yalnızca **hareket ediyor / duruyor** ikili durumu gerçekten
+   * değiştiğinde buraya atlar; pan karesi başına asla. Tek işi kurtulma
+   * denemesinin planını yönetmektir — hiçbir görsel kare değiştirmez.
+   */
+  const handleDragMotionChange = useCallback(
+    (isMoving: boolean) => {
+      if (!isMountedRef.current || !isDraggingRef.current) return;
+
+      clearIdleWiggleTimer();
+      if (isMoving || reduceMotion) return;
+
+      // Parmak sabitlendi: kurtulma denemesi planlanabilir.
+      idleWiggleTimerRef.current = setTimeout(playIdleWiggle, IDLE_WIGGLE_FIRST_DELAY);
+    },
+    [clearIdleWiggleTimer, playIdleWiggle, reduceMotion],
+  );
+
+  /**
+   * Yolculuk ritmini başlatır: tek bir ilerleme değeri 0 ↔ 1 arasında salınır,
+   * bob ve gövde salınımı bundan türetilir. Reduce Motion'da hiç çağrılmaz.
+   */
+  const startTravelGait = useCallback(() => {
+    cancelAnimation(travelGait);
+    travelGait.value = 0;
+    travelGait.value = withRepeat(
+      withTiming(1, { duration: TRAVEL_GAIT_HALF_CYCLE, easing: Easing.inOut(Easing.sin) }),
+      -1,
+      true,
+    );
+  }, [travelGait]);
+
+  /** Ritmi durdurur ve tam nötre alır; yolculuk bitince/iptalde çağrılır. */
+  const stopTravelGait = useCallback(() => {
+    cancelAnimation(travelGait);
+    travelGait.value = 0;
+  }, [travelGait]);
+
+  /**
+   * Yolculuk sırasında solungaç döngüsünü oynatır.
+   *
+   * Ayrı bir animasyon sistemi DEĞİLDİR: mevcut `turnFrame` state'ini ve
+   * `<Image>`'ın mevcut crossfade'ini kullanır, yani kaynak çözümü tek noktada
+   * kalır. Yalnızca `leaving` aşamasında çağrılır; Reduce Motion'da hiç
+   * çağrılmaz ve tek zamanlayıcı zinciri olduğu için ikinci bir döngü oluşamaz.
+   */
+  const startGillCycle = useCallback((transitionId: number, travelFrame: MascotTurnFrame) => {
+    const cycle = resolveMascotGillCycle(travelFrame);
+    if (!cycle) return;
+
+    const step = (index: number) => {
+      // Geçiş iptal edildiyse (yeniden tutma, gizlenme, unmount) hiçbir kare
+      // yazılmaz; aşama `leaving` değilse de döngü kendiliğinden durur.
+      if (
+        !isMountedRef.current ||
+        transitionId !== transitionIdRef.current ||
+        settlePhaseRef.current !== 'leaving'
+      ) {
+        return;
+      }
+
+      setTurnFrame(cycle[index % cycle.length]);
+      gillTimerRef.current = setTimeout(() => {
+        gillTimerRef.current = undefined;
+        step(index + 1);
+      }, GILL_FRAME_MS);
+    };
+
+    // Döngünün ilk karesi zaten ekrandaki yolculuk karesidir; ikinciden başla.
+    step(1);
+  }, []);
+
+  /**
+   * Yerleşmeye ait bekleme ve dönüş zamanlayıcılarını temizler. Her ikisi de
+   * tek ref üzerinden yürür, bu yüzden aynı anda iki bekleme veya iki dönüş
+   * zinciri oluşamaz.
+   */
+  const clearSettleTimers = useCallback(() => {
+    if (settleWaitTimerRef.current) {
+      clearTimeout(settleWaitTimerRef.current);
+      settleWaitTimerRef.current = undefined;
+    }
+    if (turnFrameTimerRef.current) {
+      clearTimeout(turnFrameTimerRef.current);
+      turnFrameTimerRef.current = undefined;
+    }
+    if (gillTimerRef.current) {
+      clearTimeout(gillTimerRef.current);
+      gillTimerRef.current = undefined;
+    }
+  }, []);
+
+  /**
+   * Süren kenara yerleşmeyi iptal eder.
+   *
+   * Kimlik artırıldığı için hem aşama ilerletme hem kayıt yapan geç callback'ler
+   * guard'a takılır ve **hiçbir şey yapmaz**.
+   *
+   * `restore` yalnızca kullanıcı maskotu yeniden tutmadığında (gizlenme, klavye,
+   * arka plan, ekran ölçüsü değişimi) `true` gelir: geçiş ekran dışındayken
+   * kesilmiş olabileceği için konum son kaydedilmiş geçerli duruşa geri alınır.
+   * Yeniden tutmada `false` gelir; orada pan konumu zaten devralır.
+   */
+  const cancelSettleToEdge = useCallback(
+    ({ restore }: { restore: boolean }) => {
+      // Normal bir dokunma/sürükleme başlangıcında aktif yerleşme yoksa konum
+      // animasyonlarına dokunma. Özellikle ilk layout yayı veya peek geçişini
+      // gereksiz yere kesmek Rosea'yı ara bir konumda bırakabiliyordu.
+      if (!settlePhaseRef.current) return;
+
+      transitionIdRef.current += 1;
+      cancelAnimation(positionX);
+      cancelAnimation(positionY);
+      // Bekleme ve dönüş zamanlayıcıları kesin olarak durur: iptal edilmiş bir
+      // yerleşmenin geç kalan karesi yeni duruma sızamaz.
+      clearSettleTimers();
+      // Yürüyüş katmanı da kesin olarak durur. Kare ve aşama bayrağı aynı anda
+      // temizlendiği için görsel de ön görünüşe döner; hepsi anlık yapılır ki
+      // arada "ön görsel yolculuk açısında duruyor" karesi oluşmasın.
+      stopTravelGait();
+      cancelAnimation(travelRotation);
+      travelRotation.value = 0;
+      settlePhaseRef.current = undefined;
+      setSettlePhase(undefined);
+      setTurnFrame(undefined);
+
+      if (!restore) return;
+
+      // Kayıtlı konum tek geçerli gerçektir: geçiş sırasında hiçbir şey
+      // kaydedilmediği için buraya dönmek her zaman güvenlidir.
+      const saved = positionRef.current;
+      const { x, y } = resolveEdgePosition(saved.edge, saved.edgeRatio, boundsRef.current);
+      positionX.value = x;
+      positionY.value = y;
+      peekEdgeRef.current = saved.edge;
+      peekEdgeShared.value = saved.edge;
+    },
+    [
+      clearSettleTimers,
+      peekEdgeShared,
+      positionX,
+      positionY,
+      stopTravelGait,
+      travelRotation,
+    ],
+  );
+
+  /** Bekleyen uyanma zincirini iptal eder (sürükleme, tepki, unmount). */
+  const cancelWakeSequence = useCallback(() => {
+    if (wakeTimerRef.current) {
+      clearTimeout(wakeTimerRef.current);
+      wakeTimerRef.current = undefined;
+    }
+    isWakingRef.current = false;
+  }, []);
+
   const handleDragStart = useCallback(() => {
     // Sürükleme en yüksek önceliktir: süren kutlama/tepki tamamen sonlandırılır.
     isDraggingRef.current = true;
+    // Uyanma sürüyorsa güvenle iptal edilir; bekleyen tap sunumu açılmaz.
+    cancelWakeSequence();
+    // Yerleşme sürüyorsa (exit veya emerge) anında iptal: konum animasyonu
+    // durur ve eski geçişin geç callback'i ne aşama ilerletir ne kayıt yapar.
+    // `restore: false` — konumu pan zaten devralıyor.
+    cancelSettleToEdge({ restore: false });
+    stopIdleWiggle();
+    // Kullanıcı tutup hiç hareket ettirmese bile (hareket durumu değişimi
+    // olmaz) kurtulma denemesi planlanır.
+    if (!reduceMotion) {
+      idleWiggleTimerRef.current = setTimeout(playIdleWiggle, IDLE_WIGGLE_FIRST_DELAY);
+    }
     setState('dragging');
     // Kutlama balonu dahil açık balon kapanır.
     showBubble(undefined);
     // reactionScale sürükleme ölçeğine ait olduğu için burada sıfırlanmaz.
     cancelActiveReaction({ resetScale: false });
-  }, [cancelActiveReaction, showBubble]);
+  }, [
+    cancelActiveReaction,
+    cancelSettleToEdge,
+    cancelWakeSequence,
+    playIdleWiggle,
+    reduceMotion,
+    showBubble,
+    stopIdleWiggle,
+  ]);
 
   /** AsyncStorage'a yalnızca sürükleme bittiğinde yazılır, her frame'de değil. */
   const handleDragEnd = useCallback(
@@ -927,6 +1715,369 @@ export function FloatingMascot() {
       void savePosition({ edge, edgeRatio });
     },
     [peekEdgeShared, savePosition],
+  );
+
+  /**
+   * Yerleşmenin **tek otoriter tamamlanma noktası**: konum yalnızca burada,
+   * yalnızca bir kez ve yalnızca Aşama B gerçekten bittiğinde kaydedilir.
+   *
+   * `transitionId` iptal edilen bir geçişin geç gelen callback'ini eler;
+   * yeniden tutma, gizlenme veya unmount sonrası kayıt oluşmaz.
+   */
+  const finishSettleToEdge = useCallback(
+    (transitionId: number, edge: MascotEdge, edgeRatio: number) => {
+      if (!isMountedRef.current || transitionId !== transitionIdRef.current) return;
+      // Kimlik hemen tüketilir: aynı geçişin callback'i ikinci kez gelse bile
+      // (çift completion, tekrar tetiklenen animasyon) ikinci kayıt oluşmaz.
+      transitionIdRef.current += 1;
+
+      settlePhaseRef.current = undefined;
+      setSettlePhase(undefined);
+      // Kayıt yalnızca emergence animasyonu gerçekten tamamlandığında.
+      handleDragEnd(edge, edgeRatio);
+    },
+    [handleDragEnd],
+  );
+
+  /**
+   * Aşama C — Rosea **tamamen görünmezken** çalışır.
+   *
+   * Sırasıyla: yürüyüş katmanı (sırt açısı + ritim) kapatılır, hedef kenarın
+   * nihai duruşu (rotasyon + peek) animasyonsuz uygulanır, konum hedef kenarın
+   * hemen dışındaki belirme noktasına ışınlanır, ardından yalnızca konum normal
+   * peek noktasına doğru animasyonla çıkar.
+   *
+   * Sırt görselinden ön görsele geçiş de tam burada, görünmezken olur. Duruş
+   * baştan doğru olduğu için Rosea görünür hâle geldiği ilk karede zaten yüzü
+   * ekranın içine dönüktür: hiçbir kenarda sırt görünüşü ya da görünürken
+   * dönme oluşmaz.
+   */
+  const startEmergePhase = useCallback(
+    (transitionId: number, edge: MascotEdge, edgeRatio: number, targetX: number, targetY: number) => {
+      if (!isMountedRef.current || transitionId !== transitionIdRef.current) return;
+
+      const vector = edgeVector(edge);
+      const magnitude = restingPeekRef.current;
+
+      // Yürüyüş katmanı ve solungaç döngüsü görünmezken kapanır, dönüş karesi
+      // bırakılır: ön görsele dönüş kullanıcıya hiç yakalanmaz. Zamanlayıcı
+      // açıkça temizlenir; bekleyen bir solungaç adımı ön görselin üzerine
+      // yazamaz.
+      clearSettleTimers();
+      stopTravelGait();
+      cancelAnimation(travelRotation);
+      travelRotation.value = 0;
+      setTurnFrame(undefined);
+
+      // Nihai duruş görünmezken, animasyonsuz uygulanır.
+      peekEdgeRef.current = edge;
+      peekEdgeShared.value = edge;
+      cancelAnimation(edgeRotation);
+      cancelAnimation(peekOffsetX);
+      cancelAnimation(peekOffsetY);
+      edgeRotation.value = MASCOT_EDGE_ROTATION[edge];
+      peekOffsetX.value = vector.x * magnitude;
+      peekOffsetY.value = vector.y * magnitude;
+
+      // Belirme başlangıcı: peek noktasının kenar normali boyunca tamamen
+      // dışarısı. Işınlama da görünmezken yapılır.
+      const travel = emergeTravelRef.current;
+      positionX.value = targetX + vector.x * travel;
+      positionY.value = targetY + vector.y * travel;
+
+      settlePhaseRef.current = 'emerging';
+      setSettlePhase('emerging');
+
+      const duration = reduceMotion
+        ? EMERGE_REDUCED_DURATION
+        : Math.min(
+            EMERGE_MAX_DURATION,
+            Math.max(EMERGE_MIN_DURATION, travel * EMERGE_DURATION_PER_PT),
+          );
+
+      const onDone = (finished?: boolean) => {
+        'worklet';
+        // Animasyon iptal edildiyse (yeniden tutma) kayıt yapılmaz.
+        if (!finished) return;
+        runOnJS(finishSettleToEdge)(transitionId, edge, edgeRatio);
+      };
+
+      // Yalnızca kenar normali ekseni hareket eder; diğer eksen zaten hedefte.
+      // Tamamlanma callback'i tek eksende olduğu için çift kayıt imkânsızdır.
+      if (isVerticalEdge(edge)) {
+        positionX.value = withTiming(
+          targetX,
+          { duration, easing: Easing.out(Easing.cubic) },
+          onDone,
+        );
+      } else {
+        positionY.value = withTiming(
+          targetY,
+          { duration, easing: Easing.out(Easing.cubic) },
+          onDone,
+        );
+      }
+    },
+    [
+      clearSettleTimers,
+      edgeRotation,
+      finishSettleToEdge,
+      peekEdgeShared,
+      peekOffsetX,
+      peekOffsetY,
+      positionX,
+      positionY,
+      reduceMotion,
+      stopTravelGait,
+      travelRotation,
+    ],
+  );
+
+  /**
+   * Aşama C — bulunduğu noktadan **doğrudan hedef kenarın tamamen dışına**
+   * yürüyüş.
+   *
+   * Bu, hareketin başından görünmez olana kadar **tek** `withTiming` çağrısıdır
+   * ve `Easing.linear` kullanır; ne arada duraklama, ne yeniden hızlanma, ne de
+   * hedef yakınında yavaşlama olur.
+   *
+   * Daha önce bu yol `travel` (kenara kadar) + `exiting` (kenardan dışarı) diye
+   * ikiye bölünmüştü: ilk animasyon kenardaki peek noktasında `Easing.inOut` ile
+   * hızı sıfıra indiriyor, ikincisi `Easing.in` ile sıfırdan yeniden hızlanıyordu
+   * — cihazda "git, dur, tekrar git" olarak görülen davranışın nedeni buydu.
+   *
+   * Görsel kare bu aşamada **hiç değişmez**: dönüş planının son karesi neyse
+   * yolculuk boyunca o kalır. Yürüme hissi yalnızca ritmik bob + gövde
+   * salınımından gelir. Bu aşamada hiçbir kayıt yapılmaz.
+   */
+  const startLeavingPhase = useCallback(
+    (
+      transitionId: number,
+      edge: MascotEdge,
+      edgeRatio: number,
+      targetX: number,
+      targetY: number,
+      travelFrame: MascotTurnFrame,
+    ) => {
+      if (!isMountedRef.current || transitionId !== transitionIdRef.current) return;
+
+      settlePhaseRef.current = 'leaving';
+      setSettlePhase('leaving');
+
+      // Yürüyüş ritmi ve solungaç döngüsü yalnızca burada başlar: bekleme ve
+      // dönüş boyunca Rosea yerinde ve sakin durur. Reduce Motion'da ikisi de
+      // hiç oynamaz; yolculuk karesi tek ve sabit kalır.
+      if (!reduceMotion) {
+        startTravelGait();
+        startGillCycle(transitionId, travelFrame);
+      }
+
+      /**
+       * Bitiş noktası doğrudan **ekranın tamamen dışıdır** — kenardaki peek
+       * noktası bir ara durak DEĞİLDİR. Kenar ekseninde hedef orana hizalanır,
+       * kenar normalinde ise sınırın ötesine geçilir; ikisi tek doğru üzerinde
+       * birleşir.
+       */
+      const { innerHeight, innerWidth } = containerRef.current;
+      const vertical = isVerticalEdge(edge);
+      const outX = vertical
+        ? edge === 'left'
+          ? -(TOUCH_SIZE + EXIT_CLEARANCE)
+          : innerWidth + EXIT_CLEARANCE
+        : targetX;
+      const outY = vertical
+        ? targetY
+        : edge === 'top'
+          ? -(TOUCH_SIZE + EXIT_CLEARANCE)
+          : innerHeight + EXIT_CLEARANCE;
+
+      const dx = outX - positionX.value;
+      const dy = outY - positionY.value;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      // Süre mesafeden türer: tempo her mesafede aynı kalır. Sınırlar yalnızca
+      // güvenlik içindir, normal mesafelerde devreye girmezler.
+      const duration = reduceMotion
+        ? SETTLE_TRAVEL_REDUCED_DURATION
+        : Math.min(
+            SETTLE_TRAVEL_MAX_DURATION,
+            Math.max(SETTLE_TRAVEL_MIN_DURATION, (distance / SETTLE_TRAVEL_SPEED) * 1000),
+          );
+
+      const onDone = (finished?: boolean) => {
+        'worklet';
+        if (!finished) return;
+        runOnJS(startEmergePhase)(transitionId, edge, edgeRatio, targetX, targetY);
+      };
+
+      /**
+       * İki eksen de **aynı süreyi ve aynı doğrusal easing'i** paylaşır, bu
+       * yüzden hareket düz bir çizgi üzerinde sabit hızlıdır.
+       *
+       * Pratikte hareket zaten tek eksenlidir: `settleToEdge` kenar oranını
+       * mevcut konumdan türettiği için dikey kenarlarda `targetY === positionY`,
+       * yatay kenarlarda `targetX === positionX` olur ve diğer eksenin farkı
+       * tam sıfırdır. Yine de iki eksen birlikte animasyonlanır — böylece bu
+       * değişmez ileride bozulsa bile hareket doğru kalır.
+       *
+       * Tamamlanma callback'i **yalnızca daha uzun yol alan eksene** bağlanır:
+       * iki eksen birlikte bittiği için aşama tek bir kez ilerler — çift
+       * callback imkânsızdır.
+       */
+      const timing = { duration, easing: Easing.linear } as const;
+      const useX = Math.abs(dx) >= Math.abs(dy);
+      positionX.value = useX ? withTiming(outX, timing, onDone) : withTiming(outX, timing);
+      positionY.value = useX ? withTiming(outY, timing) : withTiming(outY, timing, onDone);
+    },
+    [positionX, positionY, reduceMotion, startEmergePhase, startGillCycle, startTravelGait],
+  );
+
+  /**
+   * Aşama B — gövdeyi hedefe göre döndürme.
+   *
+   * Kaynak ve rotasyon **birlikte** çözülür (`resolveMascotTurnPlan`): yeni yan
+   * kareler zaten baktıkları yöne dönük çizildiği için sol/sağ hedefte ek açı
+   * gerekmez; arka kare kafası yukarı çizili olduğu için yalnızca alt kenarda
+   * yarım tur gerekir.
+   *
+   * Sol/sağ hedefte rotasyon ara karelerle birlikte yumuşakça ilerler ve tam
+   * olarak son kare göründüğünde tamamlanır. Üst/alt (pitch) hedefte ise
+   * rotasyon hiç animasyonlanmaz: yön, gövde `pitch-edge` karesinde yatay bir
+   * silüetken **atomik** değişir — ekranda görünür bir takla oluşmaz. Kareler
+   * arası geçiş her iki yolda da `<Image>`'ın kendi crossfade'ini kullanır;
+   * paralel bir geçiş sistemi kurulmaz.
+   *
+   * Bu aşamada konum hiç değişmez ve yürüyüş ritmi başlamaz.
+   */
+  const startTurningPhase = useCallback(
+    (transitionId: number, edge: MascotEdge, edgeRatio: number, targetX: number, targetY: number) => {
+      if (!isMountedRef.current || transitionId !== transitionIdRef.current) return;
+
+      settlePhaseRef.current = 'turning';
+      setSettlePhase('turning');
+
+      const plan = resolveMascotTurnPlan(edge);
+      const travelFrame = plan.frames[plan.frames.length - 1];
+
+      // Reduce Motion: bütün ara kare dizisi atlanır, doğrudan doğru yolculuk
+      // karesi (`back`) ve açısı (üst 0°, alt 180°) uygulanır. Leaving davranışı
+      // normal yolundan devam eder.
+      if (reduceMotion) {
+        cancelAnimation(travelRotation);
+        travelRotation.value = plan.rotation;
+        setTurnFrame(travelFrame);
+        startLeavingPhase(transitionId, edge, edgeRatio, targetX, targetY, travelFrame);
+        return;
+      }
+
+      /**
+       * Üst/alt hedef — öne/arkaya (pitch) dönüş.
+       *
+       *   ön görünüş → `pitch-front-mid` → `pitch-edge` → `pitch-back-mid`
+       *   → `back`
+       *
+       * Dönüşü yalnızca sprite kareleri anlatır: ölçek, konum ve boyut hiç
+       * değişmez, yan profil hiçbir anda gösterilmez. Alt hedefin 180°'lik
+       * yönü **yalnızca** `pitch-edge` karesinde, gövde yatay bir silüetken
+       * atomik olarak uygulanır; kullanıcı ne ön ne de arka tam gövdeyi
+       * dönerken görür. Üst hedefte `plan.rotation` zaten 0'dır ve aynı yazma
+       * etkisizdir.
+       *
+       * Yolculuk (ve solungaç döngüsü) son kare okunmadan başlamaz.
+       */
+      if (plan.pitch) {
+        // Tek zamanlayıcı zinciri: aynı anda ikinci bir dönüş dizisi oluşamaz.
+        const pitchStep = (index: number) => {
+          if (!isMountedRef.current || transitionId !== transitionIdRef.current) return;
+
+          const frame = plan.frames[index];
+          if (frame === 'pitch-edge') {
+            cancelAnimation(travelRotation);
+            travelRotation.value = plan.rotation;
+          }
+          setTurnFrame(frame);
+
+          const isLast = index === plan.frames.length - 1;
+          turnFrameTimerRef.current = setTimeout(
+            () => {
+              turnFrameTimerRef.current = undefined;
+              if (isLast) {
+                startLeavingPhase(transitionId, edge, edgeRatio, targetX, targetY, travelFrame);
+                return;
+              }
+              pitchStep(index + 1);
+            },
+            isLast ? PITCH_SETTLE_MS : PITCH_FRAME_MS,
+          );
+        };
+
+        pitchStep(0);
+        return;
+      }
+
+      /**
+       * Rotasyon ara karelerle birlikte yumuşakça ilerler; hedef açı yolculuk
+       * başlamadan **önce** tamamlanır, hiçbir noktada ani sıçrama olmaz.
+       *
+       * Buraya yalnızca sol/sağ hedef gelir (iki kare): eğim, `side-*` karesi
+       * ekrandayken gözle takip edilebilir biçimde oturur ve tam yolculuk
+       * anında tamamlanır.
+       */
+      const rotationDuration = Math.max(2, plan.frames.length - 1) * TURN_FRAME_MS;
+      travelRotation.value = withTiming(nearestAngle(travelRotation.value, plan.rotation), {
+        duration: rotationDuration,
+        easing: Easing.inOut(Easing.quad),
+      });
+
+      // Tek zamanlayıcı zinciri: aynı anda ikinci bir dönüş dizisi oluşamaz.
+      const step = (index: number) => {
+        if (!isMountedRef.current || transitionId !== transitionIdRef.current) return;
+        setTurnFrame(plan.frames[index]);
+
+        turnFrameTimerRef.current = setTimeout(() => {
+          turnFrameTimerRef.current = undefined;
+          if (index === plan.frames.length - 1) {
+            startLeavingPhase(transitionId, edge, edgeRatio, targetX, targetY, travelFrame);
+            return;
+          }
+          step(index + 1);
+        }, TURN_FRAME_MS);
+      };
+
+      step(0);
+    },
+    [reduceMotion, startLeavingPhase, travelRotation],
+  );
+
+  /**
+   * Aşama A — pan bırakıldığında çağrılır (worklet'ten `runOnJS`).
+   *
+   * Rosea hemen yola koyulmaz: bırakıldığı yerde kısa süre sakin bekler. Bu
+   * süre boyunca konum, canonical ön görünüş ve nötr duruş korunur; yürüyüş
+   * ritmi başlamaz ve hiçbir yan/arka kareye geçilmez.
+   *
+   * Geçiş kimliği **burada** alınır, böylece beklemenin herhangi bir anında
+   * yeniden tutulursa bütün zincir (bekleme → dönüş → yolculuk) geçersizleşir.
+   */
+  const startSettleToEdge = useCallback(
+    (edge: MascotEdge, edgeRatio: number, targetX: number, targetY: number) => {
+      if (!isMountedRef.current) return;
+
+      stopIdleWiggle();
+      clearSettleTimers();
+
+      transitionIdRef.current += 1;
+      const transitionId = transitionIdRef.current;
+      settlePhaseRef.current = 'waiting';
+      setSettlePhase('waiting');
+      // Bekleme canonical ön görünüşte geçer.
+      setTurnFrame(undefined);
+
+      settleWaitTimerRef.current = setTimeout(() => {
+        settleWaitTimerRef.current = undefined;
+        startTurningPhase(transitionId, edge, edgeRatio, targetX, targetY);
+      }, SETTLE_WAIT_DURATION);
+    },
+    [clearSettleTimers, startTurningPhase, stopIdleWiggle],
   );
 
   /**
@@ -1010,17 +2161,15 @@ export function FloatingMascot() {
   useMascotAutoGreeting({ canGreet: canAutoGreet, onGreet: handleAutoGreeting });
 
 
-  const handleTap = useCallback(() => {
-    // Aktif bir set/kutlama tepkisi varken dokunma tamamen yok sayılır:
-    // haptic üretmez, balonu değiştirmez, tepki shared value'larına dokunmaz.
-    if (activeReactionRef.current) return;
-
-    // Önce anında uyanır; aşağıdaki mevcut zıplama uyanma hareketi olarak
-    // çalışır, ardından normal tap balonu açılır.
-    wake();
-
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
-
+  /**
+   * Normal tek dokunma sunumu: kısa zıplama + mesaj balonu.
+   *
+   * Uykudan gelen dokunuşta bu **hemen** çalışmaz; önce uyanma hareketi biter.
+   * Normal balon Rosea'nın peek mesafesini veya kenar rotasyonunu değiştirmez.
+   * Böylece basit bir dokunma yalnızca sunumu açar; karakter aynı anda kırpma
+   * sınırına doğru ikinci bir konum/dönüş animasyonu başlatmaz.
+   */
+  const playTapPresentation = useCallback(() => {
     if (!reduceMotion) {
       reactionScale.value = withSequence(
         withTiming(1.08, { duration: 110, easing: Easing.out(Easing.quad) }),
@@ -1045,7 +2194,79 @@ export function FloatingMascot() {
     // tutulduğu için balon kapanana kadar değişmez.
     if (nextVariant === 'tap') setTapPresentation(pickTapPresentation());
     showBubble(nextVariant);
-  }, [pickTapPresentation, reactionScale, reactionY, reduceMotion, showBubble, wake]);
+  }, [pickTapPresentation, reactionScale, reactionY, reduceMotion, showBubble]);
+
+  /**
+   * Tek dokunma. Uykudan gelen dokunuş **sıralı** bir yaşam döngüsüdür:
+   *
+   *   dokunma → uyku nefesi durur → gözler açılır + kısa toparlanma
+   *   → uyanma biter → normal tap zıplaması → mesaj balonu
+   *
+   * Uyanma ile normal tap aynı karede başlamaz; balon da ancak uyanma
+   * tamamlandıktan sonra açılır.
+   */
+  const handleTap = useCallback(() => {
+    // Aktif bir set/kutlama tepkisi varken dokunma tamamen yok sayılır:
+    // haptic üretmez, balonu değiştirmez, tepki shared value'larına dokunmaz.
+    if (activeReactionRef.current) return;
+    // Uyanma sürerken gelen ikinci dokunma tamamen yok sayılır: ikinci
+    // animasyon, ikinci balon veya ikinci zamanlayıcı oluşmaz.
+    if (isWakingRef.current) return;
+
+    // Uykudan/esnemeden/sakinleşmeden gelen dokunma normal dokunmadan ayrılır.
+    // Faz bilgisi `wake()` çağrısından ÖNCE okunmalıdır.
+    const isWakingUp = isAsleep || isDrowsy || isSettling;
+    // Uyku nefesi, esneme ve sakinleşme burada durur.
+    wake();
+
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+
+    if (!isWakingUp) {
+      playTapPresentation();
+      return;
+    }
+
+    // --- Uyanma aşaması: yalnızca toparlanma. Balon ve normal zıplama YOK ---
+    isWakingRef.current = true;
+
+    if (!reduceMotion) {
+      // Hafifçe çöker, sonra doğrulup yerine oturur.
+      reactionScale.value = withSequence(
+        withTiming(0.965, { duration: 170, easing: Easing.inOut(Easing.quad) }),
+        withTiming(1.045, { duration: 260, easing: Easing.out(Easing.quad) }),
+        withSpring(1, SPRING),
+      );
+      reactionY.value = withSequence(
+        withTiming(4, { duration: 170, easing: Easing.inOut(Easing.quad) }),
+        withTiming(-6, { duration: 260, easing: Easing.out(Easing.quad) }),
+        withSpring(0, SPRING),
+      );
+    }
+
+    // Reduce Motion: aşamalı yoğun hareket yerine yalnızca kısa bir ifade
+    // geçişi süresi beklenir.
+    const duration = reduceMotion ? WAKE_REDUCED_DURATION : WAKE_DURATION;
+
+    wakeTimerRef.current = setTimeout(() => {
+      wakeTimerRef.current = undefined;
+      isWakingRef.current = false;
+
+      // Uyanma sırasında sürükleme başladıysa veya bir tepki devraldıysa
+      // normal dokunma sunumu hiç açılmaz.
+      if (!isMountedRef.current || isDraggingRef.current || activeReactionRef.current) return;
+
+      playTapPresentation();
+    }, duration);
+  }, [
+    isAsleep,
+    isDrowsy,
+    isSettling,
+    playTapPresentation,
+    reactionScale,
+    reactionY,
+    reduceMotion,
+    wake,
+  ]);
 
   /**
    * Tek seferlik tepkiyi oynatır. Tepki katmanı `translateY`, `scale` ve
@@ -1054,6 +2275,8 @@ export function FloatingMascot() {
    */
   const playReaction = useCallback(
     (type: MascotReactionType) => {
+      // Tepki devraldığında bekleyen uyanma sunumu açılmaz.
+      cancelWakeSequence();
       cancelAnimation(reactionY);
       cancelAnimation(reactionScale);
       cancelAnimation(reactionRotation);
@@ -1071,23 +2294,17 @@ export function FloatingMascot() {
       const previous = activeReactionRef.current;
       if (previous?.type === 'loved' && type !== 'loved') {
         setLoveRun(0);
-        // `workout-complete` aşağıda kendi balonunu açıp devraldığı için
-        // burada ayrıca kapatılmasına gerek yok; `set-complete` ise hiç balon
-        // açmadığından sevme balonu burada kapatılmalı.
-        if (type !== 'workout-complete' && bubbleVariantRef.current === 'love') {
-          showBubble(undefined);
-        }
       }
 
       /**
        * Ekrana bağlı balonlar (`tap` ve otomatik selamlama `auto`) yeni bir
        * tepki başlarken kapatılır; aksi hâlde animasyonun üzerinde asılı kalır.
        *
-       * `loved` ve `workout-complete` aşağıda kendi balonlarını açıyor ve
-       * `showBubble` zaten eski balonu tek işlemde devraldığı için onlarda
-       * ayrıca kapatma yapılmaz — aynı balon iki kez kapatılmaz.
+       * `workout-complete` aşağıda kendi balonunu açıyor ve `showBubble` zaten
+       * eski balonu tek işlemde devraldığı için onda ayrıca kapatma yapılmaz.
+       * `loved` ise hiç balon açmaz; açık ekran balonu kapatılır.
        */
-      const opensOwnBubble = type === 'loved' || type === 'workout-complete';
+      const opensOwnBubble = type === 'workout-complete';
       const currentBubble = bubbleVariantRef.current;
       if (!opensOwnBubble && (currentBubble === 'tap' || currentBubble === 'auto')) {
         showBubble(undefined);
@@ -1107,10 +2324,11 @@ export function FloatingMascot() {
         particleRunRef.current += 1;
         setParticleRun(particleRunRef.current);
       } else if (type === 'loved') {
-        // Kısa, CTA'sız sevme balonu + kalpler.
-        showBubble('love');
+        // Yalnızca kalpler. Balon açılmaz, mesaj seçilmez, CTA gösterilmez.
         loveRunRef.current += 1;
         setLoveRun(loveRunRef.current);
+        // Hiçbir hareket oynatılmaz: zıplama, ölçek ve dönüş dallarına girilmez.
+        return;
       }
 
       if (reduceMotion) {
@@ -1123,29 +2341,6 @@ export function FloatingMascot() {
         reactionOpacity.value = withSequence(
           withTiming(0.72, { duration: REDUCED_REACTION_DURATION / 2 }),
           withTiming(1, { duration: REDUCED_REACTION_DURATION / 2 }),
-        );
-        return;
-      }
-
-      if (type === 'loved') {
-        // Küçük, doğal bir sevinme: iki yumuşak zıplama ve çok hafif eğilme.
-        reactionY.value = withSequence(
-          withTiming(-8, { duration: 150, easing: Easing.out(Easing.quad) }),
-          withTiming(0, { duration: 160, easing: Easing.in(Easing.quad) }),
-          withTiming(-5, { duration: 140, easing: Easing.out(Easing.quad) }),
-          withTiming(0, { duration: 160, easing: Easing.in(Easing.quad) }),
-        );
-        reactionScale.value = withSequence(
-          withTiming(1.08, { duration: 150 }),
-          withTiming(1, { duration: 160 }),
-          withTiming(1.04, { duration: 140 }),
-          withTiming(1, { duration: 160 }),
-        );
-        reactionRotation.value = withSequence(
-          withTiming(-3, { duration: 150 }),
-          withTiming(3, { duration: 160 }),
-          withTiming(-2, { duration: 140 }),
-          withTiming(0, { duration: 160 }),
         );
         return;
       }
@@ -1199,7 +2394,15 @@ export function FloatingMascot() {
         withTiming(0, { duration: 210 }),
       );
     },
-    [reactionOpacity, reactionRotation, reactionScale, reactionY, reduceMotion, showBubble],
+    [
+      cancelWakeSequence,
+      reactionOpacity,
+      reactionRotation,
+      reactionScale,
+      reactionY,
+      reduceMotion,
+      showBubble,
+    ],
   );
 
   /**
@@ -1213,10 +2416,25 @@ export function FloatingMascot() {
    *  3. Cooldown: ard arda çok hızlı çift dokunmalar üst üste animasyon,
    *     zamanlayıcı veya partikül üretmez.
    */
-  const handleDoubleTap = useCallback(() => {
-    if (isDraggingRef.current) return;
+  /**
+   * Okşama tanındığı anda çalışır — parmak **hâlâ ekranda**.
+   *
+   * Kalpler ve mutlu ifade burada başlar; parmağın kalkması beklenmez. Bırakma
+   * anında hiçbir şey tetiklenmediği için ikinci bir tepki de oluşmaz.
+   *
+   * `playReaction('loved')` bilinçli olarak yeniden kullanılır: `loved` dalı
+   * zaten hiçbir zıplama/ölçek animasyonu oynatmaz, yalnızca kalp partikülünü
+   * ve mutlu ifadeyi açar, balon açmaz. Rosea `isFullyVisible` hesabında
+   * `loved` hariç tutulduğu için kenardaki duruşundan da çıkmaz.
+   */
+  const handlePetStart = useCallback(() => {
+    if (!isMountedRef.current) return;
+    // Süren bir tepki varsa bölünmez.
     if (activeReactionRef.current) return;
 
+    // Mevcut sevme bekleme süresi aynen korunur. Bekleme içindeysek yalnızca
+    // yeni kalp üretilmez; mod zaten `petting` olduğu için Rosea yine
+    // yerinden oynamaz.
     const now = Date.now();
     if (now - loveCooldownRef.current < LOVE_COOLDOWN) return;
     loveCooldownRef.current = now;
@@ -1297,11 +2515,22 @@ export function FloatingMascot() {
     return () => clearTimeout(timer);
   }, [loveRun]);
 
-  // Maskot gizlenirse/kapatılırsa süren kutlama da temizlenir.
+  /**
+   * Maskot gizlenirse (klavye, ayarlardan kapatma) veya uygulama arka plana
+   * alınırsa süren kutlama, kurtulma dizisi ve kenara yerleşme geçişi kesin
+   * olarak temizlenir.
+   *
+   * Yerleşme `restore: true` ile iptal edilir: geçiş Rosea ekran dışındayken
+   * kesilmiş olabilir ve konum ekran dışında donup kalmamalıdır. Hiçbir aşamada
+   * kayıt yapılmadığı için kayıtlı konuma dönmek her zaman tutarlıdır.
+   */
   useEffect(() => {
-    if (!isHidden) return;
+    if (!isHidden && isAppActive) return;
     cancelActiveReaction({ resetScale: true });
-  }, [cancelActiveReaction, isHidden]);
+    stopIdleWiggle();
+    // Konuma yalnızca gerçekten süren bir geçiş varken dokunulur.
+    if (settlePhaseRef.current) cancelSettleToEdge({ restore: true });
+  }, [cancelActiveReaction, cancelSettleToEdge, isAppActive, isHidden, stopIdleWiggle]);
 
   // Görsel durum: sürükleme ve tek seferlik tepkiler daha yüksek öncelikli
   // olduğu için onların durumu ezilmez.
@@ -1396,10 +2625,22 @@ export function FloatingMascot() {
           ? bounds.minY
           : bounds.maxY;
 
-      positionX.value = withSpring(targetX, SPRING);
-      positionY.value = withSpring(targetY, SPRING);
       reactionScale.value = withSpring(1, SPRING);
-      runOnJS(handleDragEnd)(bestEdge, edgeRatio);
+      // Bütün geçici fizik değerleri deterministik olarak nötre döner.
+      dragTargetLagX.value = 0;
+      dragTargetLagY.value = 0;
+      dragTargetTilt.value = 0;
+
+      // Kurtulma gerilmesi de nötre çekilir.
+      idleWiggleActive.value = false;
+      cancelAnimation(idleWiggle);
+      idleWiggle.value = withTiming(0, { duration: IDLE_WIGGLE_RELEASE });
+
+      // Konum burada yaylanmaz ve kayıt burada YAPILMAZ: dört aşamalı
+      // (bekleme → dönüş → ekran dışına yürüyüş → görünmezken taşınıp kenardan
+      // belirme) geçiş JS tarafında başlar ve kayıt yalnızca son aşama
+      // tamamlanınca tek noktadan yapılır.
+      runOnJS(startSettleToEdge)(bestEdge, edgeRatio, targetX, targetY);
     };
 
     const pan = Gesture.Pan()
@@ -1409,21 +2650,186 @@ export function FloatingMascot() {
         isPanActive.value = true;
         gestureStartX.value = positionX.value;
         gestureStartY.value = positionY.value;
-        reactionScale.value = withSpring(DRAG_SCALE, SPRING);
-        runOnJS(handleDragStart)();
+        // Mod kararı verilene kadar Rosea'ya HİÇ dokunulmaz: ne ölçek, ne
+        // fizik, ne `handleDragStart`. Bu yüzden okşama onu yerinden oynatmaz.
+        petMode.value = MODE_UNDECIDED;
+        dragOffsetX.value = 0;
+        dragOffsetY.value = 0;
+        dragDirectionShared.value = 0;
+        dragMovingShared.value = 0;
+        // Filtre her yeni harekette temiz başlar; önceki sürüklemenin son hızı
+        // yeni tutuşa sızmaz.
+        dragSmoothVx.value = 0;
+        dragSmoothVy.value = 0;
+        // Okşama tanıma durumu her yeni harekette tamamen sıfırlanır.
+        petPath.value = 0;
+        petReversals.value = 0;
+        petAxisSign.value = 0;
+        petLastX.value = 0;
+        petLastY.value = 0;
+        petMaxExcursion.value = 0;
+        petStartedAt.value = Date.now();
       })
       .onUpdate((event) => {
-        // Sürükleme UI thread üzerinde; güvenli sınırların dışına çıkamaz.
-        const nextX = gestureStartX.value + event.translationX;
-        const nextY = gestureStartY.value + event.translationY;
+        // Okşama modunda Rosea tamamen sabittir: konum yazılmaz, fizik
+        // çalışmaz. Parmak üzerinde gezinmeye devam edebilir.
+        if (petMode.value === MODE_PETTING) return;
+
+        /**
+         * Karar aşaması. Yalnızca shared value okur/yazar; JS'e ancak mod
+         * kesinleştiğinde **bir kez** atlar. Bu blok boyunca Rosea kıpırdamaz.
+         */
+        if (petMode.value === MODE_UNDECIDED) {
+          const tx = event.translationX;
+          const ty = event.translationY;
+          const stepX = tx - petLastX.value;
+          const stepY = ty - petLastY.value;
+          petLastX.value = tx;
+          petLastY.value = ty;
+
+          const stepLength = Math.sqrt(stepX * stepX + stepY * stepY);
+          petPath.value += stepLength;
+
+          const net = Math.sqrt(tx * tx + ty * ty);
+          if (net > petMaxExcursion.value) petMaxExcursion.value = net;
+
+          // Yön yalnızca anlamlı büyüklükteki adımlarda güncellenir; küçük
+          // parmak titremesi sahte dönüş üretmez. Yatay ±1, dikey ±2 olarak
+          // kodlanır, böylece dönüş yalnızca AYNI eksende sayılır.
+          if (stepLength >= PET_MIN_STEP) {
+            const sign =
+              Math.abs(stepX) >= Math.abs(stepY) ? (stepX > 0 ? 1 : -1) : stepY > 0 ? 2 : -2;
+            if (petAxisSign.value !== 0 && petAxisSign.value === -sign) {
+              petReversals.value += 1;
+            }
+            petAxisSign.value = sign;
+          }
+
+          const elapsed = Date.now() - petStartedAt.value;
+          if (
+            petReversals.value >= PET_MIN_REVERSALS &&
+            petPath.value >= PET_MIN_PATH &&
+            net <= PET_MAX_NET &&
+            petMaxExcursion.value <= PET_MAX_EXCURSION &&
+            elapsed >= PET_MIN_DURATION &&
+            elapsed <= PET_MAX_DURATION
+          ) {
+            // Okşama: kalpler parmak HÂLÂ ekrandayken başlar.
+            petMode.value = MODE_PETTING;
+            runOnJS(handlePetStart)();
+            return;
+          }
+
+          /**
+           * Sürüklemeye geçiş eşiği yön dönüşüne göre değişir:
+           *  - Henüz dönüş yoksa hareket zaten tek yönlü → erken eşik.
+           *  - Bir dönüş başladıysa kullanıcı okşuyor olabilir → daha geniş
+           *    eşik, yani okşamayı tamamlaması için alan tanınır.
+           */
+          const commitNet =
+            petReversals.value > 0 ? DRAG_COMMIT_NET_AFTER_REVERSAL : DRAG_COMMIT_NET;
+          if (net <= commitNet) return; // karar yok → Rosea kıpırdamaz
+
+          /**
+           * Hareket açıkça tek yönlü: sürüklemeye geçilir. Karar anındaki
+           * öteleme saklanır, böylece Rosea parmağa sıçramaz — hareketine
+           * bulunduğu yerden devam eder.
+           */
+          petMode.value = MODE_DRAGGING;
+          dragOffsetX.value = tx;
+          dragOffsetY.value = ty;
+          reactionScale.value = withSpring(DRAG_SCALE, SPRING);
+          runOnJS(handleDragStart)();
+        }
+
+        // --- Buradan sonrası yalnızca sürükleme modunda çalışır ---
+        const nextX = gestureStartX.value + (event.translationX - dragOffsetX.value);
+        const nextY = gestureStartY.value + (event.translationY - dragOffsetY.value);
         positionX.value = Math.min(bounds.maxX, Math.max(bounds.minX, nextX));
         positionY.value = Math.min(bounds.maxY, Math.max(bounds.minY, nextY));
+
+        if (reduceMotionShared.value) return;
+
+        // Hız normalize edilip clamp'lenir: ani yön değişiminde bile sınır aşılmaz.
+        // Ölü bölge altındaki hızlar sıfır sayılır: parmak yavaşlayıp durunca
+        // gövde nötre döner, sabit bir animasyon döngüsü yoktur.
+        const rawX = Math.abs(event.velocityX) < DRAG_VELOCITY_DEADZONE ? 0 : event.velocityX;
+        const rawY = Math.abs(event.velocityY) < DRAG_VELOCITY_DEADZONE ? 0 : event.velocityY;
+        const clampedX = Math.min(1, Math.max(-1, rawX / DRAG_VELOCITY_REFERENCE));
+        const clampedY = Math.min(1, Math.max(-1, rawY / DRAG_VELOCITY_REFERENCE));
+        // Ham hız DOĞRUDAN kullanılmaz: normalize edilip clamp'lendikten sonra
+        // alçak geçiren filtreden geçer. Ani yön değişiminde sert sıçrama
+        // olmamasının ve gövdenin titrememesinin nedeni budur.
+        dragSmoothVx.value += (clampedX - dragSmoothVx.value) * DRAG_VELOCITY_SMOOTHING;
+        dragSmoothVy.value += (clampedY - dragSmoothVy.value) * DRAG_VELOCITY_SMOOTHING;
+        const vx = dragSmoothVx.value;
+        const vy = dragSmoothVy.value;
+        // Gövde hareketin TERSİNE geride kalır. Dönüş merkezi kafa bölgesinde
+        // olduğu için asıl sarkaç etkisini eğim üretir; gecikme ona ağırlık
+        // katar ve dikeyde bilinçli olarak daha küçüktür. Sınırlar `mascotSize`
+        // ile ölçeklendiği için kompakt modda da aynı oranda okunur.
+        dragTargetLagX.value = -vx * dragLagXMax.value;
+        dragTargetLagY.value = -vy * dragLagYMax.value;
+        /**
+         * Sağa sürüklerken gövdenin altı sola kalır (saat yönü pozitif).
+         *
+         * Eğim, gecikmeden **ayrı** bir duyarlılık eğrisi kullanır: hafif
+         * sıkıştırma orta hızlardaki açıyı görünür kılarken tepeyi korur.
+         * Gecikme, yön ve duruş tespiti doğrusal `vx`'i kullanmaya devam eder.
+         */
+        const tiltInput =
+          vx < 0 ? -Math.pow(-vx, DRAG_TILT_CURVE) : Math.pow(vx, DRAG_TILT_CURVE);
+        dragTargetTilt.value = tiltInput * DRAG_TILT_MAX;
+
+        // Parmak yeniden hareket ettiyse kurtulma gerilmesi anında iptal olur.
+        if (idleWiggleActive.value) {
+          idleWiggleActive.value = false;
+          cancelAnimation(idleWiggle);
+          idleWiggle.value = withTiming(0, { duration: IDLE_WIGGLE_RELEASE });
+        }
+
+        // Hareket ediyor/duruyor: yalnızca bu ikili durum gerçekten
+        // DEĞİŞTİĞİNDE JS'e atlanır, her karede değil. Böylece pan boyunca
+        // React state fırtınası olmaz.
+        const nextDirection = vx > DRAG_STILL_THRESHOLD ? 1 : vx < -DRAG_STILL_THRESHOLD ? -1 : 0;
+        if (nextDirection !== dragDirectionShared.value) {
+          const previous = dragDirectionShared.value;
+          dragDirectionShared.value = nextDirection;
+          if (nextDirection === 0 && previous !== 0) {
+            // Hareket durdu: gövde parmağa YETİŞİR — nötrü son hareket yönünde
+            // biraz aşar, sonra sakinleşir. Eğim ve gecikme aynı diziyi
+            // paylaşır, böylece tek ve okunur bir savrulma olur. Bu bir döngü
+            // değildir; yalnızca duruşa geçişte bir kez oynar.
+            dragTargetTilt.value = withSequence(
+              withTiming(-previous * DRAG_RECOIL_TILT, { duration: DRAG_RECOIL_IN }),
+              withTiming(0, { duration: DRAG_RECOIL_OUT }),
+            );
+            dragTargetLagX.value = withSequence(
+              withTiming(previous * dragRecoilLag.value, { duration: DRAG_RECOIL_IN }),
+              withTiming(0, { duration: DRAG_RECOIL_OUT }),
+            );
+            // Filtre de sıfırlanır: aksi hâlde bir sonraki karede eski hız
+            // savrulmanın üzerine yazardı.
+            dragSmoothVx.value = 0;
+            dragSmoothVy.value = 0;
+          }
+        }
+
+        const nextMoving =
+          Math.abs(vx) > DRAG_STILL_THRESHOLD || Math.abs(vy) > DRAG_STILL_THRESHOLD ? 1 : 0;
+        if (nextMoving !== dragMovingShared.value) {
+          dragMovingShared.value = nextMoving;
+          runOnJS(handleDragMotionChange)(nextMoving === 1);
+        }
       })
       .onEnd(() => {
         // Bayrak önce düşürülür: `.onFinalize` bunu görüp ikinci kez
         // temizlik yapmaz, `handleDragEnd` yalnızca bir kez çalışır.
         isPanActive.value = false;
-        settleToEdge();
+        // Kenara yerleşme YALNIZCA gerçek sürüklemede olur. Okşamada ve karar
+        // verilmemiş harekette Rosea hiç kıpırdamadığı için yerleştirilecek
+        // bir şey yoktur; bırakma da hiçbir tepki üretmez.
+        if (petMode.value === MODE_DRAGGING) settleToEdge();
       })
       .onFinalize(() => {
         // Buraya iki şekilde gelinir:
@@ -1435,16 +2841,25 @@ export function FloatingMascot() {
         if (!isPanActive.value) return;
 
         isPanActive.value = false;
-        settleToEdge();
+        if (petMode.value === MODE_DRAGGING) settleToEdge();
       });
 
+    /**
+     * Çift dokunma artık **hiçbir tepki üretmez.** Sevme tepkisi okşama
+     * hareketine taşındı.
+     *
+     * Buna rağmen tanıyıcı kaldırılmadı, çünkü tek işlevi kalmaya devam ediyor:
+     * çift dokunmayı **tüketmek**. Kaldırılsaydı iki hızlı dokunuş tek dokunma
+     * olarak iki kez çalışır ve arka arkaya iki mesaj balonu açardı. Şimdi çift
+     * dokunma ne kalp, ne balon, ne sıçrama üretir — sessizce yutulur.
+     */
     const doubleTap = Gesture.Tap()
       .numberOfTaps(2)
       .maxDuration(400)
       // İki dokunuş arasındaki en uzun bekleme; bundan uzunsa tek dokunma sayılır.
       .maxDelay(260)
-      .onEnd((_event, success) => {
-        if (success) runOnJS(handleDoubleTap)();
+      .onEnd(() => {
+        // Bilinçli olarak boş.
       });
 
     const tap = Gesture.Tap()
@@ -1466,17 +2881,41 @@ export function FloatingMascot() {
     return Gesture.Exclusive(pan, doubleTap, tap);
   }, [
     bounds,
+    dragDirectionShared,
+    dragLagXMax,
+    dragLagYMax,
+    dragMovingShared,
+    dragRecoilLag,
+    dragSmoothVx,
+    dragSmoothVy,
+    dragTargetLagX,
+    dragTargetLagY,
+    dragTargetTilt,
     gestureStartX,
     gestureStartY,
-    handleDragEnd,
-    handleDoubleTap,
+    handleDragMotionChange,
+    idleWiggle,
+    idleWiggleActive,
+    reduceMotionShared,
     handleDragStart,
     handleTap,
     isPanActive,
     peekEdgeShared,
+    dragOffsetX,
+    dragOffsetY,
+    handlePetStart,
+    petAxisSign,
+    petLastX,
+    petLastY,
+    petMaxExcursion,
+    petMode,
+    petPath,
+    petReversals,
+    petStartedAt,
     positionX,
     positionY,
     reactionScale,
+    startSettleToEdge,
   ]);
 
   const positionStyle = useAnimatedStyle(() => ({
@@ -1488,19 +2927,56 @@ export function FloatingMascot() {
    * hiçbir yön hesabı yapılmaz — orta çizgi veya köşe geçilse bile sıçrama
    * oluşamaz.
    */
-  const peekStyle = useAnimatedStyle(() => ({
+  /**
+   * Hedef değerler yaya bağlanır: hareket dururken gövde son yöne doğru küçük
+   * bir atalet yapıp merkeze döner. Tamamı UI thread'de çalışır.
+   */
+  const dragLagX = useDerivedValue(() => withSpring(dragTargetLagX.value, DRAG_PHYSICS_SPRING));
+  const dragLagY = useDerivedValue(() => withSpring(dragTargetLagY.value, DRAG_PHYSICS_SPRING));
+  const dragTilt = useDerivedValue(() => withSpring(dragTargetTilt.value, DRAG_PHYSICS_SPRING));
+
+  /**
+   * Sürükleme fiziği katmanı: görsel gecikme + eğim + havada kıpırdanma.
+   * Kenar rotasyonunun DIŞINDADIR, bu yüzden değerler ekran uzayındadır
+   * (sürükleme sırasında maskot zaten dik durur). Konum ve peek katmanlarına
+   * hiç yazmaz.
+   */
+  const dragPhysicsStyle = useAnimatedStyle(() => ({
     transform: [
-      {
-        translateX:
-          peekOffsetX.value *
-          (1 - AMBIENT_PEEK_REVEAL_FRACTION * ambientPeekProgress.value),
-      },
-      {
-        translateY:
-          peekOffsetY.value *
-          (1 - AMBIENT_PEEK_REVEAL_FRACTION * ambientPeekProgress.value),
-      },
+      { translateX: dragLagX.value },
+      { translateY: dragLagY.value },
+      // Sürükleme eğimi ve havada kurtulma gerilmesi **ayrı** shared value'lar
+      // olduğu için birbirlerini ezmezler; yalnızca burada toplanırlar.
+      { rotate: `${dragTilt.value + idleWiggle.value}deg` },
     ],
+  }));
+
+  /**
+   * Kenara yürüyüş katmanı. Kenar rotasyonunun DIŞINDA durur; yolculuk sırasında
+   * `edgeRotation` zaten 0'dır (tam görünürlük), yolculuk bitince bu katman 0'a
+   * dönüp sahneyi kenar rotasyonuna bırakır. İkisi asla aynı değeri yazmaz.
+   *
+   * Dönüş ÖNCE yazılır, bu yüzden `translateY` karakterin kendi ekseninde
+   * uygulanır: bob, hangi kenara gidiyor olursa olsun gövdenin baş-kuyruk
+   * yönünde bir adım salınımı gibi okunur. Bob ve salınım tek `travelGait`
+   * değerinden türediği için faz kayması imkânsızdır.
+   */
+  const travelStyle = useAnimatedStyle(() => {
+    const gait = travelGait.value;
+    return {
+      transform: [
+        {
+          rotate: `${
+            travelRotation.value + interpolate(gait, [0, 1], [-TRAVEL_SWAY, TRAVEL_SWAY])
+          }deg`,
+        },
+        { translateY: interpolate(gait, [0, 1], [TRAVEL_BOB, -TRAVEL_BOB]) },
+      ],
+    };
+  });
+
+  const peekStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: peekOffsetX.value }, { translateY: peekOffsetY.value }],
   }));
 
   /** Kenar yönü katmanı: yalnızca peek duruşunun temel açısı. */
@@ -1544,6 +3020,18 @@ export function FloatingMascot() {
     ],
   }));
 
+  /**
+   * Uykuya hazırlanma katmanı: yalnızca `scaleX`/`scaleY`. Uyanık ve uyku
+   * nefeslerinin değerlerine dokunmaz; ölçek merkezi aynı biçimde gizli kuyruk
+   * ucundadır, bu yüzden esneme gövdeyi ekranın içine doğru uzatır.
+   */
+  const drowsyStyle = useAnimatedStyle(() => ({
+    transform: [
+      { scaleX: interpolate(drowsyProgress.value, [0, 1], [1, DROWSY_SCALE_X]) },
+      { scaleY: interpolate(drowsyProgress.value, [0, 1], [1, DROWSY_SCALE_Y]) },
+    ],
+  }));
+
   const reactionStyle = useAnimatedStyle(() => ({
     opacity: reactionOpacity.value,
     transform: [
@@ -1584,6 +3072,8 @@ export function FloatingMascot() {
     activeReactionType: activeReaction?.type,
     bubbleExpression: resolveBubbleExpression(bubbleVariant, tapPresentation),
     isAsleep,
+    isDrowsy,
+    isSettling,
     isDragging: isDraggingRef.current,
     isThinking,
     state,
@@ -1603,13 +3093,27 @@ export function FloatingMascot() {
     !isHidden &&
     !reduceMotion &&
     !isAsleep &&
+    // Uykuya hazırlanırken göz kırpma durur; ifade zaten `sleepy` olduğu için
+    // `expression === 'happy'` koşulu da bunu ayrıca kapatır.
+    !isDrowsy &&
+    !isSettling &&
     !isThinking &&
     !activeReaction &&
-    !isAmbientPeeking &&
     state === 'idle' &&
     expression === 'happy';
 
   const { frame: blinkFrame, isInstant: isBlinkInstant } = useMascotBlink({ canBlink });
+
+  /**
+   * Pitch dizisi ekrandayken kısa crossfade kullanılır. Dizi `pitch-*` ara
+   * kareleriyle başlar ve **dönüş aşaması sürerken** `back` karesiyle biter;
+   * yolculuk (`leaving`) başladıktan sonra `back` artık solungaç döngüsüne
+   * aittir ve normal ifade geçişini kullanmaya devam eder. Sol/sağ dönüş
+   * hiçbir zaman `back` karesine uğramadığı için bu koşuldan etkilenmez.
+   */
+  const isPitchTurnFrame =
+    turnFrame !== undefined &&
+    (isMascotPitchFrame(turnFrame) || (settlePhase === 'turning' && turnFrame === 'back'));
 
   if (isHidden) return null;
 
@@ -1660,8 +3164,9 @@ export function FloatingMascot() {
         )}
 
         {/* Katmanlar:
-            Kalıcı konum → Kenardan bakma → Kenar yönü → Düşünme → Uyku nefesi
-            → Uyanık nefesi → Tepki → Görsel.
+            Kalıcı konum → Kenardan bakma → Sürükleme fiziği (kafa pivotu)
+            → Kenara yürüyüş → Kenar yönü → Düşünme → Uyku nefesi
+            → Uykuya hazırlanma → Uyanık nefesi → Tepki → Görsel.
             Her katman yalnızca kendi transform'unu sürer, hiçbiri diğerini ezmez.
             Balon ve partiküller dönüş katmanlarının dışındadır: hiç dönmezler.
             Dokunma hedefi peek katmanının içindedir, yani karakterle birlikte
@@ -1675,24 +3180,56 @@ export function FloatingMascot() {
               accessibilityRole="button"
               onAccessibilityTap={handleTap}
               style={styles.touchTarget}>
-              <Animated.View style={edgeRotationStyle}>
-                <Animated.View style={thinkingStyle}>
-                  <Animated.View style={sleepStyle}>
-                    <Animated.View style={[styles.breathOrigin, awakeBreathStyle]}>
-                      <Animated.View style={reactionStyle}>
-                        <Image
-                          accessibilityElementsHidden
-                          contentFit="contain"
-                          importantForAccessibility="no"
-                          source={resolveMascotImageSource(expression, blinkFrame)}
-                          style={{ height: mascotSize, width: mascotSize }}
-                          // Reduce Motion açıkken geçiş yok; kapalıyken yalnızca
-                          // çok kısa bir crossfade. Ölçek/konum animasyonu eklenmez.
-                          // Göz kırpma kareleri 65–90 ms sürdüğü için 100 ms'lik
-                          // crossfade onları yutardı: blink boyunca geçiş anlıktır,
-                          // normal ifade değişimleri eski davranışı korur.
-                          transition={reduceMotion || isBlinkInstant ? 0 : EXPRESSION_CROSSFADE_MS}
-                        />
+              {/* Sürükleme fiziği kenar rotasyonunun dışındadır: değerler
+                  ekran uzayındadır ve dokunma hedefini etkilemez. Dönüş
+                  merkezi karakterin kafa bölgesindedir. */}
+              <Animated.View style={[dragPivotStyle, dragPhysicsStyle]}>
+                {/* Kenara yürüyüş katmanı: yalnızca yolculuk sırasında açı ve
+                    ritim alır, diğer zamanlarda tam nötrdür. */}
+                <Animated.View style={travelStyle}>
+                  <Animated.View style={edgeRotationStyle}>
+                    <Animated.View style={thinkingStyle}>
+                      <Animated.View style={sleepStyle}>
+                        <Animated.View style={[styles.breathOrigin, drowsyStyle]}>
+                          <Animated.View style={[styles.breathOrigin, awakeBreathStyle]}>
+                            <Animated.View style={reactionStyle}>
+                              <Image
+                                accessibilityElementsHidden
+                                contentFit="contain"
+                                importantForAccessibility="no"
+                                // Kaynak yalnızca İKİ yoldan birine düşer: aktif
+                                // dönüş/yolculuk karesi veya canonical ön görünüş
+                                // (ifade + blink). Yolculuk boyunca kare sabit
+                                // kalır — frame cycling yoktur.
+                                // Sürükleme sırasında `resolveMascotExpression`
+                                // zaten `idle` döndürür: yarı kısık gözlü, kapalı
+                                // ağızlı, gülümsemeyen kare. Zorlama yapılmaz.
+                                source={
+                                  turnFrame
+                                    ? MASCOT_TURN_SOURCES[turnFrame]
+                                    : resolveMascotImageSource(expression, blinkFrame)
+                                }
+                                // Dönüş kareleri canonical ile aynı tuvale, aynı
+                                // üst hizasına ve aynı görünür yüksekliğe
+                                // yerleştirildiği (ölçüldü) için hiçbir ölçek
+                                // veya offset telafisi uygulanmaz.
+                                style={{ height: mascotSize, width: mascotSize }}
+                                // Reduce Motion açıkken geçiş yok; kapalıyken yalnızca
+                                // çok kısa bir crossfade. Ölçek/konum animasyonu
+                                // eklenmez. Blink kareleri anlık geçer; normal ifade
+                                // değişimleri ve dönüş kareleri aynı crossfade'i
+                                // paylaşır — ikinci bir geçiş sistemi kurulmaz.
+                                transition={
+                                  reduceMotion || isBlinkInstant
+                                    ? 0
+                                    : isPitchTurnFrame
+                                      ? PITCH_CROSSFADE_MS
+                                      : EXPRESSION_CROSSFADE_MS
+                                }
+                              />
+                            </Animated.View>
+                          </Animated.View>
+                        </Animated.View>
                       </Animated.View>
                     </Animated.View>
                   </Animated.View>

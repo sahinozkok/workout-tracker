@@ -135,6 +135,7 @@ export const en: TranslationSchema = {
   },
   calendar: {
     title: 'Discipline calendar',
+    shortTitle: 'Discipline',
     week: 'Week',
     month: 'Month',
     year: 'Year',
@@ -614,7 +615,9 @@ export const en: TranslationSchema = {
   mascot: {
     settingsTitle: '{name}',
     settingsLabel: 'Show {name} in the app',
-    settingsCaption: '{name}, your workout companion, appears across the app.',
+    settingsCaption: 'Hide {name} from the app. You can bring her back whenever you want.',
+    holidaySend: 'Send {name} on holiday',
+    holidayReturn: 'Bring {name} back',
     accessibilityLabel: '{name}, your workout companion',
     accessibilityHint: 'Tap to open the speech bubble, press and hold to drag it.',
     bubbleMessage: 'Ready for today’s workout?',
