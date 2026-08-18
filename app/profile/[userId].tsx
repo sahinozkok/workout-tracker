@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { DisciplineCalendarView } from '@/components/discipline-calendar';
+import { ProfileDisciplineCard } from '@/components/profile-discipline-card';
 import { Layout, ThemeColors } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useTranslation } from '@/context/language-context';
@@ -152,11 +152,14 @@ export default function FriendProfileScreen() {
           </View>
         </View>
 
-        {/* Salt okunur: `onDayPress` verilmez, gün ayrıntısı ve durum değiştirme yok.
-            Yalnızca tarih ve completed/partial/skipped durumu gösterilir.
-            Kompakt yoğunluk + yatay padding: dar telefonlarda taşma olmaz. */}
+        {/* Kendi profiliyle **aynı** kart tasarımı, ancak salt okunur:
+            `readOnly` verildiği için `onDayPress` hiç bağlanmaz — gün ayrıntısı
+            penceresi açılmaz ve hiçbir mutation tetiklenemez. Kart arkadaşın
+            yüklenmiş durum verisini prop olarak alır; hiçbir context okumaz,
+            dolayısıyla RLS/friendship kontrolleri ve Supabase sorguları
+            değişmez. */}
         <View style={styles.calendarSection}>
-          <DisciplineCalendarView density="compact" statuses={statuses} />
+          <ProfileDisciplineCard readOnly statuses={statuses} />
         </View>
         <Text style={styles.readOnlyNote}>{t('friends.calendarReadOnly')}</Text>
       </ScrollView>

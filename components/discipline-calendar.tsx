@@ -4,13 +4,13 @@ import {
   AlertButton,
   LayoutChangeEvent,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   useWindowDimensions,
   View,
 } from 'react-native';
 
+import { DisciplineYearGrid } from '@/components/discipline-year-grid';
 import { ThemeColors, Type } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { useWorkout } from '@/context/workout-context';
@@ -21,7 +21,7 @@ import { toDateKey } from '@/utils/discipline';
 import { getSetProgressKey } from '@/utils/workout-schedule';
 import { formatDuration } from '@/utils/workout-session';
 
-type CalendarPeriod = 'week' | 'month' | 'year';
+export type CalendarPeriod = 'week' | 'month' | 'year';
 
 const PERIOD_VALUES: CalendarPeriod[] = ['week', 'month', 'year'];
 
@@ -254,7 +254,15 @@ export function DisciplineCalendarView({
  * katmanıdır: gün ayrıntısı ve izin verilen manuel durum değiştirme burada
  * kalır, görünüm işini `DisciplineCalendarView` yapar.
  */
-export function DisciplineCalendar({ density }: { density?: CalendarDensity } = {}) {
+/**
+ * Gün ayrıntısı penceresi ve izin verilen manuel durum değiştirme mantığı.
+ *
+ * Bilinçli olarak görünümden ayrılmıştır: hem mevcut `DisciplineCalendar`
+ * (Ana Sayfa) hem de profildeki kompakt kart **birebir aynı** davranışı ve
+ * aynı gerçek veriyi kullansın diye tek kaynak burasıdır. Ana Sayfa'nın
+ * çıktısı bu ayrıştırmadan etkilenmez; yalnızca aynı kod tek yerde toplanır.
+ */
+export function useDisciplineDayPress() {
   const {
     activeProgramId,
     completedSetCounts,
@@ -339,13 +347,17 @@ export function DisciplineCalendar({ density }: { density?: CalendarDensity } = 
     );
   }
 
-  return (
-    <DisciplineCalendarView
-      density={density}
-      onDayPress={handleDayPress}
-      statuses={disciplineStatuses}
-    />
-  );
+  return { handleDayPress, statuses: disciplineStatuses };
+}
+
+/**
+ * Mevcut kullanıcının Ana Sayfa takvimi. Davranışı ve görünümü değişmedi:
+ * yalnızca gün basma mantığı yukarıdaki paylaşılan hook'tan gelir.
+ */
+export function DisciplineCalendar({ density }: { density?: CalendarDensity } = {}) {
+  const { handleDayPress, statuses } = useDisciplineDayPress();
+
+  return <DisciplineCalendarView density={density} onDayPress={handleDayPress} statuses={statuses} />;
 }
 
 type GridProps = {
@@ -491,6 +503,11 @@ function MonthGrid({
   );
 }
 
+/**
+ * Ana Sayfa'nın yıl görünümü. Render mantığı `DisciplineYearGrid` içine
+ * taşındı; buradan **aynı mevcut metrics değerleri** geçirildiği için görünüm
+ * ve davranış birebir korunur.
+ */
 function YearGrid({
   colors,
   dates,
@@ -499,68 +516,26 @@ function YearGrid({
   metrics,
   onDayPress,
   statuses,
-  styles,
   today,
   weekdayLabels,
 }: GridProps & { locale: string }) {
-  const weeks = groupIntoWeeks(dates);
-
   return (
-    <View style={styles.yearGridRow}>
-      <View style={styles.yearWeekdayLabels}>
-        <View style={styles.yearMonthLabelSpacer} />
-        {weekdayLabels.map((label, index) => (
-          <Text key={`${label}-${index}`} style={styles.yearWeekdayLabel}>
-            {label}
-          </Text>
-        ))}
-      </View>
-
-      <ScrollView
-        contentContainerStyle={styles.yearScrollContent}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.yearScroll}>
-        {weeks.map((week) => {
-          const monthStart = week.find((date) => date.getDate() === 1);
-
-          return (
-            <View key={toDateKey(week[0])} style={styles.yearWeek}>
-              <View style={styles.yearMonthLabelContainer}>
-                {monthStart && (
-                  <Text numberOfLines={1} style={styles.yearMonthLabel}>
-                    {monthStart.toLocaleDateString(locale, { month: 'short' }).replace('.', '')}
-                  </Text>
-                )}
-              </View>
-
-              {week.map((date) => {
-                const dateKey = toDateKey(date);
-                const status = statuses[dateKey];
-                const isFuture = date.getTime() > today.getTime();
-
-                return (
-                  <Pressable
-                    accessibilityLabel={getLabel(date, status, isFuture)}
-                    accessibilityRole="button"
-                    disabled={isFuture || !onDayPress}
-                    hitSlop={metrics.yearCellHitSlop}
-                    key={dateKey}
-                    onPress={onDayPress ? () => onDayPress(dateKey) : undefined}
-                    style={({ pressed }) => [
-                      styles.yearDayCell,
-                      { backgroundColor: getStatusColor(colors, status, isFuture) },
-                      date.getTime() === today.getTime() && styles.todayYearCell,
-                      pressed && styles.pressed,
-                    ]}
-                  />
-                );
-              })}
-            </View>
-          );
-        })}
-      </ScrollView>
-    </View>
+    <DisciplineYearGrid
+      colors={colors}
+      dates={dates}
+      getLabel={getLabel}
+      locale={locale}
+      metrics={{
+        cellGap: metrics.yearCellGap,
+        cellHitSlop: metrics.yearCellHitSlop,
+        cellSize: metrics.yearCellSize,
+        labelWidth: metrics.yearLabelWidth,
+      }}
+      onDayPress={onDayPress}
+      statuses={statuses}
+      today={today}
+      weekdayLabels={weekdayLabels}
+    />
   );
 }
 
@@ -581,7 +556,7 @@ function LegendItem({
   );
 }
 
-function startOfDay(date: Date) {
+export function startOfDay(date: Date) {
   const result = new Date(date);
   result.setHours(0, 0, 0, 0);
   return result;
@@ -592,24 +567,24 @@ function dateFromKey(dateKey: string) {
   return new Date(year, month - 1, day);
 }
 
-function addDays(date: Date, amount: number) {
+export function addDays(date: Date, amount: number) {
   const result = new Date(date);
   result.setDate(result.getDate() + amount);
   return result;
 }
 
-function startOfWeek(date: Date) {
+export function startOfWeek(date: Date) {
   const result = startOfDay(date);
   const day = result.getDay();
   result.setDate(result.getDate() + (day === 0 ? -6 : 1 - day));
   return result;
 }
 
-function endOfWeek(date: Date) {
+export function endOfWeek(date: Date) {
   return addDays(startOfWeek(date), 6);
 }
 
-function getDatesBetween(start: Date, end: Date) {
+export function getDatesBetween(start: Date, end: Date) {
   const dates: Date[] = [];
   let currentDate = startOfDay(start);
 
@@ -621,7 +596,7 @@ function getDatesBetween(start: Date, end: Date) {
   return dates;
 }
 
-function getPeriodDates(period: CalendarPeriod, today: Date) {
+export function getPeriodDates(period: CalendarPeriod, today: Date) {
   if (period === 'week') {
     return getDatesBetween(startOfWeek(today), endOfWeek(today));
   }
@@ -637,7 +612,7 @@ function getPeriodDates(period: CalendarPeriod, today: Date) {
   return getDatesBetween(firstWeekStart, endOfWeek(today));
 }
 
-function groupIntoWeeks(dates: Date[]) {
+export function groupIntoWeeks(dates: Date[]) {
   const weeks: Date[][] = [];
 
   for (let index = 0; index < dates.length; index += 7) {
@@ -647,7 +622,7 @@ function groupIntoWeeks(dates: Date[]) {
   return weeks;
 }
 
-function getPeriodLabel(period: CalendarPeriod, today: Date, locale: string, t: (key: string) => string) {
+export function getPeriodLabel(period: CalendarPeriod, today: Date, locale: string, t: (key: string) => string) {
   if (period === 'week') {
     const firstDay = startOfWeek(today);
     const lastDay = endOfWeek(today);
@@ -663,7 +638,7 @@ function getPeriodLabel(period: CalendarPeriod, today: Date, locale: string, t: 
   return t('calendar.lastTwelveMonths');
 }
 
-function getStatusColor(colors: ThemeColors, status: DisciplineStatus | undefined, isFuture: boolean) {
+export function getStatusColor(colors: ThemeColors, status: DisciplineStatus | undefined, isFuture: boolean) {
   if (isFuture) return colors.disciplineFuture;
   if (status === 'completed') return colors.disciplineCompleted;
   if (status === 'partial') return colors.disciplinePartial;
@@ -683,9 +658,6 @@ function createStyles(colors: ThemeColors, metrics: CalendarMetrics) {
     monthRowGap,
     sectionGap,
     weekdayFontSize,
-    yearCellGap,
-    yearCellSize,
-    yearLabelWidth,
   } = metrics;
 
   return StyleSheet.create({
@@ -735,26 +707,7 @@ function createStyles(colors: ThemeColors, metrics: CalendarMetrics) {
       fontWeight: '400',
       textAlign: 'center',
     },
-    // Yıl şeridi yatay kaydırılır. ScrollView'a `flex: 1` + `minWidth: 0`
-    // verilir: içerik ne kadar geniş olursa olsun satırın dışına taşamaz,
-    // kapsayıcıyı büyütemez ve kenardan kesilmez.
-    yearGridRow: { flexDirection: 'row' },
-    yearScroll: { flex: 1, minWidth: 0 },
-    yearWeekdayLabels: { marginRight: 7 },
-    yearMonthLabelSpacer: { height: 20 },
-    yearWeekdayLabel: {
-      color: colors.textTertiary,
-      fontSize: 8,
-      height: yearCellSize + yearCellGap - 1,
-      lineHeight: 13,
-      width: yearLabelWidth,
-    },
-    yearScrollContent: { paddingRight: 2 },
-    yearWeek: { gap: yearCellGap, marginRight: yearCellGap, width: yearCellSize },
-    yearMonthLabelContainer: { height: 17, overflow: 'visible' },
-    yearMonthLabel: { color: colors.textTertiary, fontSize: 9, overflow: 'visible', width: 34 },
-    yearDayCell: { borderRadius: 3, height: yearCellSize, width: yearCellSize },
-    todayYearCell: { borderColor: colors.primary, borderWidth: 1.5 },
+    // Yıl ızgarasının stilleri `DisciplineYearGrid` içindedir.
     legend: { flexDirection: 'row', flexWrap: 'wrap', gap: legendGap },
     legendItem: { alignItems: 'center', flexDirection: 'row', gap: 6 },
     legendDot: { borderRadius: 3, height: 6, width: 6 },
