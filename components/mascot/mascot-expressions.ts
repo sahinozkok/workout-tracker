@@ -149,10 +149,10 @@ export function isMascotPitchFrame(frame: MascotTurnFrame): boolean {
 /**
  * Hedef kenar için kaynak ve rotasyonu **birlikte** çözer. Saf fonksiyondur.
  *
- * Sol/sağ hedefte yan kare 45° eğimle kullanılır (havada başı önde süzülme).
- *
- * Üst/alt hedefte yan profil **hiç gösterilmez**: dönüş, ön görünüşten arka
- * görünüşe giden gerçek pitch ara kareleriyle anlatılır ve `pitch` işaretlidir.
+ * Dört kenarın üç ayrı dönüş dili vardır:
+ *   sol/sağ → yan kare + 45° eğim (havada başı önde süzülme)
+ *   üst     → saf **yaw** arkı; gövde dikey eksende döner, pitch karesi YOK
+ *   alt     → **pitch** arkı; gövde yatay eksende döner ve yön 180°'ye çevrilir
  */
 export function resolveMascotTurnPlan(edge: MascotEdge): MascotTurnPlan {
   // Sol/sağ hedef: yana dön ve başı önde, 45° eğimle süzül. Sırt hiç görünmez.
@@ -169,12 +169,42 @@ export function resolveMascotTurnPlan(edge: MascotEdge): MascotTurnPlan {
   if (edge === 'right') return { frames: ['turn-front-right', 'side-right'], rotation: 45 };
 
   /**
-   * Üst/alt hedef: gerçek pitch dizisi.
+   * Üst hedef: **saf yaw dönüşü.** Pitch kareleri burada kullanılmaz.
+   *
+   *   ön görünüş → `turn-front-right` → `side-right` → `turn-back-right`
+   *   → `back`
+   *
+   * Gerekçe: pitch dizisi gövdeyi **yatay** eksende çevirir. Alt kenarda bu
+   * doğru okunur, çünkü orada kafanın gerçekten aşağı dönmesi gerekir. Üst
+   * kenarda ise kafa zaten hareket yönüne (yukarı) bakıyor; yatay eksende bir
+   * dönüş görsel olarak gereksiz bir takla üretiyordu. Rosea'nın yalnızca
+   * arkasını dönmesi gerekiyor, bu da dikey eksen (yaw) arkıdır.
+   *
+   * Dizi mevcut yedi dönüş karesinden seçildi ve tam bir 180° yaw arkı çizer:
+   * ön → ¾ ön → tam yan profil → ¾ sırt → sırt. Ara kare atlanmadığı için
+   * hiçbir noktada açı sıçraması olmaz. Sağ taraf **sabit ve deterministik**
+   * seçildi; sol kareler bu karelerin piksel-tam aynası olduğu için seçim
+   * tamamen estetiktir ve her üst yolculukta aynı kalması tercih edilir.
+   *
+   * `rotation: 0` — bütün dizi boyunca ve yolculuğun tamamında travel açısı
+   * sıfırdır: Rosea ters dönmez, takla atmaz, sırtı ekrana dönük ve kafası
+   * yukarı bakar hâlde üst kenara ilerler. `pitch` işareti **yoktur**, bu
+   * yüzden çağıran taraf bunu normal (yaw) dönüş zinciri olarak oynatır.
+   */
+  if (edge === 'top') {
+    return {
+      frames: ['turn-front-right', 'side-right', 'turn-back-right', 'back'],
+      rotation: 0,
+    };
+  }
+
+  /**
+   * Alt hedef: gerçek pitch dizisi. **Değişmedi.**
    *
    *   ön görünüş → `pitch-front-mid` → `pitch-edge` → `pitch-back-mid` → `back`
    *
    * Yan profil, `turn-front-*` ve `turn-back-*` kareleri **kullanılmaz** —
-   * kullanıcı üst/alt yolculukta Rosea'yı hiçbir anda yandan görmemeli. Eski
+   * kullanıcı alt yolculukta Rosea'yı hiçbir anda yandan görmemeli. Eski
    * `scaleY` ezme illüzyonu da kaldırıldı: dönüşü yalnızca sprite kareleri
    * anlatır, karakterin boyutu ve konumu hiç değişmez.
    *
@@ -182,16 +212,12 @@ export function resolveMascotTurnPlan(edge: MascotEdge): MascotTurnPlan {
    * (x = 292) paylaşır; yükseklik farkı hizalama hatası değil, gövdenin
    * gerçekten öne/arkaya dönmesidir. Bu yüzden ölçek/offset telafisi yapılmaz.
    *
-   * Kafa her zaman gidilen kenara bakar: `back` karesi kafası yukarı çizili
-   * olduğu için üstte ek açı gerekmez, altta yarım tur gerekir. O yarım tur
-   * kullanıcıya **animasyon olarak gösterilmez**; gövde `pitch-edge` karesinde
-   * yatay bir silüetken atomik olarak uygulanır, yani ekranda takla görünmez.
+   * Kafa gidilen kenara bakar: `back` karesi kafası yukarı çizili olduğu için
+   * alt kenarda yarım tur gerekir. O yarım tur kullanıcıya **animasyon olarak
+   * gösterilmez**; gövde `pitch-edge` karesinde yatay bir silüetken atomik
+   * olarak uygulanır, yani ekranda takla görünmez.
    */
-  return {
-    frames: [...MASCOT_PITCH_FRAMES, 'back'],
-    rotation: edge === 'bottom' ? 180 : 0,
-    pitch: true,
-  };
+  return { frames: [...MASCOT_PITCH_FRAMES, 'back'], rotation: 180, pitch: true };
 }
 
 /**

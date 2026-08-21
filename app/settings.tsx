@@ -23,9 +23,9 @@ export default function SettingsScreen() {
   const { signOut } = useAuth();
   const { restTimerEnabled, savePreferredLanguage, setRestTimerEnabled } = useProfile();
   const { enabled: mascotEnabled, setEnabled: setMascotEnabled } = useMascot();
-  const { colors, preference, setPreference } = useAppTheme();
+  const { colors, isDark, preference, setPreference } = useAppTheme();
   const { language, setLanguage, t } = useLanguage();
-  const styles = createStyles(colors);
+  const styles = createStyles(colors, isDark);
 
   async function handleLanguageChange(nextLanguage: AppLanguage) {
     setLanguage(nextLanguage);
@@ -63,8 +63,11 @@ export default function SettingsScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['bottom']}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.settingRow}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        style={styles.settingsCard}>
+        <View style={[styles.settingRow, styles.topSettingRow]}>
           <View style={styles.settingText}>
             <Text style={styles.settingTitle}>{t('profile.language')}</Text>
             <Text style={styles.caption}>{t('profile.languageCaption')}</Text>
@@ -94,9 +97,7 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        <View style={styles.divider} />
-
-        <View style={styles.settingRow}>
+        <View style={[styles.settingRow, styles.topSettingRow, styles.appearanceRow]}>
           <View style={styles.settingText}>
             <Text style={styles.settingTitle}>{t('profile.appearance')}</Text>
             <Text style={styles.caption}>{t('profile.appearanceCaption')}</Text>
@@ -134,9 +135,9 @@ export default function SettingsScreen() {
 
         <View style={styles.divider} />
 
-        <View style={styles.settingRow}>
+        <View style={[styles.settingRow, styles.featureRow]}>
           <View style={styles.settingIcon}>
-            <Ionicons name="time-outline" size={18} color={colors.accent} />
+            <Ionicons name="time-outline" size={19} color={isDark ? '#CBB4F2' : '#60458A'} />
           </View>
           <View style={styles.settingText}>
             <Text style={styles.settingTitle}>{t('profile.restTimer')}</Text>
@@ -145,17 +146,17 @@ export default function SettingsScreen() {
           <Switch
             accessibilityLabel={t('profile.restTimerLabel')}
             onValueChange={(enabled) => void handleRestTimerToggle(enabled)}
-            thumbColor={Platform.OS === 'android' ? colors.onPrimary : undefined}
-            trackColor={{ false: colors.surfaceMuted, true: colors.primary }}
+            thumbColor={Platform.OS === 'android' ? '#F6F5F7' : undefined}
+            trackColor={{ false: colors.surfaceMuted, true: '#60458A' }}
             value={restTimerEnabled}
           />
         </View>
 
         <View style={styles.divider} />
 
-        <View style={styles.settingRow}>
+        <View style={[styles.settingRow, styles.featureRow]}>
           <View style={styles.settingIcon}>
-            <Ionicons name="happy-outline" size={18} color={colors.accent} />
+            <Ionicons name="happy-outline" size={19} color={isDark ? '#CBB4F2' : '#60458A'} />
           </View>
           <View style={styles.settingText}>
             {/* Etiket duruma göre değişir: görünürken "tatile gönder",
@@ -174,13 +175,11 @@ export default function SettingsScreen() {
               { name: MASCOT_NAME },
             )}
             onValueChange={(enabled) => void setMascotEnabled(enabled)}
-            thumbColor={Platform.OS === 'android' ? colors.onPrimary : undefined}
-            trackColor={{ false: colors.surfaceMuted, true: colors.primary }}
+            thumbColor={Platform.OS === 'android' ? '#F6F5F7' : undefined}
+            trackColor={{ false: colors.surfaceMuted, true: '#60458A' }}
             value={mascotEnabled}
           />
         </View>
-
-        <View style={styles.divider} />
 
         <Pressable
           accessibilityRole="button"
@@ -223,69 +222,81 @@ function ThemeButton({
   );
 }
 
-function createStyles(colors: ThemeColors) {
+function createStyles(colors: ThemeColors, isDark: boolean) {
   return StyleSheet.create({
     safeArea: { backgroundColor: colors.background, flex: 1 },
-    content: { paddingBottom: 40, paddingTop: 8 },
+    settingsCard: {
+      backgroundColor: colors.background,
+      flex: 1,
+    },
+    content: {
+      paddingBottom: 28,
+      paddingHorizontal: 20,
+      paddingTop: 20,
+    },
     settingRow: {
       alignItems: 'center',
       flexDirection: 'row',
       gap: 12,
       minHeight: Layout.minTouchSize,
-      paddingHorizontal: Layout.screenPadding,
     },
+    topSettingRow: { alignItems: 'flex-start' },
+    appearanceRow: { marginTop: 32 },
+    featureRow: { minHeight: 80 },
     settingIcon: {
       alignItems: 'center',
-      backgroundColor: colors.accentSoft,
-      borderRadius: Layout.radiusSmall,
-      height: 34,
+      backgroundColor: isDark ? '#1E162B' : '#F0EAF8',
+      borderRadius: 12,
+      height: 42,
       justifyContent: 'center',
-      width: 34,
+      width: 42,
     },
-    settingText: { flex: 1, gap: 2 },
-    settingTitle: { color: colors.text, fontSize: 15, fontWeight: '600' },
-    caption: { color: colors.textSecondary, fontSize: 12, lineHeight: 17 },
+    settingText: { flex: 1, gap: 5 },
+    settingTitle: { color: colors.text, fontSize: 17, fontWeight: '700', lineHeight: 22 },
+    caption: { color: colors.textSecondary, fontSize: 13, lineHeight: 18 },
     divider: {
       backgroundColor: colors.separator,
       height: StyleSheet.hairlineWidth,
-      marginHorizontal: Layout.screenPadding,
-      marginVertical: 22,
+      marginVertical: 20,
     },
     languageToggle: {
-      backgroundColor: colors.surfaceMuted,
-      borderRadius: Layout.radiusSmall,
+      borderColor: colors.separator,
+      borderRadius: Layout.radiusPill,
+      borderWidth: StyleSheet.hairlineWidth,
       flexDirection: 'row',
       gap: 2,
       padding: 3,
     },
     languageButton: {
       alignItems: 'center',
-      borderRadius: 6,
-      height: 28,
+      borderRadius: Layout.radiusPill,
+      height: 34,
       justifyContent: 'center',
+      minWidth: 44,
       paddingHorizontal: 10,
     },
-    languageButtonSelected: { backgroundColor: colors.primary },
-    languageText: { color: colors.textTertiary, fontSize: 12, fontWeight: '600' },
-    languageTextSelected: { color: colors.onPrimary },
+    languageButtonSelected: { backgroundColor: '#60458A' },
+    languageText: { color: colors.textTertiary, fontSize: 13, fontWeight: '700' },
+    languageTextSelected: { color: '#F6F3FA' },
     themeToggle: {
-      backgroundColor: colors.surfaceMuted,
-      borderRadius: Layout.radiusSmall,
+      borderColor: colors.separator,
+      borderRadius: Layout.radiusPill,
+      borderWidth: StyleSheet.hairlineWidth,
       flexDirection: 'row',
       gap: 2,
       padding: 3,
     },
-    themeButton: { alignItems: 'center', borderRadius: 6, height: 28, justifyContent: 'center', width: 30 },
-    themeButtonSelected: { backgroundColor: colors.primary },
+    themeButton: { alignItems: 'center', borderRadius: Layout.radiusPill, height: 34, justifyContent: 'center', width: 36 },
+    themeButtonSelected: { backgroundColor: '#60458A' },
     signOutButton: {
       alignItems: 'center',
       alignSelf: 'flex-start',
       flexDirection: 'row',
       gap: 8,
-      marginHorizontal: Layout.screenPadding,
+      marginTop: 20,
       minHeight: Layout.minTouchSize,
     },
-    signOutText: { color: colors.danger, fontSize: 15, fontWeight: '500' },
+    signOutText: { color: colors.danger, fontSize: 15, fontWeight: '600' },
     pressed: { opacity: 0.6 },
   });
 }

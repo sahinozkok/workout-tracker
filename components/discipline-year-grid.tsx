@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ThemeColors } from '@/constants/theme';
@@ -93,6 +93,17 @@ export function DisciplineYearGrid({
 }: DisciplineYearGridProps) {
   const styles = useMemo(() => createStyles(colors, metrics), [colors, metrics]);
   const weeks = groupIntoWeeks(dates);
+  const scrollRef = useRef<ScrollView>(null);
+  const didInitialScrollRef = useRef(false);
+
+  // Yıllık görünüm her açıldığında en güncel hafta görünür başlar. Kullanıcı
+  // daha eski tarihlere doğru sola kaydırabilir; içerik yeniden ölçülürken
+  // konumu tekrar tekrar zorlamamak için yalnızca ilk ölçümde çalışır.
+  const handleContentSizeChange = useCallback(() => {
+    if (didInitialScrollRef.current) return;
+    didInitialScrollRef.current = true;
+    scrollRef.current?.scrollToEnd({ animated: false });
+  }, []);
 
   return (
     <View style={styles.yearGridRow}>
@@ -108,6 +119,8 @@ export function DisciplineYearGrid({
       <ScrollView
         contentContainerStyle={styles.yearScrollContent}
         horizontal
+        onContentSizeChange={handleContentSizeChange}
+        ref={scrollRef}
         showsHorizontalScrollIndicator={false}
         style={styles.yearScroll}>
         {weeks.map((week) => {

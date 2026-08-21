@@ -4,8 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { LevelProgressRing } from '@/components/rewards/level-progress-ring';
 import { ProfileDisciplineCard } from '@/components/profile-discipline-card';
-import { Layout, ThemeColors } from '@/constants/theme';
+import { Fonts, Layout, ThemeColors } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useTranslation } from '@/context/language-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
@@ -136,11 +137,18 @@ export default function FriendProfileScreen() {
               <Text style={styles.avatarLetter}>{initial}</Text>
             )}
           </View>
-          <Text style={styles.name}>{profile.displayName}</Text>
           <Text style={styles.username}>
             {profile.username ? `@${profile.username}` : t('friends.noUsername')}
           </Text>
+          <Text style={styles.name}>{profile.displayName}</Text>
           {profile.bio.trim().length > 0 && <Text style={styles.bio}>{profile.bio}</Text>}
+
+          <View style={styles.levelIdentityRow}>
+            <View style={styles.levelPill}>
+              <Text style={styles.levelPillIcon}>❀</Text>
+              <Text style={styles.levelPillText}>{t('rewards.levelLabel', { level: profile.level })}</Text>
+            </View>
+          </View>
 
           {/* Ana hedef: bilinmeyen değer gelirse güvenli fallback. */}
           <View style={styles.goalChip}>
@@ -150,6 +158,19 @@ export default function FriendProfileScreen() {
                 : t('profile.goal')}
             </Text>
           </View>
+        </View>
+
+        {/* Arkadaşın seviyesi ve ilerlemesi. Gül bakiyesi ve ödül geçmişi
+            BİLİNÇLİ olarak gösterilmez — `roseBalance` prop'u hiç verilmez ve
+            `get_friend_profile` RPC'si bu alanları zaten döndürmez. Bu ekrana
+            yalnızca gerçekten arkadaş olan kullanıcı erişebilir; friendship
+            kontrolü RPC içinde `public.are_friends` ile yapılır. */}
+        <View style={styles.levelSection}>
+          <LevelProgressRing
+            level={profile.level}
+            xpForNextLevel={profile.xpForNextLevel}
+            xpIntoLevel={profile.xpIntoLevel}
+          />
         </View>
 
         {/* Kendi profiliyle **aynı** kart tasarımı, ancak salt okunur:
@@ -191,9 +212,41 @@ function createStyles(colors: ThemeColors) {
     },
     avatarImage: { height: '100%', width: '100%' },
     avatarLetter: { color: colors.textSecondary, fontSize: 24, fontWeight: '600' },
-    name: { color: colors.text, fontSize: 18, fontWeight: '600', marginTop: 6 },
-    username: { color: colors.textTertiary, fontSize: 13 },
-    bio: { color: colors.textSecondary, fontSize: 13, lineHeight: 19, marginTop: 6, textAlign: 'center' },
+    name: {
+      color: colors.text,
+      fontFamily: Fonts.serif,
+      fontSize: 34,
+      fontWeight: '700',
+      lineHeight: 40,
+    },
+    username: {
+      color: colors.textTertiary,
+      fontSize: 11,
+      fontWeight: '700',
+      letterSpacing: 1.8,
+      marginTop: 6,
+      textTransform: 'uppercase',
+    },
+    bio: { color: colors.textSecondary, fontSize: 15, lineHeight: 21, marginTop: 6, maxWidth: '88%', textAlign: 'center' },
+    levelIdentityRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'center',
+      marginTop: 10,
+      width: '100%',
+    },
+    levelPill: {
+      alignItems: 'center',
+      backgroundColor: colors.surfaceMuted,
+      borderRadius: Layout.radiusPill,
+      flexDirection: 'row',
+      gap: 5,
+      minHeight: 28,
+      paddingHorizontal: 11,
+    },
+    levelPillIcon: { color: '#D5755B', fontSize: 11 },
+    levelPillText: { color: colors.textSecondary, fontSize: 11, fontWeight: '600' },
+    levelSection: { marginTop: 20, paddingHorizontal: Layout.screenPadding },
     calendarSection: { marginTop: 18, paddingHorizontal: Layout.screenPadding },
     readOnlyNote: {
       color: colors.textTertiary,

@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useMemo, useState } from 'react';
 import { LayoutChangeEvent, Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -45,6 +46,8 @@ export type ProfileDisciplineCardProps = {
   /** `true` → günler basılamaz; hiçbir mutation veya menü tetiklenmez. */
   readOnly?: boolean;
   onDayPress?: (dateKey: string) => void;
+  /** `true` → başlık satırı takvimi açıp kapatır; başlangıçta kapalıdır. */
+  collapsible?: boolean;
 };
 
 /**
@@ -58,6 +61,7 @@ export type ProfileDisciplineCardProps = {
  * adapter render edilir. İkisi de aynı görünümü paylaşır.
  */
 export function ProfileDisciplineCard({
+  collapsible = false,
   statuses,
   readOnly,
   onDayPress,
@@ -65,23 +69,30 @@ export function ProfileDisciplineCard({
   if (statuses) {
     return (
       <ProfileDisciplineCardView
+        collapsible={collapsible}
         onDayPress={readOnly ? undefined : onDayPress}
         statuses={statuses}
       />
     );
   }
 
-  return <CurrentUserProfileDisciplineCard />;
+  return <CurrentUserProfileDisciplineCard collapsible={collapsible} />;
 }
 
 /**
  * Kendi profili: `WorkoutContext` verisini ve mevcut gün ayrıntısı/durum
  * değiştirme davranışını kullanan adapter.
  */
-function CurrentUserProfileDisciplineCard() {
+function CurrentUserProfileDisciplineCard({ collapsible }: { collapsible: boolean }) {
   const { handleDayPress, statuses } = useDisciplineDayPress();
 
-  return <ProfileDisciplineCardView onDayPress={handleDayPress} statuses={statuses} />;
+  return (
+    <ProfileDisciplineCardView
+      collapsible={collapsible}
+      onDayPress={handleDayPress}
+      statuses={statuses}
+    />
+  );
 }
 
 /**
@@ -89,9 +100,11 @@ function CurrentUserProfileDisciplineCard() {
  * arkadaş profilinde de aynı tasarım salt okunur olarak kullanılabilir.
  */
 function ProfileDisciplineCardView({
+  collapsible,
   onDayPress,
   statuses,
 }: {
+  collapsible: boolean;
   /** Verilmezse günler basılamaz (salt okunur kart). */
   onDayPress?: (dateKey: string) => void;
   statuses: Record<string, DisciplineStatus>;
@@ -100,6 +113,7 @@ function ProfileDisciplineCardView({
   const { locale, t } = useTranslation();
 
   const [period, setPeriod] = useState<CalendarPeriod>('week');
+  const [isExpanded, setIsExpanded] = useState(!collapsible);
   // Ölçüler kapsayıcının GERÇEK genişliğinden türetilir; sabit ekran varsayımı
   // yoktur, bu yüzden dar iPhone'larda da taşma olmaz.
   const [measuredWidth, setMeasuredWidth] = useState(0);
@@ -159,7 +173,24 @@ function ProfileDisciplineCardView({
 
   return (
     <View onLayout={handleLayout} style={styles.card}>
-      <Text style={styles.title}>{t('calendar.shortTitle')}</Text>
+      <Pressable
+        accessibilityRole={collapsible ? 'button' : undefined}
+        accessibilityState={collapsible ? { expanded: isExpanded } : undefined}
+        disabled={!collapsible}
+        onPress={collapsible ? () => setIsExpanded((current) => !current) : undefined}
+        style={({ pressed }) => [styles.titleRow, pressed && collapsible && styles.pressed]}>
+        <Text style={styles.title}>{t('calendar.shortTitle')}</Text>
+        {collapsible && (
+          <Ionicons
+            color={colors.textSecondary}
+            name={isExpanded ? 'chevron-up' : 'chevron-down'}
+            size={18}
+          />
+        )}
+      </Pressable>
+
+      {isExpanded && (
+      <>
       <Text style={styles.subtitle}>{subtitle}</Text>
 
       <View accessibilityRole="tablist" style={styles.tabs}>
@@ -225,6 +256,8 @@ function ProfileDisciplineCardView({
             weekdayLabels={yearWeekdayLabels}
           />
         </View>
+      )}
+      </>
       )}
     </View>
   );
@@ -356,12 +389,19 @@ function MonthGrid({ styles, weekdayLabels, width, ...rest }: GridProps & { week
 function createStyles(colors: ThemeColors) {
   return StyleSheet.create({
     card: {
-      backgroundColor: colors.surfaceMuted,
+      backgroundColor: 'transparent',
       borderColor: colors.separator,
       borderRadius: 22,
       borderWidth: StyleSheet.hairlineWidth,
       gap: 2,
       padding: 18,
+    },
+    titleRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 8,
+      justifyContent: 'space-between',
+      minHeight: 28,
     },
     title: { color: colors.text, fontSize: 17, fontWeight: '700' },
     subtitle: { color: colors.textSecondary, fontSize: 12 },

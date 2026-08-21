@@ -1,0 +1,139 @@
+import { Ionicons } from '@expo/vector-icons';
+import { useMemo } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
+
+import { useTranslation } from '@/context/language-context';
+import { useAppTheme } from '@/hooks/use-app-theme';
+
+type ProfileProofStatsProps = {
+  dayStreak: number;
+  roseBalance: number;
+  workoutDays: number;
+};
+
+type ProofStatProps = {
+  accessibilityLabel: string;
+  backgroundColor: string;
+  color: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: number;
+};
+
+/** Referanstaki kompakt üçlü profil kanıtı: gül, antrenman ve seri. */
+export function ProfileProofStats({ dayStreak, roseBalance, workoutDays }: ProfileProofStatsProps) {
+  const { colors, isDark } = useAppTheme();
+  const { t } = useTranslation();
+
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        card: { gap: 10, paddingHorizontal: 4, paddingVertical: 4, width: '100%' },
+        header: {
+          alignItems: 'center',
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+        },
+        eyebrow: {
+          color: isDark ? '#D8A09C' : '#B67F7C',
+          fontSize: 9,
+          fontWeight: '700',
+          letterSpacing: 1.35,
+        },
+        row: {
+          alignItems: 'center',
+          flexDirection: 'row',
+        },
+        stat: {
+          alignItems: 'center',
+          flex: 1,
+          flexDirection: 'row',
+          gap: 8,
+          minWidth: 0,
+        },
+        iconCircle: {
+          alignItems: 'center',
+          borderRadius: 15,
+          height: 30,
+          justifyContent: 'center',
+          width: 30,
+        },
+        statCopy: { flex: 1, gap: 1, minWidth: 0 },
+        value: {
+          color: colors.text,
+          fontSize: 14,
+          fontVariant: ['tabular-nums'],
+          fontWeight: '700',
+          lineHeight: 16,
+        },
+        label: {
+          color: colors.textSecondary,
+          fontSize: 7.5,
+          fontWeight: '700',
+          letterSpacing: 0.45,
+          lineHeight: 10,
+          textTransform: 'uppercase',
+        },
+      }),
+    [colors.text, colors.textSecondary, isDark],
+  );
+
+  return (
+    <View style={styles.card}>
+      <View style={styles.header}>
+        <Text style={styles.eyebrow}>{t('profile.proofTitle')}</Text>
+        <Ionicons color={isDark ? '#9CB79A' : '#6F906D'} name="leaf-outline" size={13} />
+      </View>
+
+      <View style={styles.row}>
+        <ProofStat
+          accessibilityLabel={t('profile.proofRosesA11y', { count: roseBalance })}
+          backgroundColor="#F3DDD7"
+          color="#C86E61"
+          icon="heart"
+          label={t('profile.proofRoses')}
+          value={roseBalance}
+        />
+        <ProofStat
+          accessibilityLabel={t('profile.proofWorkoutDaysA11y', { count: workoutDays })}
+          backgroundColor="#DFEBDD"
+          color="#7C9978"
+          icon="radio-button-on-outline"
+          label={t('profile.proofWorkoutDays')}
+          value={workoutDays}
+        />
+        <ProofStat
+          accessibilityLabel={t('profile.proofDayStreakA11y', { count: dayStreak })}
+          backgroundColor="#F5E7C5"
+          color="#BD9147"
+          icon="flame-outline"
+          label={t('profile.proofDayStreak')}
+          value={dayStreak}
+        />
+      </View>
+    </View>
+  );
+
+  function ProofStat({
+    accessibilityLabel,
+    backgroundColor,
+    color,
+    icon,
+    label,
+    value,
+  }: ProofStatProps) {
+    return (
+      <View accessibilityLabel={accessibilityLabel} accessible style={styles.stat}>
+        <View style={[styles.iconCircle, { backgroundColor }]}>
+          <Ionicons color={color} name={icon} size={14} />
+        </View>
+        <View style={styles.statCopy}>
+          <Text style={styles.value}>{value}</Text>
+          <Text adjustsFontSizeToFit minimumFontScale={0.78} numberOfLines={1} style={styles.label}>
+            {label}
+          </Text>
+        </View>
+      </View>
+    );
+  }
+}
