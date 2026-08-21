@@ -2,6 +2,7 @@ import { createContext, PropsWithChildren, useCallback, useContext, useEffect, u
 
 import { useAuth } from '@/context/auth-context';
 import { getProgramExerciseName } from '@/data/exercises';
+import { useRewards } from '@/context/reward-context';
 import { supabase } from '@/lib/supabase';
 import {
   DisciplineStatus,
@@ -143,6 +144,7 @@ function getErrorMessage(error: unknown) {
 
 export function WorkoutProvider({ children }: PropsWithChildren) {
   const { user } = useAuth();
+  const { syncWorkoutDay } = useRewards();
   const [programs, setPrograms] = useState<WorkoutProgram[]>([]);
   const [isProgramsLoading, setIsProgramsLoading] = useState(true);
   const [programsError, setProgramsError] = useState<string>();
@@ -402,7 +404,11 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
     setPrograms((currentPrograms) => [createdProgram, ...currentPrograms]);
 
     if (!activeProgramId) {
+      // `client_today`: program değişmeden ÖNCE eski programın bekleyen
+      // günlerini uzlaştırırken kullanılacak üst sınır. Sunucu bu tarihi ±1
+      // gün olarak doğrular; tutarları yine kendisi hesaplar.
       const { error: activationError } = await supabase.rpc('activate_program', {
+        client_today: toDateKey(new Date()),
         target_program_id: createdProgram.id,
       });
       if (activationError) throw activationError;
@@ -412,7 +418,12 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
   }
 
   async function activateProgram(programId: string) {
-    const { error } = await supabase.rpc('activate_program', { target_program_id: programId });
+    // Bkz. `addProgram`: eski programın bekleyen günleri, program değişmeden
+    // önce sunucuda uzlaştırılır.
+    const { error } = await supabase.rpc('activate_program', {
+      client_today: toDateKey(new Date()),
+      target_program_id: programId,
+    });
     if (error) throw error;
 
     setActiveProgramId(programId);
@@ -653,6 +664,19 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
       ...currentCounts,
       [progressKey]: Math.min((currentCounts[progressKey] ?? 0) + 1, targetSets),
     }));
+
+    /**
+     * Ödüller **yalnızca** set gerçekten kalıcı olarak kaydedildikten sonra
+     * uzlaştırılır: yukarıdaki insert hata verirse buraya hiç gelinmez.
+     *
+     * Tek çağrıdır ve set + gün tamamlama + streak bonusunu sunucuda aynı
+     * transaction'da hesaplar; son sette birbiriyle yarışan üç istek oluşmaz.
+     * Tekrar çağrılması güvenlidir: defter idempotent olduğu için çift dokunma
+     * ve ağ tekrarı ikinci ödül üretmez. Ödül çağrısı bilinçli olarak
+     * beklenmez — kronometre, mola ve antrenman akışı hiçbir koşulda ağ
+     * cevabına bağlı kalmaz.
+     */
+    void syncWorkoutDay(toDateKey(new Date()), dateKey);
   }
 
   async function undoCompletedSet(dateKey: string, programExerciseId: string) {

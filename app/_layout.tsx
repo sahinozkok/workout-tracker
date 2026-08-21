@@ -11,6 +11,7 @@ import { AuthProvider, useAuth } from '@/context/auth-context';
 import { LanguageProvider, useLanguage, useTranslation } from '@/context/language-context';
 import { MascotProvider } from '@/context/mascot-context';
 import { ProfileProvider, useProfile } from '@/context/profile-context';
+import { RewardProvider } from '@/context/reward-context';
 import { ThemePreferenceProvider } from '@/context/theme-context';
 import { useWorkout, WorkoutProvider } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
@@ -48,12 +49,18 @@ function UserScopedApp() {
   return (
     <ProfileProvider key={user?.id ?? 'signed-out'}>
       <LanguageSync />
-      <WorkoutProvider>
-        <MascotProvider>
-          <SharedDisciplineSync />
-          <AppNavigation />
-        </MascotProvider>
-      </WorkoutProvider>
+      {/* Seviye/XP/gül sağlayıcısı WorkoutProvider'ın DIŞINDA durur: set
+          tamamlandığında workout akışı ödül uzlaştırmasını buradan çağırır.
+          `+N XP` katmanı da bu sağlayıcının içinde, bütün ekranların üzerinde
+          tek kopya olarak çizilir. */}
+      <RewardProvider>
+        <WorkoutProvider>
+          <MascotProvider>
+            <SharedDisciplineSync />
+            <AppNavigation />
+          </MascotProvider>
+        </WorkoutProvider>
+      </RewardProvider>
     </ProfileProvider>
   );
 }
@@ -171,15 +178,14 @@ function AppNavigation() {
             options={{ headerBackTitle: t('tabs.profile'), title: t('profile.settings') }}
           />
           {/* Arkadaşlık ekranları kök Stack'te açılır: alt sekme çubuğu
-              görünmez, native geri hareketi korunur. */}
-          <Stack.Screen
-            name="friends/index"
-            options={{ headerBackTitle: t('tabs.profile'), title: t('friends.title') }}
-          />
-          <Stack.Screen
-            name="friends/search"
-            options={{ headerBackTitle: t('friends.title'), title: t('friends.search') }}
-          />
+              görünmez, native geri hareketi korunur.
+
+              Native başlık kapatılır: bu iki ekran referans tasarımdaki kendi
+              başlığını (geri oku + ortalanmış başlık + üç nokta) çizer.
+              `headerShown: false` native-stack'in kaydırarak geri gitme
+              hareketini etkilemez, bu yüzden iOS jesti aynen çalışır. */}
+          <Stack.Screen name="friends/index" options={{ headerShown: false }} />
+          <Stack.Screen name="friends/search" options={{ headerShown: false }} />
           <Stack.Screen
             name="profile/[userId]"
             options={{ headerBackTitle: t('friends.title'), title: '' }}

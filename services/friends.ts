@@ -129,8 +129,11 @@ export async function getFriendProfile(targetUserId: string): Promise<FriendProf
     bio: string;
     display_name: string;
     id: string;
+    level: number | null;
     training_goal: string;
     username: string | null;
+    xp_for_next: number | null;
+    xp_into_level: number | null;
   }[])[0];
 
   if (!row) return undefined;
@@ -141,8 +144,12 @@ export async function getFriendProfile(targetUserId: string): Promise<FriendProf
     bio: row.bio,
     displayName: row.display_name,
     id: row.id,
+    // Seviye alanları RPC'den gelir; gül bakiyesi ve ödül geçmişi HİÇ gelmez.
+    level: row.level ?? 1,
     trainingGoal: row.training_goal,
     username: toOptional(row.username),
+    xpForNextLevel: row.xp_for_next ?? 0,
+    xpIntoLevel: row.xp_into_level ?? 0,
   };
 }
 

@@ -36,6 +36,7 @@ import {
   isMascotPitchFrame,
   MASCOT_TURN_SOURCES,
   MascotTurnFrame,
+  MascotTurnPlan,
   resolveMascotGillCycle,
   resolveMascotTurnPlan,
   MascotExpression,
@@ -47,6 +48,7 @@ import { MascotLoveParticles } from '@/components/mascot/mascot-love-particles';
 import { MASCOT_NAME } from '@/constants/mascot';
 import { Layout } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
+import { useOptionalRewards } from '@/context/reward-context';
 import { useMascot } from '@/context/mascot-context';
 import { useWorkout } from '@/context/workout-context';
 import { useMascotAutoGreeting } from '@/hooks/use-mascot-auto-greeting';
@@ -62,6 +64,7 @@ import {
   MascotState,
 } from '@/types/mascot';
 import { toDateKey } from '@/utils/discipline';
+import { createIdempotencyKey } from '@/utils/idempotency-key';
 import {
   getMascotDailyMessage,
   MascotDailyInput,
@@ -300,11 +303,13 @@ const IDLE_WIGGLE_RELEASE = 140;
  */
 const SETTLE_WAIT_DURATION = 1200;
 /**
- * Sol/sağ (yaw) dönüş karelerinin her birinin ekranda kalma süresi. Son kare de
- * bu kadar tutulur, böylece yolculuk başlamadan önce yeni duruş okunur.
+ * Yaw (dikey eksen) dönüş karelerinin her birinin ekranda kalma süresi. Son
+ * kare de bu kadar tutulur, böylece yolculuk başlamadan önce yeni duruş okunur.
  *
- * Toplam dönüş = kare sayısı × bu süre → önden yana (2 kare) = 260 ms.
- * Üst/alt (pitch) dönüş kendi sürelerini kullanır: `PITCH_FRAME_MS`.
+ * Toplam dönüş = kare sayısı × bu süre:
+ *   sol/sağ (2 kare: ¾ ön → yan)                        = 260 ms
+ *   üst     (4 kare: ¾ ön → yan → ¾ sırt → sırt)        = 520 ms
+ * Alt (pitch) dönüş kendi sürelerini kullanır: `PITCH_FRAME_MS`.
  */
 const TURN_FRAME_MS = 130;
 /**
@@ -335,8 +340,18 @@ const PITCH_CROSSFADE_MS = 60;
 /**
  * Sabit yürüyüş hızı (pt/sn). Süre mesafeden türetilir — böylece yakın da olsa
  * uzak da olsa Rosea hep aynı tempoda yürür.
+ *
+ * 190 → 235: yolculuk cihazda ağır görünüyordu. Tek başına bu sabiti artırmak
+ * YETMEZ — aşağıdaki alt sınır kısa mesafelerde süreyi belirlediği için
+ * 190 pt altındaki bütün yolculuklar hızlanmadan kalırdı. Bu yüzden ikisi
+ * birlikte, aynı oranda (≈ %20) düşürüldü.
+ *
+ * Oran ölçülerek seçildi: dönüş süresi artık tek parça hareketin içinde
+ * olduğu için kullanıcının hissettiği süre `yol + dönüş`tür. Yalnızca yol
+ * bileşenini %15 kısaltmak toplamı ancak %11–13 hızlandırıyordu; %20'lik
+ * kısalma toplamı hedeflenen ≈ %14–16 bandına taşıyor.
  */
-const SETTLE_TRAVEL_SPEED = 190;
+const SETTLE_TRAVEL_SPEED = 235;
 /**
  * Süre sınırları yalnızca güvenlik içindir; belirleyici olan `mesafe / hız`
  * hesabıdır. Alt sınır çok kısa mesafede hareketin "seğirme" gibi görünmesini,
@@ -350,8 +365,22 @@ const SETTLE_TRAVEL_SPEED = 190;
  * daha yüksek bir taban, kısa yolculukları gereksizce yavaşlatıp yolculuklar
  * arasındaki tempo farkını büyütüyordu.
  */
-const SETTLE_TRAVEL_MIN_DURATION = 1000;
-const SETTLE_TRAVEL_MAX_DURATION = 3400;
+/**
+ * 1000 → 800. Ölçüldü: gerçek yolculuk mesafesi 145–280 pt aralığında ve
+ * `mesafe / hız` bu aralığın alt yarısında (≈ 188 pt'nin altında) alt sınıra
+ * takılıyor. Yani kısa yolculukların süresini hız değil **bu taban**
+ * belirliyordu; hızla aynı oranda düşürülmeseydi yakın mesafelerde hiçbir
+ * hızlanma hissedilmezdi.
+ *
+ * Taban aynı zamanda `hareket süresi > dönüş süresi` güvenliğini taşır:
+ * 800 ms, en uzun dönüş dizisinden (pitch, 420 ms) hâlâ belirgin biçimde
+ * büyüktür, yani dönüş her koşulda Rosea ekrandayken biter.
+ *
+ * Üst sınır pratikte hiç devreye girmez (en uzun yolculuk ≈ 1192 ms); yine de
+ * güvenlik tavanının anlamı bozulmasın diye aynı oranda ölçeklendi.
+ */
+const SETTLE_TRAVEL_MIN_DURATION = 800;
+const SETTLE_TRAVEL_MAX_DURATION = 2720;
 /** Reduce Motion: aynı tek parça hareket, belirgin biçimde kısa. */
 const SETTLE_TRAVEL_REDUCED_DURATION = 260;
 /**
@@ -449,15 +478,30 @@ const DRAG_COMMIT_NET = 48;
 const DRAG_COMMIT_NET_AFTER_REVERSAL = 58;
 
 /**
- * Çift dokunma "sevme" tepkisi. Tepki ve balon aynı süreyi paylaşır, böylece
- * maskot ikisi de bitince tek seferde kenardaki peek durumuna döner.
+ * Sevme tepkisi. Tepki ve balon aynı süreyi paylaşır, böylece maskot ikisi de
+ * bitince tek seferde kenardaki peek durumuna döner.
  */
 const LOVE_REACTION_DURATION = 1700;
 /**
- * Ard arda çok hızlı çift dokunmalarda üst üste animasyon, zamanlayıcı veya
- * partikül oluşmasını engelleyen yerel bekleme.
+ * İki kalp burst'ü arasındaki en kısa süre.
+ *
+ * Kullanıcı parmağını kaldırmadan okşamaya devam ettiği sürece bu aralıkta bir
+ * yeni burst üretilir; aynı pencerede ikinci bir burst **hiçbir koşulda**
+ * oluşmaz. Bu sınırın tek otoritesi JS tarafındaki `loveCooldownRef`'tir;
+ * UI thread'deki `petLastBurstAt` yalnızca gereksiz köprü atlayışlarını keser.
+ *
+ * Aynı değer okşama **hareket penceresi** olarak da kullanılır (bkz.
+ * `PET_CONTINUE_PATH`), böylece "son pencerede gerçekten okşandı mı" sorusu
+ * burst aralığıyla birebir aynı süreyi ölçer.
  */
-const LOVE_COOLDOWN = 1500;
+const PET_BURST_INTERVAL = 890;
+/**
+ * Yeni bir burst için son burst'ten bu yana kat edilmesi gereken gerçek okşama
+ * yolu (pt). Parmağı hareketsiz tutmak yol üretmediği için sonsuza kadar kalp
+ * çıkmaz; biriken yol, iki adım arası `PET_BURST_INTERVAL`'i aşarsa sıfırlanır,
+ * yani yalnızca **son 890 ms içindeki** gerçek hareket sayılır.
+ */
+const PET_CONTINUE_PATH = 24;
 /** Kalpler tepkiden biraz önce sönerek kaybolur. */
 const LOVE_PARTICLE_LIFETIME = 1400;
 
@@ -593,6 +637,24 @@ function nearestAngle(current: number, target: number) {
 }
 
 /**
+ * Dönüş kare dizisinin toplam süresi (ms). Zamanlayıcı zincirinin gerçekten
+ * harcadığı süreyle **birebir** aynı hesaplanır, tahmin edilmez:
+ *
+ *   yaw (sol/sağ/üst) → her kare `TURN_FRAME_MS`, son kare de dâhil
+ *   pitch (alt)       → ara kareler `PITCH_FRAME_MS`, son `PITCH_SETTLE_MS`
+ *   Reduce Motion     → dizi hiç oynamaz, 0
+ *
+ * Çıkış hareketinin süresi bunun üstüne eklenir; böylece hem toplam tempo
+ * bugünküyle aynı kalır hem de "hareket, dönüş bitmeden asla bitmez" değişmezi
+ * matematiksel olarak garanti edilir.
+ */
+function resolveTurnSequenceMs(plan: MascotTurnPlan, reduceMotion: boolean) {
+  if (reduceMotion) return 0;
+  if (plan.pitch) return (plan.frames.length - 1) * PITCH_FRAME_MS + PITCH_SETTLE_MS;
+  return plan.frames.length * TURN_FRAME_MS;
+}
+
+/**
  * Ekranda yaşayan maskot.
  *
  * Ağ isteği, AI çağrısı veya Supabase sorgusu yapmaz; kullanıcı mesajlarını ve
@@ -617,6 +679,8 @@ export function FloatingMascot() {
   const pathname = usePathname();
   const router = useRouter();
   const reduceMotion = useReducedMotion();
+  // Sağlayıcı henüz mount edilmemişse ödül sessizce atlanır (bkz. hook).
+  const rewards = useOptionalRewards();
 
   const [state, setState] = useState<MascotState>('idle');
   /** Açık balonun türü. Kutlama balonu normal balonu devralır. */
@@ -827,6 +891,12 @@ export function FloatingMascot() {
   const petLastY = useSharedValue(0);
   const petMaxExcursion = useSharedValue(0);
   const petStartedAt = useSharedValue(0);
+  /** Son kalp burst'ünden bu yana kat edilen okşama yolu (pt). */
+  const petStrokeSinceBurst = useSharedValue(0);
+  /** Son burst'ün zamanı (UI thread kopyası; köprü atlayışını kısar). */
+  const petLastBurstAt = useSharedValue(0);
+  /** Son anlamlı okşama adımının zamanı; duran parmakta yol birikmez. */
+  const petLastStepAt = useSharedValue(0);
   /** `MODE_UNDECIDED` / `MODE_PETTING` / `MODE_DRAGGING`. */
   const petMode = useSharedValue(MODE_UNDECIDED);
   /**
@@ -1677,6 +1747,11 @@ export function FloatingMascot() {
     // durur ve eski geçişin geç callback'i ne aşama ilerletir ne kayıt yapar.
     // `restore: false` — konumu pan zaten devralıyor.
     cancelSettleToEdge({ restore: false });
+    // Yerleşme aktif değilse `cancelSettleToEdge` erken döner ve yolculuk
+    // açısına dokunmaz; bu yüzden taban burada da açıkça kurulur. Rosea
+    // tutulduğu anda yolculuk katmanı her koşulda nötrdür.
+    cancelAnimation(travelRotation);
+    travelRotation.value = 0;
     stopIdleWiggle();
     // Kullanıcı tutup hiç hareket ettirmese bile (hareket durumu değişimi
     // olmaz) kurtulma denemesi planlanır.
@@ -1696,6 +1771,7 @@ export function FloatingMascot() {
     reduceMotion,
     showBubble,
     stopIdleWiggle,
+    travelRotation,
   ]);
 
   /** AsyncStorage'a yalnızca sürükleme bittiğinde yazılır, her frame'de değil. */
@@ -1834,44 +1910,47 @@ export function FloatingMascot() {
   );
 
   /**
-   * Aşama C — bulunduğu noktadan **doğrudan hedef kenarın tamamen dışına**
-   * yürüyüş.
+   * Aşama C-1 — **çıkış hareketi**. Dönüş kareleriyle *aynı anda* başlar.
    *
-   * Bu, hareketin başından görünmez olana kadar **tek** `withTiming` çağrısıdır
-   * ve `Easing.linear` kullanır; ne arada duraklama, ne yeniden hızlanma, ne de
+   * Bu, hareketin başından Rosea görünmez olana kadar **tek** `withTiming`
+   * çağrısıdır. Dönüş bittiğinde yeniden başlatılmaz, sıfırlanmaz veya
+   * yeniden hedeflenmez: dönüş ve konum aynı zaman aralığında, tek bir hız
+   * eğrisi üzerinde ilerler. Ne arada duraklama, ne yeniden hızlanma, ne de
    * hedef yakınında yavaşlama olur.
    *
-   * Daha önce bu yol `travel` (kenara kadar) + `exiting` (kenardan dışarı) diye
-   * ikiye bölünmüştü: ilk animasyon kenardaki peek noktasında `Easing.inOut` ile
-   * hızı sıfıra indiriyor, ikincisi `Easing.in` ile sıfırdan yeniden hızlanıyordu
-   * — cihazda "git, dur, tekrar git" olarak görülen davranışın nedeni buydu.
+   * **Eğri — `Easing.in(Easing.quad)`**
+   *   • t = 0'da hız tam sıfırdır (türev 2t), yani hareket duruştan doğar;
+   *     dönüşün üzerine binen ani bir hız sıçraması oluşmaz.
+   *   • Hız boyunca **monoton** artar (ivme pozitif ve sabit): hiçbir noktada
+   *     plato, duraklama veya ikinci bir hareket parçası hissedilmez.
+   *   • Tepe hız ortalamanın **iki** katıdır. `Easing.in(Easing.cubic)` de
+   *     değerlendirildi: t³ eğrisi sürenin ilk %20'sinde mesafenin yalnızca
+   *     %0,8'ini kat ediyor — tipik 145–280 pt'lik yolculukta dönüş penceresi
+   *     boyunca ≈1 pt yol alınıyor, yani "dönüşle birlikte hareket" gözle hiç
+   *     görülmüyor, buna karşılık tepe hız ortalamanın 3 katına çıkıyordu.
+   *     Quad aynı pencerede ≈6–8 pt yol alır: başlangıç hâlâ neredeyse
+   *     duruştur ama örtüşme gerçekten görünür ve çıkış aşırı hızlanmaz.
+   *   • Reduce Motion tek istisnadır ve `Easing.linear` ile mevcut sade
+   *     davranışında bırakılır: oraya gösterişli bir ivmelenme eklenmez.
    *
-   * Görsel kare bu aşamada **hiç değişmez**: dönüş planının son karesi neyse
-   * yolculuk boyunca o kalır. Yürüme hissi yalnızca ritmik bob + gövde
-   * salınımından gelir. Bu aşamada hiçbir kayıt yapılmaz.
+   * **Süre** mevcut mesafe tabanlı hesaptır (`mesafe / SETTLE_TRAVEL_SPEED`,
+   * aynı sınırlarla) **artı** dönüş dizisinin süresi. Dönüş artık hareketin
+   * içine gömüldüğü için toplam süre bugünküyle birebir aynı kalır — eskiden
+   * dönüş ve yolculuk arka arkaya oynuyordu — yani hareket ne hızlanır ne
+   * yavaşlar, yalnızca zamana dağılımı değişir. Bu toplama aynı zamanda
+   * `süre > dönüş süresi` değişmezini garanti eder: dönüş dizisi Rosea daha
+   * ekrandayken kesin olarak biter ve `emerging` asla çıkış tamamlanmadan
+   * başlamaz.
    */
-  const startLeavingPhase = useCallback(
+  const startExitTranslation = useCallback(
     (
       transitionId: number,
       edge: MascotEdge,
       edgeRatio: number,
       targetX: number,
       targetY: number,
-      travelFrame: MascotTurnFrame,
+      turnSequenceMs: number,
     ) => {
-      if (!isMountedRef.current || transitionId !== transitionIdRef.current) return;
-
-      settlePhaseRef.current = 'leaving';
-      setSettlePhase('leaving');
-
-      // Yürüyüş ritmi ve solungaç döngüsü yalnızca burada başlar: bekleme ve
-      // dönüş boyunca Rosea yerinde ve sakin durur. Reduce Motion'da ikisi de
-      // hiç oynamaz; yolculuk karesi tek ve sabit kalır.
-      if (!reduceMotion) {
-        startTravelGait();
-        startGillCycle(transitionId, travelFrame);
-      }
-
       /**
        * Bitiş noktası doğrudan **ekranın tamamen dışıdır** — kenardaki peek
        * noktası bir ara durak DEĞİLDİR. Kenar ekseninde hedef orana hizalanır,
@@ -1896,22 +1975,26 @@ export function FloatingMascot() {
       const distance = Math.sqrt(dx * dx + dy * dy);
       // Süre mesafeden türer: tempo her mesafede aynı kalır. Sınırlar yalnızca
       // güvenlik içindir, normal mesafelerde devreye girmezler.
-      const duration = reduceMotion
+      const travelDuration = reduceMotion
         ? SETTLE_TRAVEL_REDUCED_DURATION
         : Math.min(
             SETTLE_TRAVEL_MAX_DURATION,
             Math.max(SETTLE_TRAVEL_MIN_DURATION, (distance / SETTLE_TRAVEL_SPEED) * 1000),
           );
+      // Dönüş süresi artık ayrı bir aşama değil, bu hareketin ilk (en yavaş)
+      // bölümüdür; bu yüzden süreye eklenir.
+      const duration = travelDuration + turnSequenceMs;
 
       const onDone = (finished?: boolean) => {
         'worklet';
+        // Animasyon iptal edildiyse (yeniden tutma, gizlenme) hiçbir şey olmaz.
         if (!finished) return;
         runOnJS(startEmergePhase)(transitionId, edge, edgeRatio, targetX, targetY);
       };
 
       /**
-       * İki eksen de **aynı süreyi ve aynı doğrusal easing'i** paylaşır, bu
-       * yüzden hareket düz bir çizgi üzerinde sabit hızlıdır.
+       * İki eksen de **aynı süreyi ve aynı easing'i** paylaşır, bu yüzden
+       * hareket düz bir çizgi üzerinde ilerler ve iki eksen faz kaymaz.
        *
        * Pratikte hareket zaten tek eksenlidir: `settleToEdge` kenar oranını
        * mevcut konumdan türettiği için dikey kenarlarda `targetY === positionY`,
@@ -1920,15 +2003,51 @@ export function FloatingMascot() {
        * değişmez ileride bozulsa bile hareket doğru kalır.
        *
        * Tamamlanma callback'i **yalnızca daha uzun yol alan eksene** bağlanır:
-       * iki eksen birlikte bittiği için aşama tek bir kez ilerler — çift
+       * iki eksen birlikte bittiği için `emerging` tek bir kez başlar — çift
        * callback imkânsızdır.
        */
-      const timing = { duration, easing: Easing.linear } as const;
+      const timing = {
+        duration,
+        easing: reduceMotion ? Easing.linear : Easing.in(Easing.quad),
+      } as const;
       const useX = Math.abs(dx) >= Math.abs(dy);
       positionX.value = useX ? withTiming(outX, timing, onDone) : withTiming(outX, timing);
       positionY.value = useX ? withTiming(outY, timing) : withTiming(outY, timing, onDone);
     },
-    [positionX, positionY, reduceMotion, startEmergePhase, startGillCycle, startTravelGait],
+    [positionX, positionY, reduceMotion, startEmergePhase],
+  );
+
+  /**
+   * Aşama C-2 — dönüş dizisi bittiğinde yolculuk **görünümüne** geçiş.
+   *
+   * Bu fonksiyon konuma HİÇ dokunmaz: hareket dönüşle birlikte çoktan başladı
+   * ve tek parça olarak sürüyor. Burada yalnızca aşama bayrağı ilerler ve
+   * yürüyüş ritmi + solungaç döngüsü devreye girer — ikisi de dönüş kareleri
+   * oynarken çalışamaz, çünkü solungaç döngüsü de `turnFrame` state'ini yazar
+   * ve dönüş zincirinin kareleriyle çakışırdı.
+   *
+   * **Yalnızca** dönüş zamanlayıcı zincirinin son adımından çağrılır; konum
+   * animasyonunun tamamlanma callback'i buraya hiç uğramaz. Böylece aynı hedef
+   * için iki farklı callback'in bu geçişi tetiklemesi yapısal olarak imkânsız
+   * hâle gelir.
+   *
+   * Görsel kare bu aşamada dönüş planının son karesidir ve yolculuk boyunca
+   * (solungaç varyantları dışında) değişmez. Bu aşamada hiçbir kayıt yapılmaz.
+   */
+  const startCruisePhase = useCallback(
+    (transitionId: number, travelFrame: MascotTurnFrame) => {
+      if (!isMountedRef.current || transitionId !== transitionIdRef.current) return;
+
+      settlePhaseRef.current = 'leaving';
+      setSettlePhase('leaving');
+
+      // Reduce Motion'da ritim de solungaç döngüsü de hiç oynamaz; yolculuk
+      // karesi tek ve sabit kalır.
+      if (reduceMotion) return;
+      startTravelGait();
+      startGillCycle(transitionId, travelFrame);
+    },
+    [reduceMotion, startGillCycle, startTravelGait],
   );
 
   /**
@@ -1939,6 +2058,12 @@ export function FloatingMascot() {
    * gerekmez; arka kare kafası yukarı çizili olduğu için yalnızca alt kenarda
    * yarım tur gerekir.
    *
+   * **Çıkış hareketi tam burada, dönüş kareleriyle aynı anda başlar.** Dönüş
+   * ve konum artık arka arkaya değil, örtüşerek ilerler: `startExitTranslation`
+   * ilk kare ekrana yazılmadan önce çağrılır ve ekran dışına kadar giden tek
+   * parça hareketi kurar. Dönüş bittiğinde hareket yeniden başlatılmaz;
+   * `startCruisePhase` yalnızca yürüyüş ritmini ve solungaç döngüsünü devralır.
+   *
    * Sol/sağ hedefte rotasyon ara karelerle birlikte yumuşakça ilerler ve tam
    * olarak son kare göründüğünde tamamlanır. Üst/alt (pitch) hedefte ise
    * rotasyon hiç animasyonlanmaz: yön, gövde `pitch-edge` karesinde yatay bir
@@ -1946,7 +2071,8 @@ export function FloatingMascot() {
    * arası geçiş her iki yolda da `<Image>`'ın kendi crossfade'ini kullanır;
    * paralel bir geçiş sistemi kurulmaz.
    *
-   * Bu aşamada konum hiç değişmez ve yürüyüş ritmi başlamaz.
+   * Bu aşamada yürüyüş ritmi ve solungaç döngüsü henüz başlamaz — konum ise
+   * ivmelenerek çoktan yola çıkmıştır.
    */
   const startTurningPhase = useCallback(
     (transitionId: number, edge: MascotEdge, edgeRatio: number, targetX: number, targetY: number) => {
@@ -1957,15 +2083,25 @@ export function FloatingMascot() {
 
       const plan = resolveMascotTurnPlan(edge);
       const travelFrame = plan.frames[plan.frames.length - 1];
+      const turnSequenceMs = resolveTurnSequenceMs(plan, reduceMotion);
+
+      /**
+       * Konum hareketi **ilk dönüş karesinden önce** kurulur: aşağıdaki üç
+       * yolun (Reduce Motion / pitch / yaw) hepsi bu tek çağrının üstüne biner,
+       * yani dört kenarın hiçbirinde dönüş ile hareket arasında sıra farkı
+       * kalmaz. Hareket duruştan başladığı için bu ilk anlarda Rosea neredeyse
+       * yerinde durur ve dönüşü yapar; hız dönüş ilerledikçe artar.
+       */
+      startExitTranslation(transitionId, edge, edgeRatio, targetX, targetY, turnSequenceMs);
 
       // Reduce Motion: bütün ara kare dizisi atlanır, doğrudan doğru yolculuk
-      // karesi (`back`) ve açısı (üst 0°, alt 180°) uygulanır. Leaving davranışı
-      // normal yolundan devam eder.
+      // karesi (`back`) ve açısı (üst 0°, alt 180°) uygulanır. Hareket yukarıda
+      // zaten başladı; burada yalnızca yolculuk görünümüne geçilir.
       if (reduceMotion) {
         cancelAnimation(travelRotation);
         travelRotation.value = plan.rotation;
         setTurnFrame(travelFrame);
-        startLeavingPhase(transitionId, edge, edgeRatio, targetX, targetY, travelFrame);
+        startCruisePhase(transitionId, travelFrame);
         return;
       }
 
@@ -1982,7 +2118,9 @@ export function FloatingMascot() {
        * dönerken görür. Üst hedefte `plan.rotation` zaten 0'dır ve aynı yazma
        * etkisizdir.
        *
-       * Yolculuk (ve solungaç döngüsü) son kare okunmadan başlamaz.
+       * Dizi oynarken Rosea **hedef kenara doğru ivmelenerek** ilerler; yön
+       * değişimi de bu ilerlemenin ortasında, edge-on karede olur. Yalnızca
+       * yürüyüş ritmi ve solungaç döngüsü son kare okunana kadar bekler.
        */
       if (plan.pitch) {
         // Tek zamanlayıcı zinciri: aynı anda ikinci bir dönüş dizisi oluşamaz.
@@ -1990,6 +2128,17 @@ export function FloatingMascot() {
           if (!isMountedRef.current || transitionId !== transitionIdRef.current) return;
 
           const frame = plan.frames[index];
+          /**
+           * Yön yaşam döngüsü — taban `startSettleToEdge`'de 0'a sabitlendi:
+           *
+           *   üst  (`plan.rotation === 0`)   → dizinin tamamı 0°'da kalır.
+           *     Buradaki yazma da 0'dır, yani üst kenar alt kenarın 180°
+           *     dalına hiçbir karede giremez; kafa hareket yönünde (yukarı)
+           *     bakarak ekran dışına çıkar.
+           *   alt  (`plan.rotation === 180`) → 180° YALNIZCA `pitch-edge`
+           *     karesinde, gövde yatay bir silüetken atomik uygulanır;
+           *     `pitch-back-mid` ve `back` aynı yönde devam eder.
+           */
           if (frame === 'pitch-edge') {
             cancelAnimation(travelRotation);
             travelRotation.value = plan.rotation;
@@ -2001,7 +2150,7 @@ export function FloatingMascot() {
             () => {
               turnFrameTimerRef.current = undefined;
               if (isLast) {
-                startLeavingPhase(transitionId, edge, edgeRatio, targetX, targetY, travelFrame);
+                startCruisePhase(transitionId, travelFrame);
                 return;
               }
               pitchStep(index + 1);
@@ -2015,12 +2164,21 @@ export function FloatingMascot() {
       }
 
       /**
-       * Rotasyon ara karelerle birlikte yumuşakça ilerler; hedef açı yolculuk
-       * başlamadan **önce** tamamlanır, hiçbir noktada ani sıçrama olmaz.
+       * Yaw (dikey eksen) dönüş zinciri — sol, sağ **ve üst** hedef.
        *
-       * Buraya yalnızca sol/sağ hedef gelir (iki kare): eğim, `side-*` karesi
-       * ekrandayken gözle takip edilebilir biçimde oturur ve tam yolculuk
-       * anında tamamlanır.
+       * Rotasyon ara karelerle birlikte yumuşakça ilerler ve dönüş dizisiyle
+       * aynı anda tamamlanır; hiçbir noktada ani sıçrama olmaz.
+       *
+       * Sol/sağ (iki kare): baş önde ≈45°'lik süzülme açısı, `side-*` karesi
+       * ekrandayken gözle takip edilebilir biçimde oturur.
+       *
+       * Üst (dört kare): `plan.rotation` sıfırdır ve taban da sıfıra
+       * sabitlendiği için buradaki `withTiming` etkisiz bir 0 → 0 geçişidir —
+       * Rosea üst yolculukta hiçbir karede dönmez, yalnızca sprite arkıyla
+       * arkasını döner ve kafası yukarı bakarak ilerler.
+       *
+       * Her iki durumda da Rosea bu sırada hedef kenara doğru çoktan, çok
+       * yavaş biçimde süzülmeye başlamıştır.
        */
       const rotationDuration = Math.max(2, plan.frames.length - 1) * TURN_FRAME_MS;
       travelRotation.value = withTiming(nearestAngle(travelRotation.value, plan.rotation), {
@@ -2036,7 +2194,7 @@ export function FloatingMascot() {
         turnFrameTimerRef.current = setTimeout(() => {
           turnFrameTimerRef.current = undefined;
           if (index === plan.frames.length - 1) {
-            startLeavingPhase(transitionId, edge, edgeRatio, targetX, targetY, travelFrame);
+            startCruisePhase(transitionId, travelFrame);
             return;
           }
           step(index + 1);
@@ -2045,7 +2203,7 @@ export function FloatingMascot() {
 
       step(0);
     },
-    [reduceMotion, startLeavingPhase, travelRotation],
+    [reduceMotion, startCruisePhase, startExitTranslation, travelRotation],
   );
 
   /**
@@ -2071,13 +2229,29 @@ export function FloatingMascot() {
       setSettlePhase('waiting');
       // Bekleme canonical ön görünüşte geçer.
       setTurnFrame(undefined);
+      /**
+       * **Yön tabanı burada kesinleşir.** Yolculuk katmanı, yerleşmenin ilk
+       * karesinden itibaren bilinen 0°'dır.
+       *
+       * Daha önce bu değer yalnızca *başka* yolların yan etkisi olarak
+       * sıfırlanıyordu (`cancelSettleToEdge` ve `startEmergePhase`). İkisi de
+       * çalışmadığında — örneğin aktif yerleşme yokken yapılan bir dokunuşta
+       * `cancelSettleToEdge` erken döndüğü için — önceki yerleşmenin açısı
+       * ayakta kalabiliyordu. Üst kenar planı `rotation: 0` olduğu ve pitch
+       * dalı yönü yalnızca `pitch-edge` karesinde yazdığı için, kalıntı bir
+       * 180° üst yolculuğun ilk karelerinde Rosea'yı ters gösterip edge
+       * karesinde 0'a çarparak "takla" olarak okunuyordu. Taban artık
+       * miras alınamaz.
+       */
+      cancelAnimation(travelRotation);
+      travelRotation.value = 0;
 
       settleWaitTimerRef.current = setTimeout(() => {
         settleWaitTimerRef.current = undefined;
         startTurningPhase(transitionId, edge, edgeRatio, targetX, targetY);
       }, SETTLE_WAIT_DURATION);
     },
-    [clearSettleTimers, startTurningPhase, stopIdleWiggle],
+    [clearSettleTimers, startTurningPhase, stopIdleWiggle, travelRotation],
   );
 
   /**
@@ -2417,31 +2591,66 @@ export function FloatingMascot() {
    *     zamanlayıcı veya partikül üretmez.
    */
   /**
-   * Okşama tanındığı anda çalışır — parmak **hâlâ ekranda**.
+   * Bir kalp burst'ü üretir — parmak **hâlâ ekranda**.
    *
-   * Kalpler ve mutlu ifade burada başlar; parmağın kalkması beklenmez. Bırakma
-   * anında hiçbir şey tetiklenmediği için ikinci bir tepki de oluşmaz.
+   * Hem okşamanın tanındığı ilk anda hem de aynı dokunma oturumu boyunca
+   * okşama sürerken (her `PET_BURST_INTERVAL`'de en çok bir kez) çağrılır.
+   * Tek giriş noktası olduğu için hız sınırının tek otoritesi de burasıdır:
+   * `loveCooldownRef`. Worklet tarafındaki zaman damgası yalnızca köprü
+   * atlayışlarını kısar, karar vermez.
    *
-   * `playReaction('loved')` bilinçli olarak yeniden kullanılır: `loved` dalı
-   * zaten hiçbir zıplama/ölçek animasyonu oynatmaz, yalnızca kalp partikülünü
-   * ve mutlu ifadeyi açar, balon açmaz. Rosea `isFullyVisible` hesabında
-   * `loved` hariç tutulduğu için kenardaki duruşundan da çıkmaz.
+   * **İfade titremesi bilinçli olarak engellenir.** Süren tepki zaten `loved`
+   * ise `playReaction` YENİDEN çağrılmaz — o yol `cancelAnimation` çağırır ve
+   * yüz ifadesini yeniden kurardı. Onun yerine yalnızca:
+   *   • yeni bir kalp burst'ü açılır (`loveRunRef` kimliği artar — eski
+   *     partikül ağacı `key` değiştiği için unmount olur, üst üste birikmez),
+   *   • tepkinin süresi yeni bir `runId` ile tazelenir, böylece okşama
+   *     sürerken mutlu ifade kararlı kalır.
+   *
+   * `loved` dalı hiçbir zıplama/ölçek animasyonu oynatmaz, balon açmaz ve
+   * `isFullyVisible` hesabında hariç tutulur; Rosea kenardaki duruşundan
+   * çıkmaz, sıçramaz ve konumu değişmez.
    */
-  const handlePetStart = useCallback(() => {
+  const handlePetLove = useCallback(() => {
     if (!isMountedRef.current) return;
-    // Süren bir tepki varsa bölünmez.
-    if (activeReactionRef.current) return;
 
-    // Mevcut sevme bekleme süresi aynen korunur. Bekleme içindeysek yalnızca
-    // yeni kalp üretilmez; mod zaten `petting` olduğu için Rosea yine
-    // yerinden oynamaz.
+    // Daha yüksek öncelikli bir tepki (set/workout kutlaması) sürüyorsa
+    // bölünmez. Süren tepki zaten `loved` ise okşama devam ediyor demektir.
+    const current = activeReactionRef.current;
+    if (current && current.type !== 'loved') return;
+
     const now = Date.now();
-    if (now - loveCooldownRef.current < LOVE_COOLDOWN) return;
+    if (now - loveCooldownRef.current < PET_BURST_INTERVAL) return;
     loveCooldownRef.current = now;
 
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
-    playReaction('loved');
-  }, [playReaction]);
+
+    /**
+     * Ödül tam olarak burada, cooldown kapısını geçen HER gerçek burst için
+     * bir kez istenir — görsel dala bakılmaksızın, çünkü ilk burst de devam
+     * burst'ü de aynı derecede gerçek bir okşamadır.
+     *
+     * Günlük/haftalık/toplam sınır YOKTUR (bilinçli ürün kararı). Anahtar
+     * burst başına üretilir: aynı isteğin ağ tekrarı aynı anahtarı taşıdığı
+     * için sunucuda tek `+1` yazılır, yeni burst'ler ise ayrı ödüllerdir.
+     * Çağrı beklenmez; okşama akışı ağ cevabına hiçbir koşulda bağlı değildir.
+     */
+    void rewards?.awardPetBurst(createIdempotencyKey());
+
+    if (!current) {
+      // Oturumun ilk burst'ü: ifade + kalpler birlikte açılır.
+      playReaction('loved');
+      return;
+    }
+
+    // Devam eden okşama: ifadeye dokunulmaz, yalnızca kalpler tazelenir.
+    loveRunRef.current += 1;
+    setLoveRun(loveRunRef.current);
+    reactionRunRef.current += 1;
+    const next: ActiveReaction = { runId: reactionRunRef.current, type: 'loved' };
+    activeReactionRef.current = next;
+    setActiveReaction(next);
+  }, [playReaction, rewards]);
 
   // Aynı tepki React yeniden render olduğunda tekrar oynatılmaz: artan kimlik
   // bir kez tüketilir. Maskot görünmüyorsa olay düşürülür, kuyrukta beklemez.
@@ -2643,6 +2852,20 @@ export function FloatingMascot() {
       runOnJS(startSettleToEdge)(bestEdge, edgeRatio, targetX, targetY);
     };
 
+    /**
+     * Okşama oturumunu kapatır. Parmak kalktığı (veya sistem hareketi iptal
+     * ettiği) anda mod ve devam sayaçları temizlenir: geç bir güncelleme yeni
+     * oturuma kalp yazamaz, bir sonraki dokunuş her şeye sıfırdan başlar.
+     * Zamanlayıcı kurulmadığı için temizlenecek bekleyen timer da yoktur.
+     */
+    const endPetSession = () => {
+      'worklet';
+      petMode.value = MODE_UNDECIDED;
+      petStrokeSinceBurst.value = 0;
+      petLastBurstAt.value = 0;
+      petLastStepAt.value = 0;
+    };
+
     const pan = Gesture.Pan()
       // Küçük dokunuşlar sürükleme sayılmaz, tap'e yol verir.
       .minDistance(DRAG_MIN_DISTANCE)
@@ -2669,11 +2892,56 @@ export function FloatingMascot() {
         petLastY.value = 0;
         petMaxExcursion.value = 0;
         petStartedAt.value = Date.now();
+        // Kesintisiz okşama sayaçları da her yeni oturumda temiz başlar:
+        // önceki dokunuşun birikmiş yolu yeni oturuma kalp yazamaz.
+        petStrokeSinceBurst.value = 0;
+        petLastBurstAt.value = 0;
+        petLastStepAt.value = 0;
       })
       .onUpdate((event) => {
-        // Okşama modunda Rosea tamamen sabittir: konum yazılmaz, fizik
-        // çalışmaz. Parmak üzerinde gezinmeye devam edebilir.
-        if (petMode.value === MODE_PETTING) return;
+        /**
+         * Okşama modunda Rosea tamamen sabittir: konum, ölçek ve fizik
+         * **hiç** yazılmaz — bu blok hiçbir koşulda aşağıdaki sürükleme
+         * koduna düşmez, bu yüzden okşama Rosea'yı yerinden oynatamaz.
+         *
+         * Fark şu: parmak artık takip edilmeye devam eder. Kullanıcı aynı
+         * dokunuşu sürdürdükçe her `PET_BURST_INTERVAL`'de bir yeni kalp
+         * burst'ü istenir; parmağı kaldırıp yeniden dokunmak gerekmez.
+         *
+         * İki koşul birlikte aranır:
+         *   • son burst'ten bu yana en az `PET_BURST_INTERVAL` (890 ms)
+         *     geçmiş olmalı,
+         *   • o süre içinde en az `PET_CONTINUE_PATH` kadar **gerçek** okşama
+         *     yolu kat edilmiş olmalı.
+         * İkincisi sayesinde parmağı hareketsiz tutmak sonsuza kadar kalp
+         * üretmez; birikmiş yol, adımlar arası boşluk 890 ms'yi aşarsa
+         * sıfırlanır, yani yalnızca son pencerede yapılan hareket sayılır.
+         * Yön dönüşü aranmaz — küçük doğal yön değişimleri de okşamadır.
+         */
+        if (petMode.value === MODE_PETTING) {
+          const now = Date.now();
+          const stepX = event.translationX - petLastX.value;
+          const stepY = event.translationY - petLastY.value;
+          petLastX.value = event.translationX;
+          petLastY.value = event.translationY;
+
+          const stepLength = Math.sqrt(stepX * stepX + stepY * stepY);
+          if (stepLength >= PET_MIN_STEP) {
+            if (now - petLastStepAt.value > PET_BURST_INTERVAL) petStrokeSinceBurst.value = 0;
+            petStrokeSinceBurst.value += stepLength;
+            petLastStepAt.value = now;
+          }
+
+          if (
+            now - petLastBurstAt.value >= PET_BURST_INTERVAL &&
+            petStrokeSinceBurst.value >= PET_CONTINUE_PATH
+          ) {
+            petLastBurstAt.value = now;
+            petStrokeSinceBurst.value = 0;
+            runOnJS(handlePetLove)();
+          }
+          return;
+        }
 
         /**
          * Karar aşaması. Yalnızca shared value okur/yazar; JS'e ancak mod
@@ -2716,7 +2984,12 @@ export function FloatingMascot() {
           ) {
             // Okşama: kalpler parmak HÂLÂ ekrandayken başlar.
             petMode.value = MODE_PETTING;
-            runOnJS(handlePetStart)();
+            // İlk burst'ün penceresi buradan açılır; devam eden okşama bir
+            // sonraki burst'ü en erken `PET_BURST_INTERVAL` sonra isteyebilir.
+            petLastBurstAt.value = Date.now();
+            petLastStepAt.value = petLastBurstAt.value;
+            petStrokeSinceBurst.value = 0;
+            runOnJS(handlePetLove)();
             return;
           }
 
@@ -2830,6 +3103,7 @@ export function FloatingMascot() {
         // verilmemiş harekette Rosea hiç kıpırdamadığı için yerleştirilecek
         // bir şey yoktur; bırakma da hiçbir tepki üretmez.
         if (petMode.value === MODE_DRAGGING) settleToEdge();
+        endPetSession();
       })
       .onFinalize(() => {
         // Buraya iki şekilde gelinir:
@@ -2842,6 +3116,7 @@ export function FloatingMascot() {
 
         isPanActive.value = false;
         if (petMode.value === MODE_DRAGGING) settleToEdge();
+        endPetSession();
       });
 
     /**
@@ -2903,8 +3178,11 @@ export function FloatingMascot() {
     peekEdgeShared,
     dragOffsetX,
     dragOffsetY,
-    handlePetStart,
+    handlePetLove,
     petAxisSign,
+    petLastBurstAt,
+    petLastStepAt,
+    petStrokeSinceBurst,
     petLastX,
     petLastY,
     petMaxExcursion,
@@ -3105,15 +3383,16 @@ export function FloatingMascot() {
   const { frame: blinkFrame, isInstant: isBlinkInstant } = useMascotBlink({ canBlink });
 
   /**
-   * Pitch dizisi ekrandayken kısa crossfade kullanılır. Dizi `pitch-*` ara
-   * kareleriyle başlar ve **dönüş aşaması sürerken** `back` karesiyle biter;
-   * yolculuk (`leaving`) başladıktan sonra `back` artık solungaç döngüsüne
-   * aittir ve normal ifade geçişini kullanmaya devam eder. Sol/sağ dönüş
-   * hiçbir zaman `back` karesine uğramadığı için bu koşuldan etkilenmez.
+   * Kısa crossfade yalnızca **pitch ara kareleri** için kullanılır: onlar
+   * 100 ms ekranda kalır ve daha uzun bir geçiş kareleri birbirine bulandırır.
+   *
+   * `back` karesi bilinçli olarak bunun dışındadır. Artık iki ayrı arkın sonu
+   * olabiliyor (üst kenarın yaw arkı ve alt kenarın pitch arkı) ve her iki
+   * durumda da yolculuk boyunca ekranda kaldığı için normal ifade geçişi
+   * yeterlidir — bulanma riski yoktur, ayrıca ayrım için ekstra state
+   * tutulması gerekmez.
    */
-  const isPitchTurnFrame =
-    turnFrame !== undefined &&
-    (isMascotPitchFrame(turnFrame) || (settlePhase === 'turning' && turnFrame === 'back'));
+  const isPitchTurnFrame = turnFrame !== undefined && isMascotPitchFrame(turnFrame);
 
   if (isHidden) return null;
 

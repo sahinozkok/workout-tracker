@@ -32,15 +32,23 @@ export type FriendRequest = FriendSummary & {
   direction: FriendshipDirection;
 };
 
-/** Arkadaş profilinde gösterilen alanlar; özel workout verisi içermez. */
+/**
+ * Arkadaş profilinde gösterilen alanlar; özel workout verisi içermez.
+ *
+ * Seviye ve seviye içi ilerleme **paylaşılır**; gül bakiyesi ve ödül geçmişi
+ * hiçbir koşulda paylaşılmaz (RPC bu alanları zaten döndürmez).
+ */
 export type FriendProfile = {
   avatarUrl?: string;
   bannerUrl?: string;
   bio: string;
   displayName: string;
   id: string;
+  level: number;
   trainingGoal: string;
   username?: string;
+  xpForNextLevel: number;
+  xpIntoLevel: number;
 };
 
 /** Arkadaşın paylaşılan disiplin özeti: yalnızca tarih ve durum. */
