@@ -127,6 +127,39 @@ export const Type = {
   footnote: { fontSize: 11, fontWeight: '400' as const },
 };
 
+/**
+ * Düzenleme/form yüzeylerinin ORTAK ölçeği (Programı düzenle, Egzersizi
+ * düzenle, Ayarlar).
+ *
+ * Ana Sayfa tipografisinden türetildi ve bilinçli olarak dar tutuldu:
+ * **dört boyut** (17 / 15 / 13 / 11) ve **iki temel ağırlık** (600 / 400).
+ * Burada yalnızca `Type` içinde bulunmayan iki kombinasyon tanımlanır; geri
+ * kalanı doğrudan mevcut tokenlardır:
+ *   etiket   → `Type.eyebrow` (11 / 600, letterSpacing 0.6)
+ *   açıklama → `Type.caption` (13 / 400)
+ *   değer    → `Type.body`    (15 / 400)
+ *
+ * Renk tanımlanmaz: her ekran kendi tema renklerini uygular, böylece açık ve
+ * koyu tema tek kaynaktan gelir.
+ */
+export const Form = {
+  /** Sayfa/sheet başlığı. Ana Sayfa'daki 19/600 başlıktan bir kademe sakin. */
+  title: { fontSize: 17, fontWeight: '600' as const },
+  /** Birincil eylem metni — Ana Sayfa'daki `startButtonText` ile aynı. */
+  action: { fontSize: 15, fontWeight: '600' as const },
+  /**
+   * Input, buton ve sembol seçici AYNI yükseklikte durur. Değer aynı zamanda
+   * minimum dokunma alanıdır, bu yüzden kompakt görünüm erişilebilirliği
+   * bozmaz.
+   */
+  controlHeight: Layout.minTouchSize,
+  controlRadius: Layout.radiusMedium,
+  /** Etiket ↔ kontrol arası (4 pt sistemi). */
+  fieldGap: 8,
+  /** Alanlar arası. */
+  sectionGap: 24,
+};
+
 export const Fonts = Platform.select({
   ios: {
     /** iOS `UIFontDescriptorSystemDesignDefault` */

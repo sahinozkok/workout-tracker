@@ -5,7 +5,7 @@ import { Alert, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'r
 
 import { WorkoutVisualDisplay } from '@/components/workout-visual-display';
 import { PROGRAM_ICON_OPTIONS } from '@/constants/program-icons';
-import { ThemeColors } from '@/constants/theme';
+import { Form, ThemeColors, Type } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import { WorkoutVisual } from '@/types/workout';
@@ -13,12 +13,22 @@ import { WorkoutVisual } from '@/types/workout';
 type WorkoutVisualPickerProps = {
   onSelect: (visual: WorkoutVisual) => void;
   selectedVisual: WorkoutVisual;
+  variant?: 'default' | 'exerciseEdit' | 'programCreate' | 'programEdit';
 };
 
-export function WorkoutVisualPicker({ onSelect, selectedVisual }: WorkoutVisualPickerProps) {
+const PROGRAM_CREATE_ACCENT = '#A56BEF';
+
+export function WorkoutVisualPicker({
+  onSelect,
+  selectedVisual,
+  variant = 'default',
+}: WorkoutVisualPickerProps) {
   const { colors, isDark } = useAppTheme();
   const { t } = useTranslation();
-  const styles = createStyles(colors);
+  const isProgramCreate = variant === 'programCreate';
+  const isProgramEdit = variant === 'programEdit';
+  const isExerciseEdit = variant === 'exerciseEdit';
+  const styles = createStyles(colors, isExerciseEdit, isProgramCreate, isProgramEdit);
   const [textValue, setTextValue] = useState(selectedVisual.type === 'text' ? selectedVisual.text : '');
   const [iconsOpen, setIconsOpen] = useState(false);
 
@@ -36,6 +46,14 @@ export function WorkoutVisualPicker({ onSelect, selectedVisual }: WorkoutVisualP
     setTextValue(trimmedValue);
     setIconsOpen(false);
     onSelect({ type: 'text', text: trimmedValue });
+  }
+
+  function handleTextChange(value: string) {
+    setTextValue(value);
+    if (!isExerciseEdit) return;
+
+    const trimmedValue = Array.from(value.trim()).slice(0, 4).join('');
+    if (trimmedValue) onSelect({ type: 'text', text: trimmedValue });
   }
 
   async function pickImage() {
@@ -66,6 +84,7 @@ export function WorkoutVisualPicker({ onSelect, selectedVisual }: WorkoutVisualP
         <Pressable
           accessibilityLabel={t('a11y.selectPhoto')}
           accessibilityRole="button"
+          hitSlop={2}
           onPress={() => void pickImage()}
           style={({ pressed }) => [
             styles.galleryButton,
@@ -73,23 +92,33 @@ export function WorkoutVisualPicker({ onSelect, selectedVisual }: WorkoutVisualP
             pressed && styles.pressed,
           ]}>
           {selectedVisual.type === 'image' ? (
-            <WorkoutVisualDisplay color={colors.primaryIcon} size={32} visual={selectedVisual} />
+            <WorkoutVisualDisplay
+              color={isProgramCreate ? PROGRAM_CREATE_ACCENT : colors.primaryIcon}
+              size={32}
+              visual={selectedVisual}
+            />
           ) : (
-            <Ionicons name="image-outline" size={31} color={colors.primaryIcon} />
+            <Ionicons
+              name="image-outline"
+              size={isProgramCreate || isProgramEdit || isExerciseEdit ? 22 : 31}
+              color={isProgramCreate || isProgramEdit || isExerciseEdit ? colors.textSecondary : colors.primaryIcon}
+            />
           )}
         </Pressable>
 
         <View style={styles.textArea}>
-          <Text style={styles.textLabel}>{t('components.useNumberOrEmoji')}</Text>
+          {!isProgramCreate && !isProgramEdit && !isExerciseEdit && (
+            <Text style={styles.textLabel}>{t('components.useNumberOrEmoji')}</Text>
+          )}
           <TextInput
             autoCorrect={false}
             keyboardAppearance={isDark ? 'dark' : 'light'}
             maxLength={8}
-            onChangeText={setTextValue}
+            onChangeText={handleTextChange}
             onSubmitEditing={applyTextVisual}
             placeholder={t('visualPicker.textPlaceholder')}
             placeholderTextColor={colors.textTertiary}
-            selectionColor={colors.primary}
+            selectionColor={isProgramCreate ? PROGRAM_CREATE_ACCENT : colors.primary}
             style={[styles.textInput, selectedVisual.type === 'text' && styles.selectedInput]}
             value={textValue}
           />
@@ -99,6 +128,7 @@ export function WorkoutVisualPicker({ onSelect, selectedVisual }: WorkoutVisualP
           accessibilityLabel={t('a11y.openIconList')}
           accessibilityRole="button"
           accessibilityState={{ expanded: iconsOpen }}
+          hitSlop={4}
           onPress={() => setIconsOpen((currentValue) => !currentValue)}
           style={({ pressed }) => [
             styles.iconMenuButton,
@@ -108,12 +138,15 @@ export function WorkoutVisualPicker({ onSelect, selectedVisual }: WorkoutVisualP
           <Ionicons name="ellipsis-horizontal" size={25} color={colors.textSecondary} />
         </Pressable>
 
-        <Pressable
-          accessibilityRole="button"
-          onPress={applyTextVisual}
-          style={({ pressed }) => [styles.applyButton, pressed && styles.pressed]}>
-          <Text style={styles.applyButtonText}>{t('components.apply')}</Text>
-        </Pressable>
+        {!isExerciseEdit && (
+          <Pressable
+            accessibilityRole="button"
+            hitSlop={4}
+            onPress={applyTextVisual}
+            style={({ pressed }) => [styles.applyButton, pressed && styles.pressed]}>
+            <Text style={styles.applyButtonText}>{t('components.apply')}</Text>
+          </Pressable>
+        )}
       </View>
 
       {iconsOpen && (
@@ -141,7 +174,15 @@ export function WorkoutVisualPicker({ onSelect, selectedVisual }: WorkoutVisualP
                   <Ionicons
                     name={option.icon}
                     size={22}
-                    color={isSelected ? colors.onPrimary : colors.primaryIcon}
+                    color={
+                      isSelected
+                        ? isProgramCreate
+                          ? '#111113'
+                          : colors.onPrimary
+                        : isProgramCreate
+                          ? colors.textSecondary
+                          : colors.primaryIcon
+                    }
                   />
                 </Pressable>
               );
@@ -153,56 +194,94 @@ export function WorkoutVisualPicker({ onSelect, selectedVisual }: WorkoutVisualP
   );
 }
 
-function createStyles(colors: ThemeColors) {
+function createStyles(
+  colors: ThemeColors,
+  isExerciseEdit: boolean,
+  isProgramCreate: boolean,
+  isProgramEdit: boolean,
+) {
+  const isCompact = isExerciseEdit || isProgramCreate || isProgramEdit;
+  /**
+   * "Programı düzenle" ve "Egzersizi düzenle" yüzeyleri ortak form sistemini
+   * kullanır: galeri, metin alanı ve üç nokta düğmesi AYNI yükseklik, AYNI
+   * köşe yarıçapı ve tam dikey hizayla durur. Yükseklik `Form.controlHeight`
+   * olduğu için kompakt görünüm minimum dokunma alanını da karşılar.
+   *
+   * `programCreate` ve varsayılan varyantlar bilinçli olarak dokunulmadan
+   * bırakıldı; bu çalışma yalnızca iki düzenleme ekranını kapsıyor.
+   */
+  const isEditSurface = isExerciseEdit || isProgramEdit;
+  const controlSize = Form.controlHeight;
+  const controlRadius = Form.controlRadius;
+
   return StyleSheet.create({
     container: { gap: 10 },
-    mainRow: { alignItems: 'flex-end', flexDirection: 'row', gap: 7 },
+    mainRow: {
+      alignItems: isCompact ? 'center' : 'flex-end',
+      flexDirection: 'row',
+      gap: isEditSurface ? 8 : 7,
+    },
     galleryButton: {
       alignItems: 'center',
-      backgroundColor: colors.surface,
-      borderColor: colors.primary,
-      borderRadius: 6,
-      borderWidth: 2,
-      height: 48,
+      backgroundColor: isProgramCreate ? 'transparent' : isProgramEdit || isExerciseEdit ? colors.surfaceMuted : colors.surface,
+      borderColor: isProgramCreate ? colors.separator : isProgramEdit || isExerciseEdit ? 'transparent' : colors.primary,
+      borderRadius: isProgramCreate ? 999 : isEditSurface ? controlRadius : 6,
+      borderWidth: isProgramCreate ? StyleSheet.hairlineWidth : isEditSurface ? 0 : 2,
+      height: isProgramCreate ? 44 : isEditSurface ? controlSize : 48,
       justifyContent: 'center',
       overflow: 'hidden',
-      width: 48,
+      width: isProgramCreate ? 44 : isEditSurface ? controlSize : 48,
     },
-    selectedControl: { backgroundColor: colors.primarySoft },
-    textArea: { flex: 1, gap: 4, minWidth: 92 },
+    selectedControl: {
+      backgroundColor: isProgramCreate ? 'transparent' : isProgramEdit || isExerciseEdit ? colors.surfaceMuted : colors.primarySoft,
+      borderColor: isProgramCreate ? PROGRAM_CREATE_ACCENT : colors.primary,
+    },
+    textArea: { flex: 1, gap: isCompact ? 0 : 4, minWidth: 82 },
     textLabel: { color: colors.text, fontSize: 9, fontWeight: '500' },
     textInput: {
-      backgroundColor: colors.surfaceMuted,
+      backgroundColor: isProgramCreate ? 'transparent' : colors.surfaceMuted,
+      borderBottomColor: isProgramCreate ? colors.separator : colors.border,
       borderColor: colors.border,
-      borderRadius: 5,
-      borderWidth: 1,
+      borderRadius: isProgramCreate ? 0 : isEditSurface ? controlRadius : 5,
+      borderWidth: isProgramCreate || isEditSurface ? 0 : 1,
+      borderBottomWidth: isProgramCreate ? StyleSheet.hairlineWidth : 0,
       color: colors.text,
-      fontSize: 12,
-      height: 38,
-      paddingHorizontal: 9,
+      fontSize: isEditSurface ? Type.body.fontSize : isProgramCreate ? 16 : 12,
+      height: isEditSurface ? controlSize : isCompact ? 40 : 38,
+      paddingHorizontal: isProgramCreate ? 0 : isEditSurface ? 12 : 9,
       paddingVertical: 0,
     },
-    selectedInput: { borderColor: colors.primary },
+    selectedInput: {
+      borderBottomColor: isProgramCreate ? PROGRAM_CREATE_ACCENT : colors.primary,
+      borderColor: isProgramCreate ? undefined : colors.primary,
+    },
     iconMenuButton: {
       alignItems: 'center',
-      backgroundColor: colors.surfaceMuted,
+      backgroundColor: isProgramCreate ? 'transparent' : colors.surfaceMuted,
       borderColor: colors.inputBorder,
-      borderRadius: 7,
-      borderWidth: 1,
-      height: 41,
+      borderRadius: isProgramCreate ? 999 : isEditSurface ? controlRadius : 7,
+      borderWidth: isEditSurface ? 0 : 1,
+      height: isEditSurface ? controlSize : isCompact ? 40 : 41,
       justifyContent: 'center',
-      width: 43,
+      width: isEditSurface ? controlSize : isCompact ? 40 : 43,
     },
-    iconMenuButtonSelected: { backgroundColor: colors.border, borderColor: colors.textTertiary },
+    iconMenuButtonSelected: {
+      backgroundColor: isProgramCreate ? 'transparent' : isProgramEdit ? colors.surfaceMuted : colors.border,
+      borderColor: isProgramCreate ? PROGRAM_CREATE_ACCENT : colors.textTertiary,
+    },
     applyButton: {
       alignItems: 'center',
-      backgroundColor: colors.primary,
-      borderRadius: 8,
-      height: 41,
+      backgroundColor: isProgramCreate ? PROGRAM_CREATE_ACCENT : isProgramEdit ? colors.text : colors.primary,
+      borderRadius: isProgramCreate ? 999 : isProgramEdit ? controlRadius : 8,
+      height: isProgramEdit ? controlSize : isCompact ? 40 : 41,
       justifyContent: 'center',
-      paddingHorizontal: 12,
+      paddingHorizontal: isCompact ? 16 : 12,
     },
-    applyButtonText: { color: colors.onPrimary, fontSize: 11, fontWeight: '600' },
+    applyButtonText: {
+      color: isProgramCreate ? '#111113' : isProgramEdit ? colors.background : colors.onPrimary,
+      fontSize: isProgramEdit ? Form.action.fontSize : isCompact ? 14 : 11,
+      fontWeight: isProgramEdit ? Form.action.fontWeight : '700',
+    },
     iconPanel: {
       backgroundColor: colors.surface,
       borderColor: colors.border,
@@ -223,7 +302,10 @@ function createStyles(colors: ThemeColors) {
       justifyContent: 'center',
       width: 39,
     },
-    iconOptionSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
+    iconOptionSelected: {
+      backgroundColor: isProgramCreate ? PROGRAM_CREATE_ACCENT : colors.primary,
+      borderColor: isProgramCreate ? PROGRAM_CREATE_ACCENT : colors.primary,
+    },
     pressed: { opacity: 0.7 },
   });
 }

@@ -2,13 +2,26 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ProgramDetailScroll } from '@/components/program-detail-scroll';
 import ProgramExerciseList from '@/components/program-exercise-list';
 import { WorkoutVisualPicker } from '@/components/workout-visual-picker';
-import { Layout, ThemeColors, Type } from '@/constants/theme';
+import { Form, Layout, ThemeColors, Type } from '@/constants/theme';
 import { getWeekdayLabel, getWeekdayOptions } from '@/constants/weekdays';
 import { useTranslation } from '@/context/language-context';
 import { useMascot } from '@/context/mascot-context';
@@ -46,6 +59,8 @@ import {
 import { formatDuration, getWorkoutDurationSeconds } from '@/utils/workout-session';
 import { DEFAULT_EXERCISE_VISUAL, getDayVisual, getExerciseVisual } from '@/utils/workout-visual';
 
+const WORKOUT_ORANGE = '#FF9138';
+
 export default function WorkoutDayScreen() {
   const { id, dayId } = useLocalSearchParams<{ id: string; dayId: string }>();
   // Yalnızca yerel, geçici bir UI olayı gönderir; ağ/depolama işlemi yapmaz.
@@ -70,7 +85,7 @@ export default function WorkoutDayScreen() {
     workoutSessions,
     workoutSets,
   } = useWorkout();
-  const { restTimerEnabled } = useProfile();
+  const { restTimerEnabled, showExerciseIcons } = useProfile();
   const { colors } = useAppTheme();
   const { locale, t } = useTranslation();
   const styles = createStyles(colors);
@@ -834,59 +849,6 @@ export default function WorkoutDayScreen() {
         {daySummaryRow}
         {dayEditor}
 
-        {editingExerciseId && (
-          <View style={styles.editor}>
-            <Text style={styles.editorTitle}>{t('day.editExercise')}</Text>
-            <Text style={styles.editorSubtitle}>{editingExerciseName}</Text>
-
-            <View style={styles.targetFields}>
-              <ExerciseTargetInput
-                colors={colors}
-                label={t('day.sets')}
-                onChangeText={setTargetSetsDraft}
-                value={targetSetsDraft}
-              />
-              <ExerciseTargetInput
-                colors={colors}
-                keyboardType="default"
-                label={t('day.reps')}
-                onChangeText={setTargetRepsDraft}
-                value={targetRepsDraft}
-              />
-              <ExerciseTargetInput
-                colors={colors}
-                label={t('day.rest')}
-                onChangeText={setRestSecondsDraft}
-                value={restSecondsDraft}
-              />
-            </View>
-
-            <WorkoutVisualPicker onSelect={setExerciseVisualDraft} selectedVisual={exerciseVisualDraft} />
-
-            <View style={styles.editorActions}>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => setEditingExerciseId(null)}
-                style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}>
-                <Text style={styles.secondaryButtonText}>{t('common.cancel')}</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => void saveExerciseChanges()}
-                style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}>
-                <Text style={styles.saveButtonText}>{t('common.save')}</Text>
-              </Pressable>
-            </View>
-
-            <Pressable
-              accessibilityRole="button"
-              onPress={confirmRemoveExercise}
-              style={({ pressed }) => [styles.removeButton, pressed && styles.pressed]}>
-              <Text style={styles.removeButtonText}>{t('day.removeExercise')}</Text>
-            </Pressable>
-          </View>
-        )}
-
         {isPlanMode ? (
           <>
             {day.exercises.length === 0 ? (
@@ -905,6 +867,7 @@ export default function WorkoutDayScreen() {
                     showWorkoutError(t('day.exerciseReorderFailed'), error, t),
                   );
                 }}
+                showIcons={showExerciseIcons}
               />
             )}
 
@@ -924,20 +887,6 @@ export default function WorkoutDayScreen() {
               </View>
             )}
 
-            {canTrackToday && day.exercises.length > 0 && (
-              <Pressable
-                accessibilityRole="button"
-                disabled={isWorkoutActionPending}
-                onPress={() => void handleWorkoutToggle()}
-                style={({ pressed }) => [styles.startWorkoutButton, pressed && styles.pressed]}>
-                {isWorkoutActionPending ? (
-                  <ActivityIndicator color={colors.background} size="small" />
-                ) : (
-                  <Ionicons name="play" size={16} color={colors.background} />
-                )}
-                <Text style={styles.startWorkoutText}>{t('day.startWorkout')}</Text>
-              </Pressable>
-            )}
           </>
         ) : (
           <>
@@ -1182,6 +1131,104 @@ export default function WorkoutDayScreen() {
           </>
         )}
       </ProgramDetailScroll>
+      <Modal
+        animationType="fade"
+        onRequestClose={() => setEditingExerciseId(null)}
+        presentationStyle="overFullScreen"
+        transparent
+        visible={Boolean(editingExerciseId)}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.exerciseEditorModal}>
+          <Pressable
+            accessibilityLabel={t('common.cancel')}
+            accessibilityRole="button"
+            onPress={() => setEditingExerciseId(null)}
+            style={styles.exerciseEditorBackdrop}
+          />
+          <SafeAreaView edges={['bottom']} style={styles.exerciseEditorSheet}>
+            <ScrollView
+              contentContainerStyle={styles.exerciseEditorContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}>
+              <View style={styles.exerciseEditorHeading}>
+                <Text style={styles.exerciseEditorTitle}>{t('day.editExercise')}</Text>
+                <Text numberOfLines={2} style={styles.exerciseEditorSubtitle}>{editingExerciseName}</Text>
+              </View>
+
+              <View style={styles.exerciseTargetFields}>
+                <ExerciseTargetInput
+                  colors={colors}
+                  label={t('day.sets')}
+                  onChangeText={setTargetSetsDraft}
+                  value={targetSetsDraft}
+                />
+                <ExerciseTargetInput
+                  colors={colors}
+                  keyboardType="default"
+                  label={t('day.reps')}
+                  onChangeText={setTargetRepsDraft}
+                  value={targetRepsDraft}
+                />
+                <ExerciseTargetInput
+                  colors={colors}
+                  label={t('day.rest')}
+                  onChangeText={setRestSecondsDraft}
+                  suffix={t('day.secondsSuffix')}
+                  value={restSecondsDraft}
+                />
+              </View>
+
+              <View style={styles.exerciseVisualField}>
+                <Text style={styles.exerciseVisualLabel}>{t('day.milestoneMarker')}</Text>
+                <WorkoutVisualPicker
+                  onSelect={setExerciseVisualDraft}
+                  selectedVisual={exerciseVisualDraft}
+                  variant="exerciseEdit"
+                />
+              </View>
+
+              <View style={styles.exerciseEditorActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setEditingExerciseId(null)}
+                  style={({ pressed }) => [styles.exerciseCancelButton, pressed && styles.pressed]}>
+                  <Text style={styles.exerciseCancelButtonText}>{t('common.cancel')}</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => void saveExerciseChanges()}
+                  style={({ pressed }) => [styles.exerciseSaveButton, pressed && styles.pressed]}>
+                  <Text style={styles.exerciseSaveButtonText}>{t('common.save')}</Text>
+                </Pressable>
+              </View>
+
+              <Pressable
+                accessibilityRole="button"
+                onPress={confirmRemoveExercise}
+                style={({ pressed }) => [styles.exerciseRemoveButton, pressed && styles.pressed]}>
+                <Text style={styles.exerciseRemoveButtonText}>{t('day.removeExercise')}</Text>
+              </Pressable>
+            </ScrollView>
+          </SafeAreaView>
+        </KeyboardAvoidingView>
+      </Modal>
+      {isPlanMode && canTrackToday && day.exercises.length > 0 && (
+        <View style={styles.startWorkoutFooter}>
+          <Pressable
+            accessibilityRole="button"
+            disabled={isWorkoutActionPending}
+            onPress={() => void handleWorkoutToggle()}
+            style={({ pressed }) => [styles.startWorkoutButton, pressed && styles.pressed]}>
+            {isWorkoutActionPending ? (
+              <ActivityIndicator color="#111111" size="small" />
+            ) : (
+              <Ionicons name="play" size={16} color="#111111" />
+            )}
+            <Text style={styles.startWorkoutText}>{t('day.startWorkout')}</Text>
+          </Pressable>
+        </View>
+      )}
       {restTimerEnabled && restTimer && restProgress && (
         <View
           accessibilityLabel={
@@ -1239,28 +1286,33 @@ function ExerciseTargetInput({
   keyboardType = 'number-pad',
   label,
   onChangeText,
+  suffix,
   value,
 }: {
   colors: ThemeColors;
   keyboardType?: 'number-pad' | 'default';
   label: string;
   onChangeText: (value: string) => void;
+  suffix?: string;
   value: string;
 }) {
   const styles = createStyles(colors);
 
   return (
     <View style={styles.targetField}>
-      <Text style={styles.label}>{label}</Text>
-      <TextInput
-        keyboardType={keyboardType}
-        maxLength={5}
-        onChangeText={onChangeText}
-        placeholderTextColor={colors.textTertiary}
-        selectionColor={colors.primary}
-        style={styles.input}
-        value={value}
-      />
+      <Text style={styles.exerciseTargetLabel}>{label}</Text>
+      <View style={styles.exerciseTargetInputRow}>
+        <TextInput
+          keyboardType={keyboardType}
+          maxLength={5}
+          onChangeText={onChangeText}
+          placeholderTextColor={colors.textTertiary}
+          selectionColor={colors.primary}
+          style={styles.exerciseTargetInput}
+          value={value}
+        />
+        {suffix && <Text style={styles.exerciseTargetSuffix}>{suffix}</Text>}
+      </View>
     </View>
   );
 }
@@ -1448,13 +1500,13 @@ function createStyles(colors: ThemeColors) {
     controlButtonDisabled: { opacity: 0.35 },
     addExerciseButton: {
       alignItems: 'center',
-      backgroundColor: colors.primary,
+      backgroundColor: WORKOUT_ORANGE,
       borderRadius: Layout.radiusPill,
       justifyContent: 'center',
       minHeight: 36,
       paddingHorizontal: 18,
     },
-    addExerciseText: { color: colors.onPrimary, fontSize: 14, fontWeight: '600' },
+    addExerciseText: { color: '#111111', fontSize: 14, fontWeight: '600' },
 
     editor: {
       borderColor: colors.separator,
@@ -1465,6 +1517,86 @@ function createStyles(colors: ThemeColors) {
     },
     editorTitle: { color: colors.text, fontSize: 15, fontWeight: '600' },
     editorSubtitle: { color: colors.textSecondary, ...Type.caption, marginTop: -8 },
+    exerciseEditorModal: {
+      alignItems: 'center',
+      flex: 1,
+      justifyContent: 'flex-end',
+      padding: 12,
+    },
+    exerciseEditorBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(0, 0, 0, 0.58)',
+    },
+    exerciseEditorSheet: {
+      backgroundColor: colors.surface,
+      borderRadius: 28,
+      maxHeight: '92%',
+      maxWidth: 640,
+      overflow: 'hidden',
+      width: '100%',
+    },
+    // Ölçüler "Programı düzenle" ile birebir aynı sistemden gelir.
+    exerciseEditorContent: { gap: Form.sectionGap, padding: Layout.screenPadding },
+    exerciseEditorHeading: { gap: 4 },
+    exerciseEditorTitle: { color: colors.text, ...Form.title },
+    exerciseEditorSubtitle: { color: colors.textSecondary, ...Type.caption, lineHeight: 18 },
+    exerciseTargetFields: { flexDirection: 'row', gap: 12 },
+    // SET / TEKRAR / DİNLENME etiketleri, diğer form etiketleriyle AYNI token.
+    exerciseTargetLabel: { color: colors.textSecondary, ...Type.eyebrow },
+    /**
+     * Üç alan aynı dikey ölçüyü paylaşır: aynı satır yüksekliği, aynı taban
+     * çizgisi hizası ve aynı punto. Sonek de aynı `lineHeight`'i kullanır,
+     * böylece "Dinlenme" alanı diğer ikisinden kaymaz.
+     */
+    exerciseTargetInputRow: {
+      alignItems: 'baseline',
+      borderBottomColor: colors.separator,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row',
+      gap: 4,
+      minHeight: Form.controlHeight,
+    },
+    exerciseTargetInput: {
+      color: colors.text,
+      flex: 1,
+      ...Form.title,
+      fontVariant: ['tabular-nums'],
+      lineHeight: 22,
+      minHeight: 34,
+      padding: 0,
+    },
+    exerciseTargetSuffix: { color: colors.textSecondary, ...Type.caption, lineHeight: 22 },
+    exerciseVisualField: { gap: Form.fieldGap },
+    exerciseVisualLabel: { color: colors.textSecondary, ...Type.eyebrow },
+    exerciseEditorActions: { flexDirection: 'row', gap: 10 },
+    // İkincil eylem: çerçeveli, sakin ağırlık, ikincil renk.
+    exerciseCancelButton: {
+      alignItems: 'center',
+      borderColor: colors.separator,
+      borderRadius: Form.controlRadius,
+      borderWidth: StyleSheet.hairlineWidth,
+      flex: 1,
+      justifyContent: 'center',
+      minHeight: Form.controlHeight,
+    },
+    exerciseCancelButtonText: { color: colors.textSecondary, ...Type.body },
+    // Birincil eylem: dolu yüzey.
+    exerciseSaveButton: {
+      alignItems: 'center',
+      backgroundColor: colors.text,
+      borderRadius: Form.controlRadius,
+      flex: 1,
+      justifyContent: 'center',
+      minHeight: Form.controlHeight,
+    },
+    exerciseSaveButtonText: { color: colors.background, ...Form.action },
+    // Tehlikeli eylem: kırmızı ama görsel olarak sakin (caption ölçüsü).
+    exerciseRemoveButton: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: Form.controlHeight,
+    },
+    exerciseRemoveButtonText: { color: colors.danger, ...Type.caption },
     field: { gap: 8 },
     label: { color: colors.textSecondary, fontSize: 13 },
     caption: { color: colors.textTertiary, fontSize: 12, lineHeight: 16 },
@@ -1480,7 +1612,7 @@ function createStyles(colors: ThemeColors) {
       paddingVertical: 10,
     },
     targetFields: { flexDirection: 'row', gap: 10 },
-    targetField: { flex: 1, gap: 6 },
+    targetField: { flex: 1, gap: 8 },
     weekdayOptions: { gap: 8 },
     weekdayOption: {
       alignItems: 'center',
@@ -1523,15 +1655,16 @@ function createStyles(colors: ThemeColors) {
     startWorkoutButton: {
       alignItems: 'center',
       alignSelf: 'stretch',
-      backgroundColor: colors.text,
+      backgroundColor: WORKOUT_ORANGE,
       borderRadius: Layout.radiusPill,
       flexDirection: 'row',
       gap: 8,
       justifyContent: 'center',
-      minHeight: Layout.minTouchSize,
+      minHeight: 54,
       paddingHorizontal: 22,
     },
-    startWorkoutText: { color: colors.background, fontSize: 15, fontWeight: '600' },
+    startWorkoutFooter: { paddingBottom: 10, paddingHorizontal: Layout.screenPadding, paddingTop: 10 },
+    startWorkoutText: { color: '#111111', fontSize: 16, fontWeight: '700' },
 
     workoutHeader: { gap: 12 },
     progressTextRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },

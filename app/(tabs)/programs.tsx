@@ -4,10 +4,13 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { WorkoutVisualDisplay } from '@/components/workout-visual-display';
 import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
+import { useProfile } from '@/context/profile-context';
 import { useWorkout } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
+import { getProgramVisual } from '@/utils/workout-visual';
 
 export default function ProgramsScreen() {
   const { created } = useLocalSearchParams<{ created?: string }>();
@@ -21,6 +24,7 @@ export default function ProgramsScreen() {
     refreshPrograms,
   } = useWorkout();
   const { colors } = useAppTheme();
+  const { showProgramIcons } = useProfile();
   const { t } = useTranslation();
   const styles = createStyles(colors);
   const [activatingProgramId, setActivatingProgramId] = useState<string>();
@@ -172,6 +176,15 @@ export default function ProgramsScreen() {
                 onLongPress={() => openProgramMenu(program.id, program.name, isActive)}
                 onPress={() => router.push({ pathname: '/program/[id]', params: { id: program.id } })}
                 style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}>
+                {showProgramIcons && (
+                  <View style={styles.programIcon}>
+                    <WorkoutVisualDisplay
+                      color={colors.primary}
+                      size={22}
+                      visual={getProgramVisual(program.visual, program.icon)}
+                    />
+                  </View>
+                )}
                 <View style={styles.rowText}>
                   <Text numberOfLines={1} style={styles.rowTitle}>
                     {program.name}
@@ -236,6 +249,15 @@ function createStyles(colors: ThemeColors) {
       paddingVertical: 14,
     },
     rowPressed: { opacity: 0.6 },
+    programIcon: {
+      alignItems: 'center',
+      backgroundColor: colors.primarySoft,
+      borderRadius: 10,
+      height: 38,
+      justifyContent: 'center',
+      overflow: 'hidden',
+      width: 38,
+    },
     rowText: { flex: 1, gap: 4 },
     rowTitle: { color: colors.text, ...Type.rowTitle },
     rowMetaLine: { alignItems: 'center', flexDirection: 'row' },

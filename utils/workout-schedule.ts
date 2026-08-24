@@ -57,13 +57,29 @@ export function getScheduledDisciplineStatus(
   return isToday ? undefined : 'skipped';
 }
 
+/**
+ * Disiplin durumlarının BİRLEŞTİRME SIRASI (düşükten yükseğe):
+ *
+ *   1. `historyStatuses` — sunucunun program değişimi/silinmesi sırasında
+ *      dondurduğu geçmiş (`discipline_day_history`). Yalnızca başka hiçbir
+ *      katmanın söz söylemediği günleri doldurur.
+ *   2. `manualStatuses`  — kullanıcının elle işaretlediği günler.
+ *   3. Aktif programın CANLI otomatik hesabı — yalnızca kendi geçerli tarih
+ *      aralığında (`activeProgramStartedAt` ve sonrası) üretilir.
+ *
+ * Böylece yeni aktif program, kendi başlangıcından ÖNCEKİ dondurulmuş günleri
+ * asla silmez veya yeniden hesaplamaz. 2. ve 3. katmanın birbirine göre
+ * önceliği bilinçli olarak DEĞİŞTİRİLMEDİ (otomatik hesap manuel durumu
+ * ezmeye devam eder).
+ */
 export function buildDisciplineStatuses(
+  historyStatuses: Record<string, DisciplineStatus>,
   manualStatuses: Record<string, DisciplineStatus>,
   activeProgram: WorkoutProgram | undefined,
   activeProgramStartedAt: string | undefined,
   completedSetCounts: Record<string, number>,
 ) {
-  const statuses = { ...manualStatuses };
+  const statuses = { ...historyStatuses, ...manualStatuses };
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const todayKey = toDateKey(today);

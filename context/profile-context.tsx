@@ -23,16 +23,39 @@ import {
 } from '@/services/profile-media';
 import { AppLanguage, TrainingGoal, UserProfile } from '@/types/profile';
 
+/**
+ * Profil yükleme yaşam döngüsü.
+ *
+ * Boolean bir "hata var mı" bayrağı YETMEZ: yeniden denemede bayrak istek
+ * uçarken hemen `false` olur ve o aralıkta `profile` hâlâ varsayılan
+ * değerlerdedir. Bu üç durumlu makine "başarıyla yüklendi"yi ayrı ve KESİN
+ * biçimde ifade eder; yazma izni yalnızca `ready` durumuna bağlanır.
+ *
+ *   idle    → oturum yok
+ *   loading → sorgu uçuşta (ilk yükleme veya yeniden deneme)
+ *   ready   → veri gerçekten `setProfile` ile uygulandı
+ *   error   → sorgu başarısız
+ */
+export type ProfileLoadStatus = 'idle' | 'loading' | 'ready' | 'error';
+
 type ProfileContextValue = {
   isLoading: boolean;
+  /** Yazma izni ve hata satırı YALNIZCA bu değerden türetilir. */
+  profileLoadStatus: ProfileLoadStatus;
   preferredLanguage?: AppLanguage;
   profile: UserProfile;
   restTimerEnabled: boolean;
+  showExerciseIcons: boolean;
+  showProgramIcons: boolean;
+  /** Başarısız yüklemeyi yeniden dener. */
+  reloadProfile: () => void;
   saveProfile: (profile: UserProfile) => Promise<void>;
   /** Yalnızca avatar/kapak adresini kalıcılaştırır; diğer profil alanlarına dokunmaz. */
   saveProfileMedia: (kind: ProfileImageKind, url: string | undefined) => Promise<void>;
   savePreferredLanguage: (language: AppLanguage) => Promise<void>;
   setRestTimerEnabled: (enabled: boolean) => Promise<void>;
+  setShowExerciseIcons: (enabled: boolean) => Promise<void>;
+  setShowProgramIcons: (enabled: boolean) => Promise<void>;
   uploadProfileMedia: (kind: ProfileImageKind, asset: PickedImage) => Promise<string>;
 };
 
@@ -57,6 +80,8 @@ const DEFAULT_PROFILE: UserProfile = {
 };
 
 const LOCAL_AVATAR_KEY_PREFIX = '@workout-tracker/local-avatar';
+const SHOW_EXERCISE_ICONS_KEY_PREFIX = '@workout-tracker/show-exercise-icons';
+const SHOW_PROGRAM_ICONS_KEY_PREFIX = '@workout-tracker/show-program-icons';
 const LEGACY_COLUMNS = 'display_name, username, bio, avatar_url, training_goal, rest_timer_enabled';
 const EXTENDED_COLUMNS = `${LEGACY_COLUMNS}, banner_url, preferred_language`;
 /** Postgres: kolon bulunamadı. PostgREST ise şema önbelleği için PGRST204 döner. */
@@ -88,8 +113,27 @@ export function ProfileProvider({ children }: PropsWithChildren) {
   const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
   const [preferredLanguage, setPreferredLanguage] = useState<AppLanguage>();
   const [restTimerEnabled, setRestTimerEnabledState] = useState(true);
+  const [showExerciseIcons, setShowExerciseIconsState] = useState(false);
+  const [showProgramIcons, setShowProgramIconsState] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  /**
+   * Durum, AİT OLDUĞU kullanıcıyla birlikte tutulur. `_layout` sağlayıcıyı
+   * `key={user?.id}` ile remount ettiği için pratikte zaten taşınmaz; buradaki
+   * sahiplik kontrolü o dosyaya bağımlı kalmamak içindir. Hesap değiştiğinde,
+   * effect henüz çalışmamış olsa bile türetilen değer asla `ready` okunmaz.
+   */
+  const [loadState, setLoadState] = useState<{ status: ProfileLoadStatus; userId?: string }>({
+    status: 'idle',
+  });
+  /** Artırıldığında yükleme effect'i yeniden çalışır (yeniden dene). */
+  const [reloadToken, setReloadToken] = useState(0);
   const userId = user?.id;
+  /**
+   * Render sırasında türetilir: durum başka bir hesaba aitse `ready` sayılmaz.
+   * Böylece hesap değişiminden sonraki ilk karede bile yazma açılmaz.
+   */
+  const profileLoadStatus: ProfileLoadStatus =
+    loadState.userId === userId ? loadState.status : userId ? 'loading' : 'idle';
   // Kalıcılaştırma sırasında güncel profili stale closure olmadan okumak için.
   const profileRef = useRef(profile);
 
@@ -97,16 +141,77 @@ export function ProfileProvider({ children }: PropsWithChildren) {
     profileRef.current = profile;
   }, [profile]);
 
+  /**
+   * ASYNC İŞLEM SIRASINDA yazma yetkisi.
+   *
+   * `profileLoadStatus`'ı doğrudan callback closure'ından okumak yetmez:
+   * dependency listesi yalnızca SONRAKİ çağrıları günceller, hâlihazırda
+   * uçuşta olan bir işlem başladığı render'daki eski `ready` değerini taşımaya
+   * devam eder. Uzun süren bir Storage yüklemesi sırasında hesap değişir,
+   * sağlayıcı kapanır veya profil yeniden yüklenmeye başlarsa o eski değer
+   * yanlış hesaba yazma başlatabilirdi. Bu yüzden yetki her zaman ref'ten,
+   * yani en güncel değerden okunur.
+   */
+  const writeAuthorityRef = useRef<{
+    isMounted: boolean;
+    status: ProfileLoadStatus;
+    userId?: string;
+  }>({ isMounted: true, status: 'idle', userId: undefined });
+
+  // Bağımlılık listesi YOK: her render'dan sonra güncellenir.
+  useEffect(() => {
+    writeAuthorityRef.current.status = profileLoadStatus;
+    writeAuthorityRef.current.userId = userId;
+  });
+
+  /**
+   * Mount durumu setup'ta AÇIKÇA etkinleştirilir, cleanup'ta düşürülür.
+   *
+   * Setup'taki atama gereksiz değildir: Strict Mode geliştirme kontrolünde
+   * effect `setup → cleanup → setup` sırasıyla çalışır. Yalnızca cleanup
+   * yazsaydı ikinci setup'tan sonra `isMounted` `false` kalır ve profil yazma
+   * yetkisi geliştirme ortamında kalıcı olarak kapanırdı.
+   */
+  useEffect(() => {
+    writeAuthorityRef.current.isMounted = true;
+
+    return () => {
+      writeAuthorityRef.current.isMounted = false;
+      writeAuthorityRef.current.status = 'idle';
+      writeAuthorityRef.current.userId = undefined;
+    };
+  }, []);
+
+  /**
+   * Yazma izni: sağlayıcı hâlâ ayakta, profil gerçekten yüklenmiş ve işlem
+   * başlatıldığı hesap hâlâ aktif hesap mı? Async bir işlemin ortasında da
+   * çağrılabilir; her seferinde güncel değeri okur.
+   */
+  const canWriteProfile = useCallback((ownerId: string) => {
+    const authority = writeAuthorityRef.current;
+    return authority.isMounted && authority.status === 'ready' && authority.userId === ownerId;
+  }, []);
+
   useEffect(() => {
     if (!userId) {
       setProfile(DEFAULT_PROFILE);
       setPreferredLanguage(undefined);
       setRestTimerEnabledState(true);
+      setLoadState({ status: 'idle', userId: undefined });
       setIsLoading(false);
       return;
     }
 
+    /**
+     * `isMounted` çalıştırma BAŞINA tanımlıdır. `userId` değiştiğinde React
+     * önce bu çalıştırmanın cleanup'ını yürütür, bu yüzden eski hesabın geç
+     * tamamlanan isteği ne `profile`'ı ne de durumu yazabilir; `ready` durumu
+     * hesaplar arasında taşınamaz. Unmount sonrası da aynı koruma geçerlidir.
+     */
     let isMounted = true;
+    setIsLoading(true);
+    // Yeniden deneme dahil her sorgu `loading` ile başlar → Save kapalı kalır.
+    setLoadState({ status: 'loading', userId });
 
     async function loadProfile() {
       const extendedResult = await supabase
@@ -121,7 +226,9 @@ export function ProfileProvider({ children }: PropsWithChildren) {
         : extendedResult;
 
       if (error) throw error;
-      if (!isMounted || !data) return;
+      if (!isMounted) return;
+      // Satır yoksa sessizce `loading`'de kalınmaz; kontrollü hataya düşülür.
+      if (!data) throw new Error('profileRowMissing');
 
       const localAvatarUri =
         Platform.OS !== 'web' ? await AsyncStorage.getItem(`${LOCAL_AVATAR_KEY_PREFIX}:${userId}`) : null;
@@ -139,14 +246,59 @@ export function ProfileProvider({ children }: PropsWithChildren) {
       });
       setPreferredLanguage(data.preferred_language === 'en' || data.preferred_language === 'tr' ? data.preferred_language : undefined);
       setRestTimerEnabledState(data.rest_timer_enabled);
+      // `ready` YALNIZCA veri gerçekten uygulandıktan sonra yazılır; erken
+      // dönülen hiçbir yol bu satıra ulaşamaz.
+      setLoadState({ status: 'ready', userId });
     }
 
     loadProfile()
       .catch(() => {
-        // Bağlantı kurulamazsa kullanıcı formu güvenli başlangıç değerleriyle açılır.
+        /**
+         * Hata artık SESSİZCE yutulmuyor.
+         *
+         * Eskiden buradaki boş `catch` yüzünden okuma başarısız olduğunda
+         * `profile` `DEFAULT_PROFILE` olarak kalıyordu ve ekran, kullanıcının
+         * kaydı silinmiş gibi boş görünüyordu. Daha kötüsü: o boş taslakla
+         * "Profili kaydet"e basmak gerçek kaydın üzerine yazıyordu. Bayrak
+         * ekrana bildirilir, kaydetme ise `saveProfile` içinde engellenir.
+         */
+        if (isMounted) setLoadState({ status: 'error', userId });
       })
       .finally(() => {
         if (isMounted) setIsLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [reloadToken, userId]);
+
+  const reloadProfile = useCallback(() => {
+    setReloadToken((current) => current + 1);
+  }, []);
+
+  useEffect(() => {
+    if (!userId) {
+      setShowExerciseIconsState(false);
+      setShowProgramIconsState(false);
+      return;
+    }
+
+    let isMounted = true;
+
+    AsyncStorage.multiGet([
+      `${SHOW_PROGRAM_ICONS_KEY_PREFIX}:${userId}`,
+      `${SHOW_EXERCISE_ICONS_KEY_PREFIX}:${userId}`,
+    ])
+      .then((entries) => {
+        if (!isMounted) return;
+        setShowProgramIconsState(entries[0]?.[1] === 'true');
+        setShowExerciseIconsState(entries[1]?.[1] === 'true');
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setShowProgramIconsState(false);
+        setShowExerciseIconsState(false);
       });
 
     return () => {
@@ -161,10 +313,39 @@ export function ProfileProvider({ children }: PropsWithChildren) {
   const uploadProfileMedia = useCallback(
     async (kind: ProfileImageKind, asset: PickedImage) => {
       if (!userId) throw new Error('missingSession');
+
+      /**
+       * VERİ KORUMASI — profil okunmadan Storage'a dosya YÜKLENMEZ.
+       *
+       * Kontrol yüklemeden ÖNCEDİR: aksi hâlde dosya yüklenir, ardından gelen
+       * `saveProfileMedia` engellenir ve Storage'da sahipsiz bir dosya kalırdı.
+       * Yetki güncel ref'ten okunur, closure'dan değil.
+       */
+      if (!canWriteProfile(userId)) throw new Error('profileNotLoaded');
+
       const { publicUrl } = await uploadProfileImage(userId, kind, asset);
+
+      /**
+       * Yükleme uzun sürebilir; bu sırada hesap değişmiş, sağlayıcı kapanmış
+       * veya profil yeniden yüklenmeye başlamış olabilir. Yetki TEKRAR
+       * kontrol edilir ve düşmüşse az önce yüklenen dosya sahipsiz bırakılmaz.
+       */
+      if (!canWriteProfile(userId)) {
+        const uploadedPath = getStoragePathFromUrl(publicUrl, userId);
+        // Eski kalıcı görsel HİÇBİR koşulda hedeflenmez: yalnızca bu çağrıda
+        // üretilen yol, ve yalnızca mevcut kalıcı yoldan farklıysa silinir.
+        const currentAvatarPath = getStoragePathFromUrl(profileRef.current.avatarUri, userId);
+        const currentBannerPath = getStoragePathFromUrl(profileRef.current.bannerUri, userId);
+        const isPermanent = uploadedPath === currentAvatarPath || uploadedPath === currentBannerPath;
+        // Tek temizleme noktası: `pickProfileImage` bu dosyayı staged olarak
+        // hiç işaretlemediği için ikinci bir silme denemesi oluşmaz.
+        if (!isPermanent) await removeProfileImagePaths([uploadedPath], userId);
+        throw new Error('profileNotLoaded');
+      }
+
       return publicUrl;
     },
-    [userId],
+    [canWriteProfile, userId],
   );
 
   /**
@@ -193,6 +374,23 @@ export function ProfileProvider({ children }: PropsWithChildren) {
       // Aynı yol iki kez hedeflenmesin: yeni dosya eskisiyle aynıysa silinmez.
       const orphanPath = nextPath && nextPath !== previousPath ? nextPath : undefined;
 
+      /**
+       * VERİ KORUMASI — veri katmanındaki kesin engel. Düğmenin kapalı
+       * olmasına güvenilmez; profil okunmadan `avatar_url` / `banner_url`
+       * yazılmaz.
+       *
+       * Yetki closure'dan DEĞİL güncel ref'ten okunur: sağlayıcı kapandıysa,
+       * hesap değiştiyse veya durum artık `ready` değilse DB güncellemesi hiç
+       * başlatılmaz. Bu çağrıya yeni yüklenmiş bir URL verildiyse o dosya
+       * sahipsiz kalmasın diye AŞAĞIDAKİ hata dalıyla AYNI orphan kuralıyla
+       * temizlenir — `orphanPath` tanımı gereği eski kalıcı dosyayı asla
+       * hedeflemez.
+       */
+      if (!canWriteProfile(userId)) {
+        await removeProfileImagePaths([orphanPath], userId);
+        throw new Error('profileNotLoaded');
+      }
+
       const { error } = await supabase
         .from('profiles')
         .update({ [column]: nextUrl ?? null })
@@ -214,12 +412,27 @@ export function ProfileProvider({ children }: PropsWithChildren) {
         await removeProfileImagePaths([previousPath], userId);
       }
     },
-    [userId],
+    [canWriteProfile, userId],
   );
 
   const saveProfile = useCallback(
     async (newProfile: UserProfile) => {
       if (!userId) throw new Error('missingSession');
+
+      /**
+       * VERİ KORUMASI — profil sunucudan okunamadıysa hiçbir yazma yapılmaz.
+       *
+       * Okuma başarısızken ekrandaki taslak gerçek kayıt değil, varsayılan boş
+       * değerlerdir. Bu hâlde kaydetmek `display_name`, `username`, `bio`,
+       * `avatar_url` ve `banner_url` alanlarını kullanıcının gerçek kaydının
+       * üzerine boş olarak yazardı. Önce yeniden yükleme başarılı olmalı.
+       *
+       * Kontrol `!== 'ready'` şeklindedir, "hata var mı" değil: ilk yükleme ve
+       * yeniden deneme sürerken de yazma kapalıdır. Yetki güncel ref'ten
+       * okunur, böylece uzun süren bir etkileşim sonrası eski callback üzerinden
+       * yazma başlatılamaz.
+       */
+      if (!canWriteProfile(userId)) throw new Error('profileNotLoaded');
 
       // Yalnızca kalıcı (http) adresler veritabanına yazılır; yerel file:// veya
       // blob: adresleri hiçbir koşulda profile kaydedilmez.
@@ -290,7 +503,7 @@ export function ProfileProvider({ children }: PropsWithChildren) {
         throw new Error('bannerColumnMissing');
       }
     },
-    [profile.avatarUri, profile.bannerUri, userId],
+    [canWriteProfile, profile.avatarUri, profile.bannerUri, userId],
   );
 
   const savePreferredLanguage = useCallback(
@@ -322,27 +535,71 @@ export function ProfileProvider({ children }: PropsWithChildren) {
     [restTimerEnabled, userId],
   );
 
+  const setShowProgramIcons = useCallback(
+    async (enabled: boolean) => {
+      if (!userId) throw new Error('missingSession');
+      const previousValue = showProgramIcons;
+      setShowProgramIconsState(enabled);
+
+      try {
+        await AsyncStorage.setItem(`${SHOW_PROGRAM_ICONS_KEY_PREFIX}:${userId}`, String(enabled));
+      } catch (error) {
+        setShowProgramIconsState(previousValue);
+        throw error;
+      }
+    },
+    [showProgramIcons, userId],
+  );
+
+  const setShowExerciseIcons = useCallback(
+    async (enabled: boolean) => {
+      if (!userId) throw new Error('missingSession');
+      const previousValue = showExerciseIcons;
+      setShowExerciseIconsState(enabled);
+
+      try {
+        await AsyncStorage.setItem(`${SHOW_EXERCISE_ICONS_KEY_PREFIX}:${userId}`, String(enabled));
+      } catch (error) {
+        setShowExerciseIconsState(previousValue);
+        throw error;
+      }
+    },
+    [showExerciseIcons, userId],
+  );
+
   const value = useMemo(
     () => ({
       isLoading,
       preferredLanguage,
+      profileLoadStatus,
+      reloadProfile,
       profile,
       restTimerEnabled,
+      showExerciseIcons,
+      showProgramIcons,
       saveProfile,
       saveProfileMedia,
       savePreferredLanguage,
       setRestTimerEnabled,
+      setShowExerciseIcons,
+      setShowProgramIcons,
       uploadProfileMedia,
     }),
     [
       isLoading,
       preferredLanguage,
+      profileLoadStatus,
+      reloadProfile,
       profile,
       restTimerEnabled,
+      showExerciseIcons,
+      showProgramIcons,
       saveProfile,
       saveProfileMedia,
       savePreferredLanguage,
       setRestTimerEnabled,
+      setShowExerciseIcons,
+      setShowProgramIcons,
       uploadProfileMedia,
     ],
   );

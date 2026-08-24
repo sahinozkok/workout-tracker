@@ -3,7 +3,7 @@ import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View 
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { MASCOT_NAME } from '@/constants/mascot';
-import { Layout, ThemeColors } from '@/constants/theme';
+import { Form, Layout, ThemeColors, Type } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useLanguage } from '@/context/language-context';
 import { useMascot } from '@/context/mascot-context';
@@ -21,7 +21,15 @@ const LANGUAGE_OPTIONS: { labelKey: string; value: AppLanguage }[] = [
 
 export default function SettingsScreen() {
   const { signOut } = useAuth();
-  const { restTimerEnabled, savePreferredLanguage, setRestTimerEnabled } = useProfile();
+  const {
+    restTimerEnabled,
+    savePreferredLanguage,
+    setRestTimerEnabled,
+    setShowExerciseIcons,
+    setShowProgramIcons,
+    showExerciseIcons,
+    showProgramIcons,
+  } = useProfile();
   const { enabled: mascotEnabled, setEnabled: setMascotEnabled } = useMascot();
   const { colors, isDark, preference, setPreference } = useAppTheme();
   const { language, setLanguage, t } = useLanguage();
@@ -44,6 +52,17 @@ export default function SettingsScreen() {
       if (!enabled) await Promise.all([cancelAllRestNotifications(), clearAllRestTimers()]);
     } catch {
       Alert.alert(t('profile.restTimerFailed'), t('profile.restTimerFailedBody'));
+    }
+  }
+
+  async function handleDisplayPreferenceToggle(
+    setter: (enabled: boolean) => Promise<void>,
+    enabled: boolean,
+  ) {
+    try {
+      await setter(enabled);
+    } catch {
+      Alert.alert(t('profile.displayPreferenceFailed'), t('profile.displayPreferenceFailedBody'));
     }
   }
 
@@ -131,6 +150,44 @@ export default function SettingsScreen() {
               value="dark"
             />
           </View>
+        </View>
+
+        <View style={styles.divider} />
+
+        <View style={[styles.settingRow, styles.featureRow]}>
+          <View style={styles.settingIcon}>
+            <Ionicons name="albums-outline" size={19} color={isDark ? '#CBB4F2' : '#60458A'} />
+          </View>
+          <View style={styles.settingText}>
+            <Text style={styles.settingTitle}>{t('profile.programListIcons')}</Text>
+            <Text style={styles.caption}>{t('profile.programListIconsCaption')}</Text>
+          </View>
+          <Switch
+            accessibilityLabel={t('profile.programListIconsLabel')}
+            onValueChange={(enabled) => void handleDisplayPreferenceToggle(setShowProgramIcons, enabled)}
+            thumbColor={Platform.OS === 'android' ? '#F6F5F7' : undefined}
+            trackColor={{ false: colors.surfaceMuted, true: '#60458A' }}
+            value={showProgramIcons}
+          />
+        </View>
+
+        <View style={styles.divider} />
+
+        <View style={[styles.settingRow, styles.featureRow]}>
+          <View style={styles.settingIcon}>
+            <Ionicons name="barbell-outline" size={19} color={isDark ? '#CBB4F2' : '#60458A'} />
+          </View>
+          <View style={styles.settingText}>
+            <Text style={styles.settingTitle}>{t('profile.workoutDayIcons')}</Text>
+            <Text style={styles.caption}>{t('profile.workoutDayIconsCaption')}</Text>
+          </View>
+          <Switch
+            accessibilityLabel={t('profile.workoutDayIconsLabel')}
+            onValueChange={(enabled) => void handleDisplayPreferenceToggle(setShowExerciseIcons, enabled)}
+            thumbColor={Platform.OS === 'android' ? '#F6F5F7' : undefined}
+            trackColor={{ false: colors.surfaceMuted, true: '#60458A' }}
+            value={showExerciseIcons}
+          />
         </View>
 
         <View style={styles.divider} />
@@ -251,9 +308,13 @@ function createStyles(colors: ThemeColors, isDark: boolean) {
       justifyContent: 'center',
       width: 42,
     },
-    settingText: { flex: 1, gap: 5 },
-    settingTitle: { color: colors.text, fontSize: 17, fontWeight: '700', lineHeight: 22 },
-    caption: { color: colors.textSecondary, fontSize: 13, lineHeight: 18 },
+    settingText: { flex: 1, gap: 4 },
+    /**
+     * Ayar adı Ana Sayfa'daki satır başlığı ölçüsünde: okunur ama bağırmıyor.
+     * Eski 17/700 hem çok büyük hem çok kalındı.
+     */
+    settingTitle: { color: colors.text, ...Form.action, lineHeight: 20 },
+    caption: { color: colors.textSecondary, ...Type.caption, lineHeight: 18 },
     divider: {
       backgroundColor: colors.separator,
       height: StyleSheet.hairlineWidth,
@@ -276,7 +337,7 @@ function createStyles(colors: ThemeColors, isDark: boolean) {
       paddingHorizontal: 10,
     },
     languageButtonSelected: { backgroundColor: '#60458A' },
-    languageText: { color: colors.textTertiary, fontSize: 13, fontWeight: '700' },
+    languageText: { color: colors.textTertiary, ...Type.caption, fontWeight: '600' },
     languageTextSelected: { color: '#F6F3FA' },
     themeToggle: {
       borderColor: colors.separator,
@@ -296,7 +357,7 @@ function createStyles(colors: ThemeColors, isDark: boolean) {
       marginTop: 20,
       minHeight: Layout.minTouchSize,
     },
-    signOutText: { color: colors.danger, fontSize: 15, fontWeight: '600' },
+    signOutText: { color: colors.danger, ...Form.action },
     pressed: { opacity: 0.6 },
   });
 }

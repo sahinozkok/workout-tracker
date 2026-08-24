@@ -26,6 +26,8 @@ import { useAppTheme } from '@/hooks/use-app-theme';
 import { Weekday, WorkoutDay, WorkoutVisual } from '@/types/workout';
 import { DEFAULT_PROGRAM_VISUAL } from '@/utils/workout-visual';
 
+const PROGRAM_CREATE_ACCENT = '#A56BEF';
+
 export default function CreateProgramScreen() {
   const { addProgram } = useWorkout();
   const { colors, isDark } = useAppTheme();
@@ -123,8 +125,8 @@ export default function CreateProgramScreen() {
               onChangeText={setProgramName}
               placeholder={t('createProgram.programNamePlaceholder')}
               placeholderTextColor={colors.textTertiary}
-              selectionColor={colors.primary}
-              style={styles.input}
+              selectionColor={PROGRAM_CREATE_ACCENT}
+              style={[styles.input, styles.programNameInput]}
               value={programName}
             />
             <Text style={styles.counter}>{programName.length}/60</Text>
@@ -132,7 +134,11 @@ export default function CreateProgramScreen() {
 
           <Text style={styles.sectionHeading}>{t('createProgram.programIcon')}</Text>
           <View style={styles.visualSection}>
-            <WorkoutVisualPicker onSelect={setProgramVisual} selectedVisual={programVisual} />
+            <WorkoutVisualPicker
+              onSelect={setProgramVisual}
+              selectedVisual={programVisual}
+              variant="programCreate"
+            />
           </View>
 
           <Text style={styles.sectionHeading}>{t('programDetail.workoutDays')}</Text>
@@ -150,6 +156,7 @@ export default function CreateProgramScreen() {
                     accessibilityRole="radio"
                     accessibilityState={{ checked: selected, disabled: used }}
                     disabled={used}
+                    hitSlop={4}
                     key={option.value}
                     onPress={() => setSelectedWeekday(option.value)}
                     style={[
@@ -174,7 +181,7 @@ export default function CreateProgramScreen() {
                 placeholder={isOffDay ? t('createProgram.dayNamePlaceholderAuto') : t('createProgram.dayNamePlaceholder')}
                 placeholderTextColor={colors.textTertiary}
                 returnKeyType="done"
-                selectionColor={colors.primary}
+                selectionColor={PROGRAM_CREATE_ACCENT}
                 style={[styles.input, styles.dayInput]}
                 value={dayName}
               />
@@ -182,23 +189,24 @@ export default function CreateProgramScreen() {
                 <Text style={styles.offDayLabel}>{t('day.offDay')}</Text>
                 <Switch
                   onValueChange={setIsOffDay}
+                  style={styles.offDaySwitch}
                   thumbColor={colors.onPrimary}
-                  trackColor={{ false: colors.inputBorder, true: colors.primary }}
+                  trackColor={{ false: colors.inputBorder, true: PROGRAM_CREATE_ACCENT }}
                   value={isOffDay}
                 />
               </View>
               <Pressable
                 accessibilityLabel={t('a11y.addDay')}
                 accessibilityRole="button"
+                hitSlop={4}
                 onPress={handleAddDay}
                 style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]}>
-                <Ionicons name="add" size={24} color={colors.onPrimary} />
+                <Ionicons name="add" size={22} color="#111113" />
               </Pressable>
             </View>
 
             {days.length === 0 ? (
               <View style={styles.emptyDays}>
-                <Ionicons name="calendar-outline" size={24} color={colors.textTertiary} />
                 <Text style={styles.emptyDaysText}>{t('createProgram.noDaysYet')}</Text>
               </View>
             ) : (
@@ -247,78 +255,84 @@ function createStyles(colors: ThemeColors) {
   return StyleSheet.create({
     safeArea: { backgroundColor: colors.background, flex: 1 },
     container: { flex: 1 },
-    content: { gap: 22, padding: 20, paddingBottom: 24 },
-    formSection: { backgroundColor: colors.surface, gap: 6, padding: 10 },
-    label: { color: colors.text, fontSize: 12, fontWeight: '500' },
-    input: {
-      backgroundColor: colors.surfaceMuted,
-      borderColor: colors.inputBorder,
-      borderRadius: 10,
-      borderWidth: 1,
-      color: colors.text,
-      fontSize: 14,
-      paddingHorizontal: 13,
-      paddingVertical: 12,
-    },
-    counter: { color: colors.textTertiary, fontSize: 10, textAlign: 'right' },
-    sectionHeading: {
-      alignSelf: 'flex-start',
-      backgroundColor: colors.surface,
-      color: colors.text,
-      fontSize: 18,
+    content: { padding: 20, paddingBottom: 24, paddingTop: 24 },
+    formSection: { gap: 4, marginBottom: 36 },
+    label: {
+      color: colors.textTertiary,
+      fontSize: 10,
       fontWeight: '600',
-      paddingHorizontal: 8,
-      paddingVertical: 6,
+      letterSpacing: 1.6,
+      textTransform: 'uppercase',
     },
-    visualSection: { paddingHorizontal: 1, paddingBottom: 8 },
-    daysSection: { gap: 16, paddingHorizontal: 1 },
-    weekdayOptions: { gap: 6, paddingRight: 8 },
-    weekdayOption: {
-      alignItems: 'center',
-      backgroundColor: colors.surface,
-      borderColor: colors.border,
-      borderRadius: 8,
-      borderWidth: 1,
-      justifyContent: 'center',
-      minWidth: 40,
-      paddingHorizontal: 9,
+    input: {
+      backgroundColor: 'transparent',
+      borderBottomColor: colors.separator,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderRadius: 0,
+      color: colors.text,
+      fontSize: 15,
+      minHeight: 40,
+      paddingHorizontal: 0,
       paddingVertical: 8,
     },
-    weekdayOptionSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
-    weekdayOptionUsed: { opacity: 0.3 },
-    weekdayOptionText: { color: colors.textSecondary, fontSize: 11, fontWeight: '500' },
-    weekdayOptionTextSelected: { color: colors.onPrimary },
-    addDayRow: { alignItems: 'center', flexDirection: 'row', gap: 6 },
-    dayInput: { flex: 1, minWidth: 105 },
+    programNameInput: { fontSize: 24, minHeight: 56, paddingVertical: 8 },
+    counter: { color: colors.textTertiary, fontSize: 10, marginTop: 2, textAlign: 'right' },
+    sectionHeading: {
+      color: colors.textTertiary,
+      fontSize: 10,
+      fontWeight: '600',
+      letterSpacing: 1.6,
+      textTransform: 'uppercase',
+    },
+    visualSection: { marginBottom: 36, marginTop: 12 },
+    daysSection: { marginTop: 14 },
+    weekdayOptions: { gap: 8, paddingRight: 2 },
+    weekdayOption: {
+      alignItems: 'center',
+      backgroundColor: 'transparent',
+      borderColor: colors.separator,
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      height: 36,
+      justifyContent: 'center',
+      minWidth: 40,
+      paddingHorizontal: 10,
+    },
+    weekdayOptionSelected: { backgroundColor: PROGRAM_CREATE_ACCENT, borderColor: PROGRAM_CREATE_ACCENT },
+    weekdayOptionUsed: { opacity: 0.28 },
+    weekdayOptionText: { color: colors.textSecondary, fontSize: 12, fontWeight: '600' },
+    weekdayOptionTextSelected: { color: '#111113' },
+    addDayRow: { alignItems: 'center', flexDirection: 'row', gap: 8, marginTop: 20 },
+    dayInput: { flex: 1, minWidth: 92 },
     offDayInline: { alignItems: 'center', flexDirection: 'row', gap: 4 },
-    offDayLabel: { color: colors.text, fontSize: 15, fontWeight: '600' },
+    offDayLabel: { color: colors.textSecondary, fontSize: 13, fontWeight: '500' },
+    offDaySwitch: { marginHorizontal: -5, transform: [{ scale: 0.8 }] },
     addButton: {
       alignItems: 'center',
-      backgroundColor: colors.primary,
-      borderRadius: 8,
-      height: 44,
+      backgroundColor: PROGRAM_CREATE_ACCENT,
+      borderRadius: 999,
+      height: 40,
       justifyContent: 'center',
-      width: 42,
+      width: 40,
     },
     emptyDays: {
       alignItems: 'center',
-      backgroundColor: colors.surfaceMuted,
-      borderRadius: 10,
-      gap: 8,
-      marginHorizontal: 14,
-      padding: 24,
+      marginTop: 24,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
     },
-    emptyDaysText: { color: colors.textSecondary, fontSize: 12 },
-    dayList: { gap: 8 },
+    emptyDaysText: { color: colors.textTertiary, fontSize: 13, textAlign: 'center' },
+    dayList: { marginTop: 20 },
     dayCard: {
       alignItems: 'center',
-      backgroundColor: colors.surface,
-      borderColor: colors.border,
-      borderRadius: 9,
-      borderWidth: 1,
+      backgroundColor: 'transparent',
+      borderBottomColor: colors.separator,
+      borderBottomWidth: StyleSheet.hairlineWidth,
       flexDirection: 'row',
       gap: 10,
-      padding: 11,
+      minHeight: 52,
+      paddingHorizontal: 2,
+      paddingVertical: 10,
     },
     dayNumber: {
       alignItems: 'center',
@@ -334,16 +348,15 @@ function createStyles(colors: ThemeColors) {
     offDayBadge: { color: colors.disciplineCompleted, fontSize: 8, fontWeight: '600' },
     button: {
       alignItems: 'center',
-      backgroundColor: colors.primary,
-      borderRadius: 9,
-      margin: 18,
-      marginTop: 7,
-      height: 50,
+      backgroundColor: PROGRAM_CREATE_ACCENT,
+      borderRadius: 999,
+      height: 48,
       justifyContent: 'center',
-      paddingVertical: 0,
+      margin: 20,
+      marginTop: 8,
     },
     buttonPressed: { opacity: 0.8, transform: [{ scale: 0.98 }] },
     buttonDisabled: { opacity: 0.58 },
-    buttonText: { color: colors.onPrimary, fontSize: 14, fontWeight: '600' },
+    buttonText: { color: '#111113', fontSize: 16, fontWeight: '700' },
   });
 }

@@ -233,6 +233,39 @@ const MASCOT_BLINK_SOURCES: Record<Exclude<MascotBlinkFrame, 'open'>, number> = 
 };
 
 /**
+ * Uyku pozları.
+ *
+ * İkisi de 1339 × 1174 tuvaldedir ve bu tuval canonical 584 × 512 ile **aynı
+ * en-boy oranını** (1,1406) paylaşır. `contentFit="contain"` kare kutuya
+ * genişlikten sığdırdığı için ölçek/offset telafisi GEREKMEZ: dış maskot
+ * çerçevesi, dokunma kutusu ve kayıtlı konum hiç değişmez.
+ *
+ * Uyku baloncuğu `bubble` pozunun İÇİNDE çizilidir; runtime'da ikinci bir
+ * baloncuk çizilmez.
+ */
+export type MascotSleepPose = 'curled' | 'bubble';
+
+/** Statik `require` — Metro dinamik yol çözemez. */
+export const MASCOT_SLEEP_SOURCES: Record<MascotSleepPose, number> = {
+  curled: require('../../assets/images/mascot/rosea-sleep-curled.png'),
+  bubble: require('../../assets/images/mascot/rosea-sleep-bubble.png'),
+};
+
+const MASCOT_SLEEP_POSES: readonly MascotSleepPose[] = ['curled', 'bubble'];
+
+/**
+ * Uykuya GİRİŞTE bir kez çağrılır; render sırasında değil.
+ *
+ * Bir önceki poz havuzdan çıkarılır, böylece aynı poz arka arkaya gelmez.
+ * Havuz boşalırsa (tek poz kalırsa) güvenle tam listeye dönülür.
+ */
+export function pickNextSleepPose(previous?: MascotSleepPose): MascotSleepPose {
+  const options = MASCOT_SLEEP_POSES.filter((pose) => pose !== previous);
+  const pool = options.length > 0 ? options : MASCOT_SLEEP_POSES;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+/**
  * Gösterilecek görseli tek noktadan çözer. Saf fonksiyondur.
  *
  * Kaynak **yalnızca** ifadeden ve göz kırpma karesinden türetilir; hareket
@@ -246,8 +279,12 @@ const MASCOT_BLINK_SOURCES: Record<Exclude<MascotBlinkFrame, 'open'>, number> = 
 export function resolveMascotImageSource(
   expression: MascotExpression,
   blinkFrame: MascotBlinkFrame,
+  sleepPose?: MascotSleepPose,
 ): number {
   if (expression === 'happy' && blinkFrame !== 'open') return MASCOT_BLINK_SOURCES[blinkFrame];
+  // Uyku pozu YALNIZCA `sleepy` ifadesinde devreye girer; esneme (`yawning`),
+  // düşünme ve diğer ifadeler kendi karelerinde kalır.
+  if (expression === 'sleepy' && sleepPose) return MASCOT_SLEEP_SOURCES[sleepPose];
   return MASCOT_EXPRESSION_SOURCES[expression];
 }
 

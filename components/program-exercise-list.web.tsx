@@ -3,13 +3,15 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ProgramExerciseListProps } from '@/components/program-exercise-list.types';
 import { WorkoutVisualDisplay } from '@/components/workout-visual-display';
-import { Layout, ThemeColors, Type } from '@/constants/theme';
+import { Layout, ThemeColors } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { getProgramExerciseName } from '@/data/exercises';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import { getExerciseVisual } from '@/utils/workout-visual';
 
-export default function ProgramExerciseList({ exercises, onEdit, onReorder }: ProgramExerciseListProps) {
+const WORKOUT_ORANGE = '#FF9138';
+
+export default function ProgramExerciseList({ exercises, onEdit, onReorder, showIcons = false }: ProgramExerciseListProps) {
   const { colors } = useAppTheme();
   const { t } = useTranslation();
   const styles = createStyles(colors);
@@ -62,20 +64,19 @@ export default function ProgramExerciseList({ exercises, onEdit, onReorder }: Pr
                 if (!didDragRef.current) onEdit(exercise, exerciseName);
               }}
               style={({ pressed }) => [styles.exerciseMain, pressed && styles.pressed]}>
-              <View style={styles.exerciseIcon}>
-                <WorkoutVisualDisplay color={colors.accent} size={20} visual={getExerciseVisual(exercise.visual)} />
-              </View>
+              {showIcons && (
+                <View style={styles.exerciseIcon}>
+                  <WorkoutVisualDisplay color={WORKOUT_ORANGE} size={20} visual={getExerciseVisual(exercise.visual)} />
+                </View>
+              )}
               <View style={styles.exerciseInfo}>
                 <Text numberOfLines={1} style={styles.exerciseName}>
                   {exerciseName}
                 </Text>
-                <Text style={styles.exerciseTarget}>
-                  {t('day.exerciseTarget', {
-                    reps: exercise.targetReps,
-                    rest: exercise.restSeconds,
-                    sets: exercise.targetSets,
-                  })}
-                </Text>
+                <View style={styles.targetInfo}>
+                  <Text style={styles.exerciseTarget}>{exercise.targetSets}×{exercise.targetReps}</Text>
+                  <Text style={styles.exerciseRest}>{t('day.restSecondsShort', { seconds: exercise.restSeconds })}</Text>
+                </View>
               </View>
             </Pressable>
           </View>
@@ -98,8 +99,8 @@ function createStyles(colors: ThemeColors) {
       alignItems: 'center',
       flex: 1,
       flexDirection: 'row',
-      gap: 14,
-      minHeight: 64,
+      gap: 12,
+      minHeight: 72,
       paddingVertical: 12,
     },
     exerciseIcon: {
@@ -111,9 +112,11 @@ function createStyles(colors: ThemeColors) {
       overflow: 'hidden',
       width: 34,
     },
-    exerciseInfo: { flex: 1, gap: 3 },
-    exerciseName: { color: colors.text, fontSize: 15, fontWeight: '500' },
-    exerciseTarget: { color: colors.textSecondary, ...Type.caption },
+    exerciseInfo: { alignItems: 'center', flex: 1, flexDirection: 'row', gap: 12 },
+    exerciseName: { color: colors.text, flex: 1, fontSize: 16, fontWeight: '600' },
+    targetInfo: { alignItems: 'flex-end', gap: 2 },
+    exerciseTarget: { color: WORKOUT_ORANGE, fontSize: 16, fontWeight: '600' },
+    exerciseRest: { color: colors.textTertiary, fontSize: 13 },
     pressed: { opacity: 0.6 },
   });
 }

@@ -5,4 +5,5 @@ export type ProgramExerciseListProps = {
   onEdit: (exercise: ProgramExercise, exerciseName: string) => void;
   onRemove: (exercise: ProgramExercise, exerciseName: string) => void;
   onReorder: (exercises: ProgramExercise[]) => void;
+  showIcons?: boolean;
 };

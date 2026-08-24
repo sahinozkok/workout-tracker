@@ -26,6 +26,7 @@ export default function HistoryScreen() {
   const styles = createStyles(colors);
   const [expandedSessionId, setExpandedSessionId] = useState<string>();
   const [activeView, setActiveView] = useState<'workouts' | 'progress'>('workouts');
+  const [durationMode, setDurationMode] = useState<'average' | 'total'>('total');
   const completedSessions = [...workoutSessions]
     .filter((session) => session.status === 'completed')
     .sort(
@@ -39,6 +40,11 @@ export default function HistoryScreen() {
     (total, session) => total + session.accumulatedDurationSeconds,
     0,
   );
+  const averageDurationSeconds =
+    completedSessions.length > 0 ? Math.round(totalDurationSeconds / completedSessions.length) : 0;
+  const uniqueExerciseCount = new Set(
+    completedWorkoutSets.map((workoutSet) => workoutSet.exerciseName.trim().toLocaleLowerCase(locale)),
+  ).size;
 
   if (isProgramsLoading) {
     return (
@@ -93,24 +99,29 @@ export default function HistoryScreen() {
                 colors={colors}
                 label={t('history.workouts')}
                 styles={styles}
-                value={completedSessions.length}
                 valueLabel={String(completedSessions.length)}
               />
               <StatRing
                 color={colors.disciplineCompleted}
                 colors={colors}
-                label={t('history.totalSets')}
+                label={t('history.exercises')}
                 styles={styles}
-                value={completedWorkoutSets.length}
-                valueLabel={String(completedWorkoutSets.length)}
+                valueLabel={String(uniqueExerciseCount)}
               />
               <StatRing
+                accessibilityHint={t('history.durationToggleHint')}
                 color={colors.accent}
                 colors={colors}
-                label={t('history.totalDuration')}
+                label={
+                  durationMode === 'total' ? t('history.totalDuration') : t('history.averageDuration')
+                }
+                onPress={() =>
+                  setDurationMode((current) => (current === 'total' ? 'average' : 'total'))
+                }
                 styles={styles}
-                value={totalDurationSeconds}
-                valueLabel={formatCompactDuration(totalDurationSeconds)}
+                valueLabel={formatCompactDuration(
+                  durationMode === 'total' ? totalDurationSeconds : averageDurationSeconds,
+                )}
               />
             </View>
 
@@ -142,25 +153,27 @@ export default function HistoryScreen() {
 }
 
 function StatRing({
+  accessibilityHint,
   color,
   colors,
   label,
+  onPress,
   styles,
-  value,
   valueLabel,
 }: {
+  accessibilityHint?: string;
   color: string;
   colors: ThemeColors;
   label: string;
+  onPress?: () => void;
   styles: ReturnType<typeof createStyles>;
-  value: number;
   valueLabel: string;
 }) {
-  return (
-    <View style={styles.ringItem}>
+  const content = (
+    <>
       <ProgressRing
         color={color}
-        progress={value / nextMilestone(value)}
+        progress={1}
         size={68}
         strokeWidth={5}
         trackColor={colors.surfaceMuted}>
@@ -168,8 +181,27 @@ function StatRing({
           {valueLabel}
         </Text>
       </ProgressRing>
-      <Text style={styles.ringLabel}>{label}</Text>
-    </View>
+      <View style={styles.ringLabelRow}>
+        <Text numberOfLines={1} style={styles.ringLabel}>
+          {label}
+        </Text>
+        {onPress && <Ionicons color={colors.textTertiary} name="swap-horizontal" size={11} />}
+      </View>
+    </>
+  );
+
+  if (!onPress) return <View style={styles.ringItem}>{content}</View>;
+
+  return (
+    <Pressable
+      accessibilityHint={accessibilityHint}
+      accessibilityLabel={`${label}: ${valueLabel}`}
+      accessibilityRole="button"
+      hitSlop={6}
+      onPress={onPress}
+      style={({ pressed }) => [styles.ringItem, pressed && styles.ringItemPressed]}>
+      {content}
+    </Pressable>
   );
 }
 
@@ -309,18 +341,6 @@ function groupSetsByExercise(sets: WorkoutSetRecord[]) {
   }));
 }
 
-/**
- * Halkanın yayı, değerin bir sonraki yuvarlak kilometre taşına (1-2-5 dizisi)
- * göre doluluk oranıdır. Gösterilen sayılar her zaman gerçek veridir.
- */
-function nextMilestone(value: number) {
-  if (!Number.isFinite(value) || value <= 0) return 1;
-  const magnitude = 10 ** Math.floor(Math.log10(value));
-  const steps = [1, 2, 5, 10];
-  const step = steps.find((candidate) => value <= candidate * magnitude) ?? 10;
-  return step * magnitude;
-}
-
 function formatDecimal(value: number, locale: string) {
   return value.toLocaleString(locale, { maximumFractionDigits: 2 });
 }
@@ -348,8 +368,10 @@ function createStyles(colors: ThemeColors) {
     description: { color: colors.textSecondary, ...Type.caption },
     ringRow: { flexDirection: 'row', gap: 12, marginBottom: 26 },
     ringItem: { alignItems: 'center', flex: 1, gap: 10 },
+    ringItemPressed: { opacity: 0.65 },
     ringValue: { color: colors.text, fontSize: 17, fontWeight: '500' },
-    ringLabel: { color: colors.textSecondary, fontSize: 12 },
+    ringLabelRow: { alignItems: 'center', flexDirection: 'row', gap: 3, justifyContent: 'center' },
+    ringLabel: { color: colors.textSecondary, flexShrink: 1, fontSize: 12 },
     list: { borderTopColor: colors.separator, borderTopWidth: StyleSheet.hairlineWidth },
     sessionRowWrapper: {
       borderBottomColor: colors.separator,

@@ -23,6 +23,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useTranslation } from '@/context/language-context';
+import { MASCOT_NAME } from '@/constants/mascot';
 import { useMascot } from '@/context/mascot-context';
 import { useProfile } from '@/context/profile-context';
 import { useWorkout } from '@/context/workout-context';
@@ -43,18 +44,147 @@ import { buildWeeklyWorkoutMetrics } from '@/utils/weekly-workout-metrics';
 import { buildExerciseAnalytics } from '@/utils/workout-analytics';
 
 const coachAvatarSource = require('../../assets/images/ai-coach-avatar.png');
+/**
+ * Rosea tatildeyken (`MascotContext.enabled === false`) koç avatarının yerine
+ * tahta tabela görseli çizilir. `require` statiktir; Metro dinamik yol çözemez.
+ */
+const holidayAvatarSource = require('../../assets/images/mascot/rosea-holiday-sign.png');
 
-/** Asistan mesajlarında ve "yazıyor" göstergesinde kullanılan ortak avatar. */
-function CoachAvatar({ styles }: { styles: ReturnType<typeof createStyles> }) {
+/**
+ * Asistan mesajlarında ve "yazıyor" göstergesinde kullanılan ortak avatar.
+ *
+ * Dış ölçü (`assistantAvatar`) her iki kaynakta da AYNIDIR ve `contentFit`
+ * `contain` olduğu için farklı en-boy oranındaki tatil görseli kutunun dışına
+ * taşmaz, satır hizasını ve liste genişliğini değiştirmez.
+ */
+function CoachAvatar({
+  handoffReady,
+  isOnHoliday,
+  isSpeaking = false,
+  shouldReveal,
+  styles,
+}: {
+  handoffReady: boolean;
+  isOnHoliday: boolean;
+  isSpeaking?: boolean;
+  shouldReveal: boolean;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const revealProgress = useRef(new Animated.Value(isOnHoliday ? 1 : 0)).current;
+  const mouthProgress = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    revealProgress.stopAnimation();
+
+    if (isOnHoliday) {
+      revealProgress.setValue(1);
+      return;
+    }
+
+    if (!handoffReady) {
+      revealProgress.setValue(0);
+      return;
+    }
+
+    if (!shouldReveal) {
+      revealProgress.setValue(1);
+      return;
+    }
+
+    revealProgress.setValue(0);
+    const reveal = Animated.timing(revealProgress, {
+      duration: 340,
+      easing: Easing.out(Easing.cubic),
+      toValue: 1,
+      useNativeDriver: Platform.OS !== 'web',
+    });
+    reveal.start();
+
+    return () => reveal.stop();
+  }, [handoffReady, isOnHoliday, revealProgress, shouldReveal]);
+
+  useEffect(() => {
+    mouthProgress.stopAnimation();
+
+    if (isOnHoliday || !handoffReady || !isSpeaking) {
+      mouthProgress.setValue(0);
+      return;
+    }
+
+    const speech = Animated.loop(
+      Animated.sequence([
+        Animated.timing(mouthProgress, {
+          duration: 105,
+          easing: Easing.out(Easing.quad),
+          toValue: 1,
+          useNativeDriver: Platform.OS !== 'web',
+        }),
+        Animated.timing(mouthProgress, {
+          duration: 125,
+          easing: Easing.in(Easing.quad),
+          toValue: 0,
+          useNativeDriver: Platform.OS !== 'web',
+        }),
+        Animated.delay(55),
+      ]),
+    );
+    speech.start();
+
+    return () => {
+      speech.stop();
+      mouthProgress.setValue(0);
+    };
+  }, [handoffReady, isOnHoliday, isSpeaking, mouthProgress]);
+
   return (
-    <Image
-      accessibilityElementsHidden
-      contentFit="contain"
-      importantForAccessibility="no"
-      source={coachAvatarSource}
-      style={styles.assistantAvatar}
-      transition={0}
-    />
+    <View style={styles.assistantAvatarSlot}>
+      {(isOnHoliday || handoffReady) && (
+        <Animated.View
+          style={[
+            styles.assistantAvatarReveal,
+            !isOnHoliday && {
+              opacity: revealProgress,
+              transform: [
+                {
+                  translateY: revealProgress.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [36, 0],
+                  }),
+                },
+              ],
+            },
+          ]}>
+          <Image
+            accessibilityElementsHidden
+            contentFit="contain"
+            importantForAccessibility="no"
+            source={isOnHoliday ? holidayAvatarSource : coachAvatarSource}
+            style={[styles.assistantAvatar, isOnHoliday && styles.holidayAvatar]}
+            transition={0}
+          />
+          {!isOnHoliday && (
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                styles.talkingMouthPatch,
+                {
+                  opacity: mouthProgress,
+                  transform: [
+                    {
+                      scaleY: mouthProgress.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0.35, 1],
+                      }),
+                    },
+                  ],
+                },
+              ]}>
+              <View style={styles.talkingMouth} />
+            </Animated.View>
+          )}
+        </Animated.View>
+      )}
+    </View>
   );
 }
 
@@ -72,7 +202,36 @@ export default function CoachScreen() {
   const [error, setError] = useState<string>();
   const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
 
-  const { setThinking } = useMascot();
+  const { coachHandoffPhase, enabled: isMascotEnabled, setThinking } = useMascot();
+  // Rosea tatildeyken avatar beklemeden tahta tabelaya döner.
+  const isMascotOnHoliday = !isMascotEnabled;
+  const isCoachAvatarReady = isMascotOnHoliday || coachHandoffPhase === 'chat';
+  const [speakingMessageId, setSpeakingMessageId] = useState<string>();
+  const speakingTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const latestAssistantMessageId = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index].role === 'assistant') return messages[index].id;
+    }
+    return undefined;
+  }, [messages]);
+
+  const startSpeaking = useCallback((message: CoachChatMessage) => {
+    if (speakingTimerRef.current) clearTimeout(speakingTimerRef.current);
+
+    setSpeakingMessageId(message.id);
+    const duration = Math.min(5200, Math.max(1800, message.content.length * 22));
+    speakingTimerRef.current = setTimeout(() => {
+      speakingTimerRef.current = undefined;
+      setSpeakingMessageId(undefined);
+    }, duration);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (speakingTimerRef.current) clearTimeout(speakingTimerRef.current);
+    },
+    [],
+  );
 
   /**
    * Maskotun düşünme durumu mevcut `isSending` state'ini izler. Yeni bir AI
@@ -126,6 +285,7 @@ export default function CoachScreen() {
         ),
         reply,
       ]);
+      startSpeaking(reply);
     } catch (sendError) {
       setMessages((current) =>
         current.map((message) =>
@@ -138,7 +298,7 @@ export default function CoachScreen() {
     } finally {
       setIsSending(false);
     }
-  }, [t]);
+  }, [startSpeaking, t]);
 
   const submit = useCallback(
     (rawText: string) => {
@@ -201,7 +361,8 @@ export default function CoachScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>{t('coach.title')}</Text>
+        {/* Özel isim: çevrilmez, tek kaynak `constants/mascot.ts`. */}
+        <Text style={styles.headerTitle}>{MASCOT_NAME}</Text>
         <View style={styles.headerActions}>
           <Pressable
             accessibilityLabel={t('coach.analysisLabel')}
@@ -253,9 +414,13 @@ export default function CoachScreen() {
             renderItem={({ item }) => (
               <MessageBubble
                 colors={colors}
+                handoffReady={isCoachAvatarReady}
+                isOnHoliday={isMascotOnHoliday}
+                isSpeaking={!isMascotOnHoliday && item.id === speakingMessageId}
                 message={item}
                 onRetry={retry}
                 retryLabel={t('coach.retry')}
+                shouldReveal={item.id === latestAssistantMessageId && !isSending}
                 styles={styles}
               />
             )}
@@ -271,7 +436,15 @@ export default function CoachScreen() {
               />
             }
             ListFooterComponent={
-              isSending ? <TypingIndicator label={t('coach.typing')} styles={styles} /> : null
+              isSending ? (
+                <TypingIndicator
+                  handoffReady={isCoachAvatarReady}
+                  isOnHoliday={isMascotOnHoliday}
+                  label={t('coach.typing')}
+                  shouldReveal={latestAssistantMessageId === undefined}
+                  styles={styles}
+                />
+              ) : null
             }
             showsVerticalScrollIndicator={false}
           />
@@ -344,21 +517,45 @@ export default function CoachScreen() {
 
 type BubbleProps = {
   colors: ThemeColors;
+  handoffReady: boolean;
   message: CoachChatMessage;
   onRetry: (message: CoachChatMessage) => void;
+  isOnHoliday: boolean;
+  isSpeaking: boolean;
   retryLabel: string;
+  shouldReveal: boolean;
   styles: ReturnType<typeof createStyles>;
 };
 
-function MessageBubble({ colors, message, onRetry, retryLabel, styles }: BubbleProps) {
+function MessageBubble({
+  colors,
+  handoffReady,
+  isOnHoliday,
+  isSpeaking,
+  message,
+  onRetry,
+  retryLabel,
+  shouldReveal,
+  styles,
+}: BubbleProps) {
   const isUser = message.role === 'user';
   const isFailed = message.status === 'failed';
 
   return (
     <View style={[styles.bubbleRow, isUser ? styles.bubbleRowUser : styles.bubbleRowAssistant]}>
-      {!isUser && (
-        <CoachAvatar styles={styles} />
-      )}
+      {!isUser &&
+        (shouldReveal ? (
+          <CoachAvatar
+            handoffReady={handoffReady}
+            isOnHoliday={isOnHoliday}
+            isSpeaking={isSpeaking}
+            shouldReveal
+            styles={styles}
+          />
+        ) : (
+          // Eski mesajlarda avatar çizilmez; boş slot balon hizasını korur.
+          <View style={styles.assistantAvatarSlot} />
+        ))}
       <View style={styles.bubbleColumn}>
         <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleAssistant]}>
           <Text style={[styles.bubbleText, isUser && styles.bubbleTextUser]}>{message.content}</Text>
@@ -450,15 +647,26 @@ function TypingDot({
 }
 
 function TypingIndicator({
+  handoffReady,
+  isOnHoliday,
   label,
+  shouldReveal,
   styles,
 }: {
+  handoffReady: boolean;
+  isOnHoliday: boolean;
   label: string;
+  shouldReveal: boolean;
   styles: ReturnType<typeof createStyles>;
 }) {
   return (
     <View style={[styles.bubbleRow, styles.bubbleRowAssistant]}>
-      <CoachAvatar styles={styles} />
+      <CoachAvatar
+        handoffReady={handoffReady}
+        isOnHoliday={isOnHoliday}
+        shouldReveal={shouldReveal}
+        styles={styles}
+      />
       {/* Metin görsel olarak gizli; çevrilmiş label ekran okuyucular için korunur. */}
       <View
         accessible
@@ -724,8 +932,37 @@ function createStyles(colors: ThemeColors) {
     bubbleRow: { alignItems: 'flex-start', flexDirection: 'row', gap: 8 },
     bubbleRowUser: { justifyContent: 'flex-end', paddingLeft: 56 },
     bubbleRowAssistant: { justifyContent: 'flex-start', paddingRight: 40 },
+    // Dış kutu her zaman yerinde kalır; Rosea aşağıdan çıkarken mesaj hizası oynamaz.
+    assistantAvatarSlot: { alignSelf: 'flex-start', height: 48, overflow: 'hidden', width: 52 },
+    assistantAvatarReveal: { height: 48, position: 'relative', width: 52 },
     // Karakter renkli kalır: tintColor veya arka plan uygulanmaz.
-    assistantAvatar: { alignSelf: 'flex-start', height: 48, marginTop: 0, width: 52 },
+    assistantAvatar: { height: 48, width: 52 },
+    /**
+     * Tatil tabelası normal avatardan bir tık küçük durur.
+     *
+     * Ölçek `transform` ile uygulanır: dönüşüm LAYOUT'U ETKİLEMEZ, yani dış
+     * kutu (52 × 48), satır hizası ve balon konumu değişmez — normal avatar ile
+     * tatil avatarı arasında geçerken mesaj satırları zıplamaz. Yalnızca
+     * görselin kendisi merkezinden küçülür. Normal avatarın ölçüsüne ve
+     * hizasına hiç dokunulmaz; bu stil yalnızca tatil kaynağıyla birleşir.
+     */
+    holidayAvatar: { transform: [{ scale: 0.86 }] },
+    /**
+     * Konuşma ağzı yalnızca açık karede görünür. Kapalı karede opacity 0
+     * olduğu için mevcut avatar kaynağı birebir, piksel değişmeden kalır.
+     */
+    talkingMouthPatch: {
+      alignItems: 'center',
+      backgroundColor: '#F8DDE3',
+      borderRadius: 4,
+      height: 6,
+      justifyContent: 'center',
+      left: 22.5,
+      position: 'absolute',
+      top: 25,
+      width: 8,
+    },
+    talkingMouth: { backgroundColor: '#6E183A', borderRadius: 3, height: 3.5, width: 4.5 },
     bubbleColumn: { flexShrink: 1, gap: 6 },
     bubble: { borderRadius: 18, paddingHorizontal: 15, paddingVertical: 11 },
     bubbleUser: { backgroundColor: colors.primary, borderBottomRightRadius: 6 },

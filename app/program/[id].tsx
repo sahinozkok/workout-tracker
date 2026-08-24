@@ -2,14 +2,27 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { WorkoutVisualDisplay } from '@/components/workout-visual-display';
 import { WorkoutVisualPicker } from '@/components/workout-visual-picker';
-import { Layout, ThemeColors, Type } from '@/constants/theme';
+import { Form, Layout, ThemeColors, Type } from '@/constants/theme';
 import { getWeekdayLabel } from '@/constants/weekdays';
 import { useTranslation } from '@/context/language-context';
+import { useProfile } from '@/context/profile-context';
 import { useWorkout } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import { DisciplineStatus, WorkoutVisual } from '@/types/workout';
@@ -21,6 +34,7 @@ export default function ProgramDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { activeProgramId, disciplineStatuses, isProgramsLoading, programs, updateProgram } = useWorkout();
   const { colors, isDark } = useAppTheme();
+  const { showProgramIcons } = useProfile();
   const { locale, t } = useTranslation();
   const styles = createStyles(colors);
   const [isProgramEditorOpen, setIsProgramEditorOpen] = useState(false);
@@ -102,13 +116,15 @@ export default function ProgramDetailScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}>
         <View style={styles.summaryRow}>
-          <View style={styles.summaryIcon}>
-            <WorkoutVisualDisplay
-              color={colors.primary}
-              size={24}
-              visual={getProgramVisual(program.visual, program.icon)}
-            />
-          </View>
+          {showProgramIcons && (
+            <View style={styles.summaryIcon}>
+              <WorkoutVisualDisplay
+                color={colors.primary}
+                size={24}
+                visual={getProgramVisual(program.visual, program.icon)}
+              />
+            </View>
+          )}
           <View style={styles.summaryText}>
             <Text numberOfLines={2} style={styles.programName}>
               {program.name}
@@ -126,42 +142,6 @@ export default function ProgramDetailScreen() {
             <Ionicons name="pencil-outline" size={16} color={colors.textSecondary} />
           </Pressable>
         </View>
-
-        {isProgramEditorOpen && (
-          <View style={styles.editor}>
-            <Text style={styles.editorTitle}>{t('programDetail.editProgram')}</Text>
-            <View style={styles.field}>
-              <Text style={styles.label}>{t('programDetail.programName')}</Text>
-              <TextInput
-                autoFocus
-                keyboardAppearance={isDark ? 'dark' : 'light'}
-                maxLength={60}
-                onChangeText={setProgramNameDraft}
-                placeholder={t('programDetail.programName')}
-                placeholderTextColor={colors.textTertiary}
-                selectionColor={colors.primary}
-                style={styles.input}
-                value={programNameDraft}
-              />
-            </View>
-            <Text style={styles.label}>{t('programDetail.programIcon')}</Text>
-            <WorkoutVisualPicker onSelect={setProgramVisualDraft} selectedVisual={programVisualDraft} />
-            <View style={styles.editorActions}>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => setIsProgramEditorOpen(false)}
-                style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}>
-                <Text style={styles.secondaryButtonText}>{t('common.cancel')}</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => void saveProgramChanges()}
-                style={({ pressed }) => [styles.primaryButton, styles.flexButton, pressed && styles.pressed]}>
-                <Text style={styles.primaryButtonText}>{t('common.save')}</Text>
-              </Pressable>
-            </View>
-          </View>
-        )}
 
         <Text style={styles.sectionTitle}>{t('programDetail.workoutDays')}</Text>
 
@@ -228,6 +208,71 @@ export default function ProgramDetailScreen() {
           })}
         </View>
       </ScrollView>
+
+      <Modal
+        animationType="slide"
+        onRequestClose={() => setIsProgramEditorOpen(false)}
+        presentationStyle="overFullScreen"
+        transparent
+        visible={isProgramEditorOpen}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.editorModal}>
+          <Pressable
+            accessibilityLabel={t('common.cancel')}
+            accessibilityRole="button"
+            onPress={() => setIsProgramEditorOpen(false)}
+            style={styles.editorBackdrop}
+          />
+          <SafeAreaView edges={['bottom']} style={styles.editorSheet}>
+            <View style={styles.editorHandle} />
+            <ScrollView
+              contentContainerStyle={styles.editorContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}>
+              <Text style={styles.editorTitle}>{t('programDetail.editProgram')}</Text>
+
+              <View style={styles.editorField}>
+                <Text style={styles.editorLabel}>{t('programDetail.programName')}</Text>
+                <TextInput
+                  keyboardAppearance={isDark ? 'dark' : 'light'}
+                  maxLength={60}
+                  onChangeText={setProgramNameDraft}
+                  placeholder={t('programDetail.programName')}
+                  placeholderTextColor={colors.textTertiary}
+                  selectionColor={colors.primary}
+                  style={styles.editorInput}
+                  value={programNameDraft}
+                />
+              </View>
+
+              <View style={styles.editorField}>
+                <Text style={styles.editorLabel}>{t('programDetail.programIcon')}</Text>
+                <WorkoutVisualPicker
+                  onSelect={setProgramVisualDraft}
+                  selectedVisual={programVisualDraft}
+                  variant="programEdit"
+                />
+              </View>
+
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => void saveProgramChanges()}
+                style={({ pressed }) => [styles.editorSaveButton, pressed && styles.pressed]}>
+                <Text style={styles.editorSaveButtonText}>{t('common.save')}</Text>
+              </Pressable>
+
+              <Pressable
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={() => setIsProgramEditorOpen(false)}
+                style={({ pressed }) => [styles.editorCancelButton, pressed && styles.pressed]}>
+                <Text style={styles.editorCancelButtonText}>{t('common.cancel')}</Text>
+              </Pressable>
+            </ScrollView>
+          </SafeAreaView>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -278,37 +323,69 @@ function createStyles(colors: ThemeColors) {
     programName: { color: colors.text, fontSize: 15, fontWeight: '500' },
     programMeta: { color: colors.textSecondary, ...Type.caption },
     iconButton: { alignItems: 'center', height: 32, justifyContent: 'center', width: 32 },
-    editor: {
-      borderBottomColor: colors.separator,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      gap: 14,
-      paddingVertical: 18,
+    editorModal: { flex: 1, justifyContent: 'flex-end' },
+    editorBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(0, 0, 0, 0.58)',
     },
-    editorTitle: { color: colors.text, fontSize: 15, fontWeight: '600' },
-    field: { gap: 8 },
-    label: { color: colors.textSecondary, fontSize: 13 },
-    input: {
-      backgroundColor: colors.background,
+    editorSheet: {
+      alignSelf: 'center',
+      backgroundColor: colors.surface,
+      borderTopLeftRadius: 28,
+      borderTopRightRadius: 28,
+      maxHeight: '92%',
+      overflow: 'hidden',
+      width: '100%',
+    },
+    editorHandle: {
+      alignSelf: 'center',
+      backgroundColor: colors.textTertiary,
+      borderRadius: 3,
+      height: 5,
+      marginTop: 14,
+      opacity: 0.48,
+      width: 52,
+    },
+    editorContent: {
+      gap: Form.sectionGap,
+      paddingBottom: 16,
+      paddingHorizontal: Layout.screenPadding,
+      paddingTop: 20,
+    },
+    editorTitle: { color: colors.text, ...Form.title },
+    editorField: { gap: Form.fieldGap },
+    /**
+     * Ana Sayfa'daki eyebrow tokenının aynısı. `textTransform: 'uppercase'`
+     * BİLİNÇLİ olarak kaldırıldı: Türkçede 'i' harfi noktasız 'I'ya dönüşüyor
+     * ve "Program simgesi" → "PROGRAM SIMGESI" gibi hatalı yazım üretiyordu.
+     */
+    editorLabel: { color: colors.textSecondary, ...Type.eyebrow },
+    editorInput: {
+      backgroundColor: colors.surfaceMuted,
       borderColor: colors.inputBorder,
-      borderRadius: Layout.radiusMedium,
+      borderRadius: Form.controlRadius,
       borderWidth: StyleSheet.hairlineWidth,
       color: colors.text,
-      fontSize: 15,
-      minHeight: 48,
-      paddingHorizontal: 16,
-      paddingVertical: 12,
+      ...Type.body,
+      minHeight: Form.controlHeight,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
     },
-    editorActions: { flexDirection: 'row', gap: 10 },
-    secondaryButton: {
+    editorSaveButton: {
       alignItems: 'center',
-      borderColor: colors.separator,
-      borderRadius: Layout.radiusPill,
-      borderWidth: StyleSheet.hairlineWidth,
+      backgroundColor: colors.text,
+      borderRadius: Form.controlRadius,
       justifyContent: 'center',
-      minHeight: Layout.minTouchSize,
-      paddingHorizontal: 22,
+      minHeight: Form.controlHeight,
     },
-    secondaryButtonText: { color: colors.text, fontSize: 15 },
+    editorSaveButtonText: { color: colors.background, ...Form.action },
+    // İkincil eylem: aynı dokunma alanı, sakin ağırlık ve ikincil renk.
+    editorCancelButton: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: Form.controlHeight,
+    },
+    editorCancelButtonText: { color: colors.textSecondary, ...Type.body },
     primaryButton: {
       alignItems: 'center',
       backgroundColor: colors.primary,
@@ -317,7 +394,6 @@ function createStyles(colors: ThemeColors) {
       minHeight: Layout.minTouchSize,
       paddingHorizontal: 22,
     },
-    flexButton: { flex: 1 },
     primaryButtonText: { color: colors.onPrimary, fontSize: 15, fontWeight: '600' },
     sectionTitle: { color: colors.text, ...Type.sectionTitle, marginBottom: 8, marginTop: 24 },
     dayList: { marginTop: 4 },

@@ -21,7 +21,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LevelProgressRing } from '@/components/rewards/level-progress-ring';
 import { ProfileProofStats } from '@/components/rewards/profile-proof-stats';
 import { ProfileDisciplineCard } from '@/components/profile-discipline-card';
-import { Fonts, Layout, ThemeColors } from '@/constants/theme';
+import { Fonts, Layout, ThemeColors, Type } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useLanguage } from '@/context/language-context';
 import { useProfile } from '@/context/profile-context';
@@ -46,7 +46,19 @@ const GOAL_OPTIONS: { glyph: string; labelKey: string; value: TrainingGoal }[] =
 
 export default function ProfileScreen() {
   const { user } = useAuth();
-  const { profile, saveProfile, saveProfileMedia, uploadProfileMedia } = useProfile();
+  const {
+    profile,
+    profileLoadStatus,
+    reloadProfile,
+    saveProfile,
+    saveProfileMedia,
+    uploadProfileMedia,
+  } = useProfile();
+  /**
+   * Yazma izni tek kaynaktan: profil GERÇEKTEN yüklendiyse. İlk yükleme,
+   * yeniden deneme ve hata durumlarının hepsinde kapalı kalır.
+   */
+  const canSaveProfile = profileLoadStatus === 'ready';
   const { colors, isDark } = useAppTheme();
   const { disciplineStatuses, workoutSessions } = useWorkout();
   const { t } = useLanguage();
@@ -102,6 +114,16 @@ export default function ProfileScreen() {
 
   async function pickProfileImage(kind: ProfileImageKind) {
     if (uploadingKind) return;
+
+    /**
+     * Profil sunucudan okunmadan galeri HİÇ açılmaz: izin istenmez, dosya
+     * seçilmez, Storage'a yükleme başlamaz. Kesin engel context'tedir; bu
+     * kontrol kullanıcıya neden olmadığını da anlatır.
+     */
+    if (!canSaveProfile) {
+      Alert.alert(t('profile.notLoadedTitle'), t('profile.notLoadedBody'));
+      return;
+    }
 
     if (Platform.OS !== 'web') {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -160,6 +182,10 @@ export default function ProfileScreen() {
       // Yükleme veya kayıt başarısızsa mevcut çalışan görsel korunur.
       if (error instanceof Error && error.message === 'bannerColumnMissing') {
         Alert.alert(t('profile.bannerNotSupported'), t('profile.bannerNotSupportedBody'));
+      } else if (error instanceof Error && error.message === 'profileNotLoaded') {
+        // Yükleme sırasında profil durumu değiştiyse: context yeni dosyayı
+        // zaten temizledi, kullanıcıya ne yapması gerektiği söylenir.
+        Alert.alert(t('profile.notLoadedTitle'), t('profile.notLoadedBody'));
       } else {
         const code = error instanceof ProfileMediaError ? error.code : 'uploadFailed';
         Alert.alert(t('profile.uploadFailedTitle'), t(`profile.mediaErrors.${code}`));
@@ -226,6 +252,12 @@ export default function ProfileScreen() {
         Alert.alert(t('profile.bannerNotSupported'), t('profile.bannerNotSupportedBody'));
         return;
       }
+      // Profil okunamadıysa yazma zaten engellendi; teknik kod yerine ne
+      // yapılması gerektiğini söyleyen bir mesaj gösterilir.
+      if (error instanceof Error && error.message === 'profileNotLoaded') {
+        Alert.alert(t('profile.notLoadedTitle'), t('profile.notLoadedBody'));
+        return;
+      }
       Alert.alert(t('profile.saveFailed'), error instanceof Error ? error.message : t('common.networkError'));
     } finally {
       setIsSaving(false);
@@ -246,6 +278,23 @@ export default function ProfileScreen() {
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}>
+          {/* Yalnızca sunucudan okuma başarısızken görünür. Ekranın mevcut
+              yerleşimi değişmez; başarılı yüklemede hiç render edilmez. */}
+          {profileLoadStatus === 'error' && (
+            <View style={styles.loadErrorRow}>
+              <View style={styles.loadErrorText}>
+                <Text style={styles.loadErrorTitle}>{t('profile.loadFailed')}</Text>
+                <Text style={styles.loadErrorBody}>{t('profile.loadFailedBody')}</Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                onPress={reloadProfile}
+                style={({ pressed }) => [styles.loadErrorButton, pressed && styles.pressed]}>
+                <Text style={styles.loadErrorButtonText}>{t('profile.loadRetry')}</Text>
+              </Pressable>
+            </View>
+          )}
+
           <View style={styles.bannerSection}>
             <View style={styles.banner}>
               {draft.bannerUri ? (
@@ -365,7 +414,7 @@ export default function ProfileScreen() {
                 <View style={styles.mediaEditorCopy}>
                   <Pressable
                     accessibilityRole="button"
-                    disabled={uploadingKind !== undefined}
+                    disabled={uploadingKind !== undefined || !canSaveProfile}
                     onPress={() => void pickProfileImage('avatar')}
                     style={({ pressed }) => [styles.mediaChangeButton, pressed && styles.pressed]}>
                     <Text style={styles.mediaChangeText}>
@@ -379,7 +428,7 @@ export default function ProfileScreen() {
                   {draft.avatarUri && (
                     <Pressable
                       accessibilityRole="button"
-                      disabled={uploadingKind !== undefined}
+                      disabled={uploadingKind !== undefined || !canSaveProfile}
                       onPress={() => void handleRemoveProfileImage('avatar')}
                       style={({ pressed }) => [styles.mediaRemoveButton, pressed && styles.pressed]}>
                       <Text style={styles.mediaRemoveText}>{t('common.remove')}</Text>
@@ -404,7 +453,7 @@ export default function ProfileScreen() {
                 <View style={styles.mediaEditorCopy}>
                   <Pressable
                     accessibilityRole="button"
-                    disabled={uploadingKind !== undefined}
+                    disabled={uploadingKind !== undefined || !canSaveProfile}
                     onPress={() => void pickProfileImage('banner')}
                     style={({ pressed }) => [styles.mediaChangeButton, pressed && styles.pressed]}>
                     <Text style={styles.mediaChangeText}>
@@ -418,7 +467,7 @@ export default function ProfileScreen() {
                   {draft.bannerUri && (
                     <Pressable
                       accessibilityRole="button"
-                      disabled={uploadingKind !== undefined}
+                      disabled={uploadingKind !== undefined || !canSaveProfile}
                       onPress={() => void handleRemoveProfileImage('banner')}
                       style={({ pressed }) => [styles.mediaRemoveButton, pressed && styles.pressed]}>
                       <Text style={styles.mediaRemoveText}>{t('profile.removeBanner')}</Text>
@@ -509,9 +558,14 @@ export default function ProfileScreen() {
 
               <Pressable
                 accessibilityRole="button"
-                disabled={isSaving}
+                // Profil okunamadıysa kaydetme kapalıdır: ekrandaki boş taslak
+                // gerçek kaydın üzerine yazılamaz. Kesin engel context'tedir.
+                disabled={isSaving || !canSaveProfile}
                 onPress={handleSave}
-                style={({ pressed }) => [styles.saveButton, (pressed || isSaving) && styles.pressed]}>
+                style={({ pressed }) => [
+                  styles.saveButton,
+                  (pressed || isSaving || !canSaveProfile) && styles.pressed,
+                ]}>
                 <Text style={styles.saveButtonText}>{isSaving ? t('common.saving') : t('profile.save')}</Text>
               </Pressable>
             </View>
@@ -739,6 +793,30 @@ function createStyles(colors: ThemeColors, isDark: boolean) {
     goalGlyph: { fontSize: 13 },
     goalText: { color: colors.textSecondary, fontSize: 15, fontWeight: '400' },
     goalTextSelected: { color: isDark ? '#161618' : '#FFFFFF', fontWeight: '600' },
+    /**
+     * Yükleme hatası satırı. Ekranın mevcut tipografisini ve tema renklerini
+     * kullanır; yeni bir tasarım dili getirmez ve hata yokken hiç çizilmez.
+     */
+    loadErrorRow: {
+      alignItems: 'center',
+      backgroundColor: colors.surfaceMuted,
+      borderRadius: Layout.radiusMedium,
+      flexDirection: 'row',
+      gap: 12,
+      marginBottom: 12,
+      marginHorizontal: Layout.screenPadding,
+      padding: 14,
+    },
+    loadErrorText: { flex: 1, gap: 2 },
+    loadErrorTitle: { color: colors.text, fontSize: 15, fontWeight: '600' },
+    loadErrorBody: { color: colors.textSecondary, ...Type.caption, lineHeight: 18 },
+    loadErrorButton: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: Layout.minTouchSize,
+      paddingHorizontal: 4,
+    },
+    loadErrorButtonText: { color: colors.primary, fontSize: 15, fontWeight: '600' },
     saveButton: {
       alignItems: 'center',
       backgroundColor: isDark ? '#F2F2F2' : '#1C1C1E',

@@ -42,6 +42,8 @@ import {
   MascotExpression,
   MascotPresentation,
   resolveMascotExpression,
+  MascotSleepPose,
+  pickNextSleepPose,
   resolveMascotImageSource,
 } from '@/components/mascot/mascot-expressions';
 import { MascotLoveParticles } from '@/components/mascot/mascot-love-particles';
@@ -73,6 +75,12 @@ import {
 
 /** Görsel kaynak değişse de tuval aynı olduğu için layout ölçüleri sabit kalır. */
 const EXPRESSION_CROSSFADE_MS = 100;
+/** Sohbet avatarına geçerken Rosea'nın kenarın dışına kayma süresi. */
+const COACH_HANDOFF_EXIT_MS = 420;
+/** Sohbetten dönünce aynı kenardan geri gelme süresi. */
+const COACH_HANDOFF_RETURN_MS = 320;
+/** 100 pt'lik dokunma kutusunu her kenarda tamamen görünmez yapan mesafe. */
+const COACH_HANDOFF_DISTANCE = 132;
 
 /**
  * Uyku "nefesi": yalnızca çok hafif bir ölçek değişimi. Yerinden süzülme yok,
@@ -113,9 +121,15 @@ const DROWSY_HOLD =
 const DROWSY_RELEASE_DURATION = 220;
 
 /** Görünür karakter ölçüsü. Kare kutu + `contain` → oran bozulmadan sığar. */
+/**
+ * Rosea'nın görsel boyutu — oturum açılmış BÜTÜN ekranlarda aynıdır.
+ *
+ * Aktif antrenman ekranındaki eski 64 pt'lik "kompakt mod" kaldırıldı: boyut
+ * küçültmek Rosea'yı ekranlar arasında tutarsız gösteriyordu. Route farkları
+ * artık boyutla değil, doğru safe-area / sekme çubuğu rezerviyle çözülür
+ * (bkz. `hasTabBarForRoute`).
+ */
 const MASCOT_SIZE = 88;
-/** Aktif antrenman ekranında set kontrollerini kapatmayan küçük mod. */
-const COMPACT_MASCOT_SIZE = 64;
 /** Görsel kutu. Dokunma hedefi bundan küçüktür (aşağıya bakınız). */
 const TOUCH_SIZE = 100;
 /** Kenarlardan bırakılan güvenli boşluk. */
@@ -529,11 +543,34 @@ const EDGE_HYSTERESIS = 16;
 /** `app/program/[id]/day/[dayId]/index.tsx` — aktif antrenman ekranı. */
 const ACTIVE_WORKOUT_PATTERN = /^\/program\/[^/]+\/day\/[^/]+$/;
 /**
- * Alt sekme çubuğu yalnızca `(tabs)` route'larında görünür. Kök Stack'e
- * push edilen ekranlar (program, gün, egzersiz ekleme, ayarlar) sekmeleri
- * tamamen kaplar; oralarda alt yüzey cihazın güvenli alt sınırıdır.
+ * Alt sekme çubuğunu barındıran route'ların TAM listesi — `app/(tabs)/_layout`
+ * ile birebir aynı beş ekran.
+ *
+ * Bilinçli olarak **allowlist**: eski `ROOT_STACK_PATTERN` bir blocklist'ti ve
+ * yalnızca `/program` ile `/settings` öneklerini tanıyordu. Kök Stack'e push
+ * edilen `/friends`, `/friends/search` ve `/profile/:userId` ekranları
+ * yanlışlıkla "sekme çubuğu var" sayılıyor, bu yüzden Rosea o ekranlarda
+ * olmayan bir çubuk için 56 pt rezerv bırakıp yukarıda duruyordu. Allowlist'te
+ * tanınmayan her route doğal olarak kök Stack sayılır.
  */
-const ROOT_STACK_PATTERN = /^\/(program|settings)(\/|$)/;
+const TAB_BAR_ROUTES: ReadonlySet<string> = new Set([
+  '/',
+  '/programs',
+  '/history',
+  '/coach',
+  '/profile',
+]);
+
+/**
+ * Route'un alt sekme çubuğu barındırıp barındırmadığını çözen TEK nokta.
+ * Saf ve deterministiktir; dağınık regex'lerle ikinci bir karar verilmez.
+ */
+export function hasTabBarForRoute(pathname: string | null | undefined): boolean {
+  if (!pathname) return false;
+  // Sondaki eğik çizgi normalize edilir: '/programs/' de bir sekme route'udur.
+  const trimmed = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
+  return TAB_BAR_ROUTES.has(trimmed === '' ? '/' : trimmed);
+}
 
 /** `locales/*.ts` içindeki `mascot.contextMessages` grup anahtarları. */
 type MascotMessageGroup = 'home' | 'programs' | 'workout' | 'history' | 'coach' | 'profile';
@@ -662,7 +699,16 @@ function resolveTurnSequenceMs(plan: MascotTurnPlan, reduceMotion: boolean) {
  * karakterin ve açık balonun kendi alanı dokunma yakalar.
  */
 export function FloatingMascot() {
-  const { enabled, isReady, isThinking, position, reaction, savePosition } = useMascot();
+  const {
+    coachHandoffPhase,
+    enabled,
+    isReady,
+    isThinking,
+    position,
+    reaction,
+    savePosition,
+    setCoachHandoffPhase,
+  } = useMascot();
   const { t, tList } = useTranslation();
   // Yalnızca `WorkoutContext`'in zaten bellekte tuttuğu değerler okunur:
   // yeni sorgu, refresh veya ağ isteği yapılmaz.
@@ -752,10 +798,15 @@ export function FloatingMascot() {
   // AI durumu ref'te de tutulur: sürükleme/tepki bittiğinde hangi duruma
   // dönüleceğine stale closure olmadan karar verilir.
   const isThinkingRef = useRef(isThinking);
+  const coachHandoffPhaseRef = useRef(coachHandoffPhase);
 
   useEffect(() => {
     isThinkingRef.current = isThinking;
   }, [isThinking]);
+
+  useEffect(() => {
+    coachHandoffPhaseRef.current = coachHandoffPhase;
+  }, [coachHandoffPhase]);
 
 
   useEffect(() => {
@@ -766,14 +817,14 @@ export function FloatingMascot() {
     settlePhaseRef.current = settlePhase;
   }, [settlePhase]);
 
-  const isCompact = ACTIVE_WORKOUT_PATTERN.test(pathname ?? '');
-  const mascotSize = isCompact ? COMPACT_MASCOT_SIZE : MASCOT_SIZE;
+  // Boyut route'a göre DEĞİŞMEZ; dokunma kutusu da sabit kalır.
+  const mascotSize = MASCOT_SIZE;
 
   /**
    * Sekme çubuğu bu route'ta görünüyor mu? Alt kenarın "yüzeyi" buna göre
    * değişir: sekme çubuğunun üstü veya cihazın güvenli alt sınırı.
    */
-  const hasTabBar = !ROOT_STACK_PATTERN.test(pathname ?? '');
+  const hasTabBar = hasTabBarForRoute(pathname);
   const bottomReserve = (hasTabBar ? Layout.tabBarHeight : 0) + insets.bottom;
 
   /**
@@ -858,6 +909,8 @@ export function FloatingMascot() {
   const reactionScale = useSharedValue(1);
   const reactionRotation = useSharedValue(0);
   const reactionOpacity = useSharedValue(1);
+  /** Dünya Rosea'sı ile sohbet avatarı arasındaki bağımsız geçiş katmanı. */
+  const coachHandoffProgress = useSharedValue(0);
 
   const gestureStartX = useSharedValue(0);
   const gestureStartY = useSharedValue(0);
@@ -963,6 +1016,29 @@ export function FloatingMascot() {
     positionRef.current = position;
   }, [position]);
 
+  /**
+   * Sürükleme sahipliğini bırakır.
+   *
+   * KÖK NEDEN: `handleDragEnd` — `isDraggingRef`'i ve `state`'i temizleyen tek
+   * yer — YALNIZCA `finishSettleToEdge` üzerinden, yani dört aşamalı yerleşme
+   * (bekleme → dönüş → ekran dışına yürüyüş → belirme) TAM olarak bittiğinde
+   * çalışır. İptal edilen her yerleşmede (klavye açılması, uygulamanın arka
+   * plana alınması, maskotun gizlenmesi, ekran ölçüsü/sekme rezervi değişimi)
+   * geçiş kimliği artırılıp aşama temizleniyor ama sahiplik bırakılmıyordu.
+   * Sonuç: `state` kalıcı olarak `'dragging'` kalıyor, `canSleep` bu yüzden
+   * sürekli `false` oluyor ve Rosea oturum boyunca bir daha uyuyamıyordu.
+   *
+   * Bu yüzden iptal yolları sahipliği AÇIKÇA bırakır. `handleDragStart`
+   * bilinçli olarak bu yardımcıyı çağırmaz: orada sahiplik yeni pan'e geçer.
+   */
+  const releaseDragOwnership = useCallback(() => {
+    if (!isDraggingRef.current) return;
+    isDraggingRef.current = false;
+    setState((current) =>
+      current === 'dragging' ? (isThinkingRef.current ? 'thinking' : 'idle') : current,
+    );
+  }, []);
+
   useEffect(() => {
     if (!isReady) return;
 
@@ -982,6 +1058,9 @@ export function FloatingMascot() {
         setSettlePhase(undefined);
         cancelAnimation(positionX);
         cancelAnimation(positionY);
+        // Yerleşme tamamlanmadığı için `handleDragEnd` çalışmayacak; sahiplik
+        // burada bırakılmazsa `state` kalıcı olarak `'dragging'` kalırdı.
+        releaseDragOwnership();
       }
       positionX.value = withSpring(x, SPRING);
       positionY.value = withSpring(y, SPRING);
@@ -992,7 +1071,7 @@ export function FloatingMascot() {
     positionX.value = x;
     positionY.value = y;
     hasPositionedRef.current = true;
-  }, [bounds, isReady, positionX, positionY]);
+  }, [bounds, isReady, positionX, positionY, releaseDragOwnership]);
 
   const isHidden = !enabled || !isReady || isKeyboardVisible;
 
@@ -1032,6 +1111,85 @@ export function FloatingMascot() {
   useEffect(() => {
     pathnameRef.current = pathname;
   }, [pathname]);
+
+  const finishCoachDeparture = useCallback(() => {
+    if (!isMountedRef.current || pathnameRef.current !== '/coach') return;
+    setCoachHandoffPhase('chat');
+  }, [setCoachHandoffPhase]);
+
+  const finishCoachReturn = useCallback(() => {
+    if (!isMountedRef.current || pathnameRef.current === '/coach') return;
+    setCoachHandoffPhase('world');
+  }, [setCoachHandoffPhase]);
+
+  /**
+   * AI sohbetine görsel teslim.
+   *
+   * Ayrı bir dış transform katmanı kullanılır; kayıtlı konum, sürükleme,
+   * peek ve kenara yerleşme değerleri değişmez. Rosea hareket hâlindeyken
+   * sohbet sekmesine geçilse bile bulunduğu hareketten kenarın dışına akar,
+   * kayıtlı konuma ışınlanmaz.
+   */
+  useEffect(() => {
+    if (!isReady || !enabled) {
+      cancelAnimation(coachHandoffProgress);
+      coachHandoffProgress.value = 0;
+      if (coachHandoffPhaseRef.current !== 'world') setCoachHandoffPhase('world');
+      return;
+    }
+
+    if (pathname === '/coach') {
+      if (coachHandoffPhaseRef.current === 'departing') return;
+      if (coachHandoffPhaseRef.current === 'chat') {
+        coachHandoffProgress.value = 1;
+        return;
+      }
+
+      setCoachHandoffPhase('departing');
+      cancelAnimation(coachHandoffProgress);
+      coachHandoffProgress.value = withTiming(
+        1,
+        {
+          duration: reduceMotion ? 0 : COACH_HANDOFF_EXIT_MS,
+          easing: Easing.in(Easing.cubic),
+        },
+        (finished) => {
+          if (finished) runOnJS(finishCoachDeparture)();
+        },
+      );
+      return () => cancelAnimation(coachHandoffProgress);
+    }
+
+    if (
+      coachHandoffPhaseRef.current === 'world' ||
+      coachHandoffPhaseRef.current === 'returning'
+    ) {
+      return;
+    }
+
+    setCoachHandoffPhase('returning');
+    cancelAnimation(coachHandoffProgress);
+    coachHandoffProgress.value = withTiming(
+      0,
+      {
+        duration: reduceMotion ? 0 : COACH_HANDOFF_RETURN_MS,
+        easing: Easing.out(Easing.cubic),
+      },
+      (finished) => {
+        if (finished) runOnJS(finishCoachReturn)();
+      },
+    );
+    return () => cancelAnimation(coachHandoffProgress);
+  }, [
+    coachHandoffProgress,
+    enabled,
+    finishCoachDeparture,
+    finishCoachReturn,
+    isReady,
+    pathname,
+    reduceMotion,
+    setCoachHandoffPhase,
+  ]);
 
   /**
    * Workout verisi her set tamamlandığında değişir. Ref üzerinden okunduğu
@@ -1261,6 +1419,33 @@ export function FloatingMascot() {
   // Ambient peek effect'i `isAsleep` değerini okuduğu için uyku bloğu ondan
   // önce durur.
   const { isAppActive, isAsleep, isDrowsy, isSettling, wake } = useMascotSleep({ canSleep });
+
+  /**
+   * Uyku pozu. **Düşük frekanslı** React state'idir: bir uyku döngüsünde en
+   * fazla iki kez yazılır (girişte seçilir, uyanınca temizlenir).
+   */
+  const [sleepPose, setSleepPose] = useState<MascotSleepPose>();
+  /** Bir önceki poz; aynı poz arka arkaya seçilmesin diye saklanır. */
+  const lastSleepPoseRef = useRef<MascotSleepPose>(undefined);
+
+  /**
+   * Poz YALNIZCA uykuya GİRİŞTE seçilir.
+   *
+   * Etki `isAsleep` dışında hiçbir şeye bağlı değildir, bu yüzden uyku
+   * boyunca yeniden çalışmaz ve poz ortada değişemez. `Math.random()` render
+   * içinde değil, bu etkinin gövdesinde çağrılır. Uyanınca poz temizlenir ve
+   * normal sprite devralır.
+   */
+  useEffect(() => {
+    if (!isAsleep) {
+      setSleepPose(undefined);
+      return;
+    }
+
+    const nextPose = pickNextSleepPose(lastSleepPoseRef.current);
+    lastSleepPoseRef.current = nextPose;
+    setSleepPose(nextPose);
+  }, [isAsleep]);
 
   /**
    * Uykuya hazırlanma esnemesi. Tek seferliktir: yukarı doğru hafifçe uzayıp
@@ -1685,6 +1870,44 @@ export function FloatingMascot() {
    * kesilmiş olabileceği için konum son kaydedilmiş geçerli duruşa geri alınır.
    * Yeniden tutmada `false` gelir; orada pan konumu zaten devralır.
    */
+  /**
+   * Rosea'yı KAYITLI kenar konumuna atomik olarak geri yerleştirir.
+   *
+   * Tek kaynak: hem `cancelSettleToEdge`'in restore dalı hem route değişimi
+   * bu yolu kullanır, böylece "geçerli konum" tanımı iki yerde ayrışmaz.
+   *
+   * `positionRef` yerleşme boyunca HİÇ yazılmadığı için son kaydedilmiş
+   * `edge`/`edgeRatio` her zaman geçerlidir; konum bu değerlerden **güncel**
+   * `boundsRef.current` ile yeniden hesaplanır. `boundsRef` senkron efekti bu
+   * efektten önce çalıştığı için route değişiminde yeni ekranın sınırları
+   * okunur, eski ekranınki değil — yeni ekranda taşma oluşmaz.
+   *
+   * Kayıtlı konum burada YAZILMAZ, yalnızca okunur: gereksiz ikinci bir kayıt
+   * oluşmaz.
+   */
+  const restoreSavedEdgePosition = useCallback(() => {
+    const saved = positionRef.current;
+    const { x, y } = resolveEdgePosition(saved.edge, saved.edgeRatio, boundsRef.current);
+    const vector = edgeVector(saved.edge);
+    const peekMagnitude = restingPeekRef.current;
+
+    cancelAnimation(positionX);
+    cancelAnimation(positionY);
+    cancelAnimation(peekOffsetX);
+    cancelAnimation(peekOffsetY);
+    cancelAnimation(edgeRotation);
+    positionX.value = x;
+    positionY.value = y;
+    peekEdgeRef.current = saved.edge;
+    peekEdgeShared.value = saved.edge;
+    // Konum ile kenar sunumu aynı anda geri kurulur. Özellikle sağ kenarda
+    // konumu geri getirip offset/rotasyonu eski yolculuk karesinde bırakmak,
+    // Rosea'nın ekran dışında kalmasına veya havada görünmesine yol açıyordu.
+    peekOffsetX.value = vector.x * peekMagnitude;
+    peekOffsetY.value = vector.y * peekMagnitude;
+    edgeRotation.value = MASCOT_EDGE_ROTATION[saved.edge];
+  }, [edgeRotation, peekEdgeShared, peekOffsetX, peekOffsetY, positionX, positionY]);
+
   const cancelSettleToEdge = useCallback(
     ({ restore }: { restore: boolean }) => {
       // Normal bir dokunma/sürükleme başlangıcında aktif yerleşme yoksa konum
@@ -1712,22 +1935,90 @@ export function FloatingMascot() {
 
       // Kayıtlı konum tek geçerli gerçektir: geçiş sırasında hiçbir şey
       // kaydedilmediği için buraya dönmek her zaman güvenlidir.
-      const saved = positionRef.current;
-      const { x, y } = resolveEdgePosition(saved.edge, saved.edgeRatio, boundsRef.current);
-      positionX.value = x;
-      positionY.value = y;
-      peekEdgeRef.current = saved.edge;
-      peekEdgeShared.value = saved.edge;
+      restoreSavedEdgePosition();
     },
     [
       clearSettleTimers,
-      peekEdgeShared,
       positionX,
       positionY,
+      restoreSavedEdgePosition,
       stopTravelGait,
       travelRotation,
     ],
   );
+
+  /**
+   * ROUTE DEĞİŞİMİ GÜVENLİĞİ.
+   *
+   * KÖK NEDEN: eski sürüm zamanlayıcıları, ritmi, `travelRotation`,
+   * `turnFrame` ve `settlePhase` bayrağını temizliyor ama **konuma hiç
+   * dokunmuyordu**. Konumu yalnızca sınırlara duyarlı efekt geri yaylıyordu ve
+   * o efekt `bounds` gerçekten DEĞİŞTİĞİNDE çalışır. İki sekme route'u aynı
+   * güvenli alanı ve aynı sekme rezervini paylaştığında (`/` → `/programs`
+   * gibi) `bounds` memo'su aynı nesneyi döndürüyor, efekt hiç çalışmıyor ve
+   * Rosea yolculuğun yarısında — ekranın ortasında ya da tamamen ekran
+   * dışında — donup kalıyordu.
+   *
+   * Normal bir sekme değişimi no-op'tur. Yalnızca route değiştiği render'da
+   * aktif bir yerleşme/sürükleme görülürse geçiş iptal edilip kayıtlı kenar
+   * duruşu geri kurulur. `settlePhase` React state'i de kontrol edilir: bounds
+   * effect'i aynı effect flush'ında ref'i bizden önce temizlese bile render
+   * anındaki aşama bilgisi kaybolmaz ve artıklar güvenle temizlenir.
+   */
+  const previousPathnameRef = useRef(pathname);
+
+  useEffect(() => {
+    const previousPathname = previousPathnameRef.current;
+    previousPathnameRef.current = pathname;
+
+    // İlk mount veya aynı route içindeki sıradan render: hiçbir sunum ya da
+    // konum değeri sıfırlanmaz. Sekme değişiminde görülen gereksiz "reset"
+    // hissinin kaynağı eski effect'in her pathname değişiminde koşulsuz restore
+    // yapmasıydı.
+    if (previousPathname === pathname) return;
+
+    // Alt sekmeler tek bir navigator yüzeyini, aynı overlay'i ve aynı güvenli
+    // sınırları paylaşır. Bu geçişte süren yerleşmeyi iptal etmek Rosea'yı
+    // kayıtlı kenara ışınlıyordu. Sekmeler arasında hareket ve animasyon aynen
+    // devam eder; yalnızca pathname'e bağlı konuşma bağlamı ayrıca güncellenir.
+    if (hasTabBarForRoute(previousPathname) && hasTabBarForRoute(pathname)) return;
+
+    const hasActiveSettle = Boolean(settlePhaseRef.current);
+    const hadSettleAtRender = Boolean(settlePhase);
+    const hasDragOwnership = isDraggingRef.current;
+
+    // Rosea zaten kenarında dinleniyorsa route değişimi tamamen no-op'tur.
+    // Nefes, uyku, bakış ve mevcut ifade kesilmez.
+    if (!hasActiveSettle && !hadSettleAtRender && !hasDragOwnership) return;
+
+    if (hasActiveSettle) {
+      // Ortak iptal yolu bütün zamanlayıcıları/geç callback'leri durdurur ve
+      // kayıtlı konum + kenar sunumunu atomik biçimde geri kurar.
+      cancelSettleToEdge({ restore: true });
+    } else {
+      // Bounds effect'i aynı turda ref'i daha önce temizlemiş olabilir veya
+      // çoklu dokunmada route pan-finalize'dan önce değişmiş olabilir. Her iki
+      // durumda da kalan sunumu durdurup kayıtlı kenarı geri kur.
+      transitionIdRef.current += 1;
+      clearSettleTimers();
+      stopTravelGait();
+      cancelAnimation(travelRotation);
+      travelRotation.value = 0;
+      setTurnFrame(undefined);
+      restoreSavedEdgePosition();
+    }
+
+    releaseDragOwnership();
+  }, [
+    cancelSettleToEdge,
+    clearSettleTimers,
+    pathname,
+    releaseDragOwnership,
+    restoreSavedEdgePosition,
+    settlePhase,
+    stopTravelGait,
+    travelRotation,
+  ]);
 
   /** Bekleyen uyanma zincirini iptal eder (sürükleme, tepki, unmount). */
   const cancelWakeSequence = useCallback(() => {
@@ -2739,7 +3030,17 @@ export function FloatingMascot() {
     stopIdleWiggle();
     // Konuma yalnızca gerçekten süren bir geçiş varken dokunulur.
     if (settlePhaseRef.current) cancelSettleToEdge({ restore: true });
-  }, [cancelActiveReaction, cancelSettleToEdge, isAppActive, isHidden, stopIdleWiggle]);
+    // Klavye açılması veya arka plana geçiş de yerleşmeyi yarıda kesiyor;
+    // sahiplik bırakılmazsa Rosea bir daha uyuyamaz.
+    releaseDragOwnership();
+  }, [
+    cancelActiveReaction,
+    cancelSettleToEdge,
+    isAppActive,
+    isHidden,
+    releaseDragOwnership,
+    stopIdleWiggle,
+  ]);
 
   // Görsel durum: sürükleme ve tek seferlik tepkiler daha yüksek öncelikli
   // olduğu için onların durumu ezilmez.
@@ -3200,6 +3501,19 @@ export function FloatingMascot() {
     transform: [{ translateX: positionX.value }, { translateY: positionY.value }],
   }));
 
+  /** Rosea'yı mevcut kenar yönünde dışarı taşıyan, konumdan bağımsız katman. */
+  const coachHandoffStyle = useAnimatedStyle(() => {
+    const edge = peekEdgeShared.value;
+    const distance = coachHandoffProgress.value * COACH_HANDOFF_DISTANCE;
+    return {
+      opacity: interpolate(coachHandoffProgress.value, [0, 0.88, 1], [1, 1, 0]),
+      transform: [
+        { translateX: edge === 'left' ? -distance : edge === 'right' ? distance : 0 },
+        { translateY: edge === 'top' ? -distance : edge === 'bottom' ? distance : 0 },
+      ],
+    };
+  });
+
   /**
    * Kenardan bakma katmanı. İşaret vektörün içinde taşındığı için burada
    * hiçbir yön hesabı yapılmaz — orta çizgi veya köşe geçilse bile sıçrama
@@ -3394,7 +3708,10 @@ export function FloatingMascot() {
    */
   const isPitchTurnFrame = turnFrame !== undefined && isMascotPitchFrame(turnFrame);
 
-  if (isHidden) return null;
+  const isLivingInCoachAvatar =
+    enabled && pathname === '/coach' && coachHandoffPhase === 'chat';
+
+  if (isHidden || isLivingInCoachAvatar) return null;
 
   // Yalnızca normal dokunma balonunda AI Koç CTA'sı bulunur.
   // Normal dokunma balonunda ekrana özel mesaj gösterilir. `tapMessage`
@@ -3420,29 +3737,32 @@ export function FloatingMascot() {
         },
       ]}>
       <Animated.View pointerEvents="box-none" style={[styles.positionLayer, positionStyle]}>
-        {bubbleVariant && (
-          <MascotSpeechBubble
-            edge={position.edge}
-            horizontalOffset={bubbleHorizontalOffset}
-            message={bubbleMessage}
-            onPressCta={handleOpenCoach}
-            showCta={bubbleVariant === 'tap'}
-          />
-        )}
+        <Animated.View
+          pointerEvents="box-none"
+          style={[styles.coachHandoffLayer, coachHandoffStyle]}>
+          {bubbleVariant && (
+            <MascotSpeechBubble
+              edge={position.edge}
+              horizontalOffset={bubbleHorizontalOffset}
+              message={bubbleMessage}
+              onPressCta={handleOpenCoach}
+              showCta={bubbleVariant === 'tap'}
+            />
+          )}
 
-        {particleRun > 0 && (
-          <MascotCelebrationParticles
-            key={particleRun}
-            reduceMotion={reduceMotion}
-            size={TOUCH_SIZE}
-          />
-        )}
+          {particleRun > 0 && (
+            <MascotCelebrationParticles
+              key={particleRun}
+              reduceMotion={reduceMotion}
+              size={TOUCH_SIZE}
+            />
+          )}
 
-        {loveRun > 0 && (
-          <MascotLoveParticles key={loveRun} reduceMotion={reduceMotion} size={TOUCH_SIZE} />
-        )}
+          {loveRun > 0 && (
+            <MascotLoveParticles key={loveRun} reduceMotion={reduceMotion} size={TOUCH_SIZE} />
+          )}
 
-        {/* Katmanlar:
+          {/* Katmanlar:
             Kalıcı konum → Kenardan bakma → Sürükleme fiziği (kafa pivotu)
             → Kenara yürüyüş → Kenar yönü → Düşünme → Uyku nefesi
             → Uykuya hazırlanma → Uyanık nefesi → Tepki → Görsel.
@@ -3450,15 +3770,15 @@ export function FloatingMascot() {
             Balon ve partiküller dönüş katmanlarının dışındadır: hiç dönmezler.
             Dokunma hedefi peek katmanının içindedir, yani karakterle birlikte
             hareket eder ve gizlenen kısmı konteynerin dışında kalır. */}
-        <Animated.View pointerEvents="box-none" style={[styles.peekLayer, peekStyle]}>
-          <GestureDetector gesture={gesture}>
-            <Animated.View
-              accessible
-              accessibilityHint={t('mascot.accessibilityHint')}
-              accessibilityLabel={t('mascot.accessibilityLabel', { name: MASCOT_NAME })}
-              accessibilityRole="button"
-              onAccessibilityTap={handleTap}
-              style={styles.touchTarget}>
+          <Animated.View pointerEvents="box-none" style={[styles.peekLayer, peekStyle]}>
+            <GestureDetector gesture={gesture}>
+              <Animated.View
+                accessible
+                accessibilityHint={t('mascot.accessibilityHint')}
+                accessibilityLabel={t('mascot.accessibilityLabel', { name: MASCOT_NAME })}
+                accessibilityRole="button"
+                onAccessibilityTap={handleTap}
+                style={styles.touchTarget}>
               {/* Sürükleme fiziği kenar rotasyonunun dışındadır: değerler
                   ekran uzayındadır ve dokunma hedefini etkilemez. Dönüş
                   merkezi karakterin kafa bölgesindedir. */}
@@ -3486,7 +3806,7 @@ export function FloatingMascot() {
                                 source={
                                   turnFrame
                                     ? MASCOT_TURN_SOURCES[turnFrame]
-                                    : resolveMascotImageSource(expression, blinkFrame)
+                                    : resolveMascotImageSource(expression, blinkFrame, sleepPose)
                                 }
                                 // Dönüş kareleri canonical ile aynı tuvale, aynı
                                 // üst hizasına ve aynı görünür yüksekliğe
@@ -3514,8 +3834,9 @@ export function FloatingMascot() {
                   </Animated.View>
                 </Animated.View>
               </Animated.View>
-            </Animated.View>
-          </GestureDetector>
+              </Animated.View>
+            </GestureDetector>
+          </Animated.View>
         </Animated.View>
       </Animated.View>
     </View>
@@ -3528,6 +3849,7 @@ const styles = StyleSheet.create({
    * kırpar; konteynerin kendi çerçevesi de dokunmayı orada durdurur.
    */
   clipContainer: { overflow: 'hidden', position: 'absolute' },
+  coachHandoffLayer: { height: TOUCH_SIZE, width: TOUCH_SIZE },
   positionLayer: {
     height: TOUCH_SIZE,
     left: 0,

@@ -19,7 +19,11 @@ import {
   normalizeMascotPosition,
 } from '@/types/mascot';
 
+export type MascotCoachHandoffPhase = 'world' | 'departing' | 'chat' | 'returning';
+
 type MascotContextValue = {
+  /** Rosea ile sohbet avatarı arasındaki görsel teslimin aşaması. */
+  coachHandoffPhase: MascotCoachHandoffPhase;
   enabled: boolean;
   /** AI yanıt hazırlarken sürekli açık kalan durum. */
   isThinking: boolean;
@@ -29,6 +33,7 @@ type MascotContextValue = {
   /** En son tetiklenen tek seferlik olay; kalıcı değildir. */
   reaction?: MascotReaction;
   savePosition: (position: MascotPosition) => Promise<void>;
+  setCoachHandoffPhase: (phase: MascotCoachHandoffPhase) => void;
   setEnabled: (enabled: boolean) => Promise<void>;
   setThinking: (value: boolean) => void;
   triggerReaction: (type: MascotReactionType) => void;
@@ -57,6 +62,8 @@ export function MascotProvider({ children }: PropsWithChildren) {
   const userId = user?.id;
 
   const [enabled, setEnabledState] = useState(true);
+  const [coachHandoffPhase, setCoachHandoffPhase] =
+    useState<MascotCoachHandoffPhase>('world');
   const [position, setPosition] = useState<MascotPosition>(DEFAULT_MASCOT_POSITION);
   const [isReady, setIsReady] = useState(false);
   const [reaction, setReaction] = useState<MascotReaction>();
@@ -68,6 +75,7 @@ export function MascotProvider({ children }: PropsWithChildren) {
     if (!userId) {
       // Çıkış yapıldığında maskot görünmez ve durum başlangıca döner.
       setEnabledState(true);
+      setCoachHandoffPhase('world');
       setPosition(DEFAULT_MASCOT_POSITION);
       setIsReady(false);
       setReaction(undefined);
@@ -131,6 +139,10 @@ export function MascotProvider({ children }: PropsWithChildren) {
     enabledRef.current = nextEnabled;
     setEnabledState(nextEnabled);
 
+    // Tatilde avatar teslim animasyonu oynatılmaz. Rosea geri getirildiğinde
+    // bulunduğu route yeni teslimi sıfırdan başlatır.
+    if (!nextEnabled) setCoachHandoffPhase('world');
+
     // Maskot kapatılınca bekleyen kutlama/tepki de temizlenir.
     if (!nextEnabled) setReaction(undefined);
 
@@ -173,17 +185,20 @@ export function MascotProvider({ children }: PropsWithChildren) {
 
   const value = useMemo(
     () => ({
+      coachHandoffPhase,
       enabled,
       isReady,
       isThinking,
       position,
       reaction,
       savePosition,
+      setCoachHandoffPhase,
       setEnabled,
       setThinking,
       triggerReaction,
     }),
     [
+      coachHandoffPhase,
       enabled,
       isReady,
       isThinking,

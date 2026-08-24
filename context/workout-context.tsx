@@ -125,6 +125,12 @@ type ManualDisciplineStatusRow = {
   status: DisciplineStatus;
 };
 
+/** Sunucunun dondurduğu geçmiş; istemci bu tabloya YAZAMAZ (yalnızca SELECT). */
+type DisciplineHistoryRow = {
+  discipline_date: string;
+  status: DisciplineStatus;
+};
+
 const WorkoutContext = createContext<WorkoutContextValue | undefined>(undefined);
 
 function parseVisual(value: unknown): WorkoutVisual | undefined {
@@ -151,6 +157,7 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
   const [activeProgramId, setActiveProgramId] = useState<string>();
   const [activeProgramStartedAt, setActiveProgramStartedAt] = useState<string>();
   const [manualDisciplineStatuses, setManualDisciplineStatuses] = useState<Record<string, DisciplineStatus>>({});
+  const [disciplineHistory, setDisciplineHistory] = useState<Record<string, DisciplineStatus>>({});
   const [completedSetCounts, setCompletedSetCounts] = useState<Record<string, number>>({});
   const [workoutSessions, setWorkoutSessions] = useState<WorkoutSession[]>([]);
   const [workoutSets, setWorkoutSets] = useState<WorkoutSetRecord[]>([]);
@@ -158,12 +165,13 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
   const disciplineStatuses = useMemo(
     () =>
       buildDisciplineStatuses(
+        disciplineHistory,
         manualDisciplineStatuses,
         activeProgram,
         activeProgramStartedAt,
         completedSetCounts,
       ),
-    [activeProgram, activeProgramStartedAt, completedSetCounts, manualDisciplineStatuses],
+    [activeProgram, activeProgramStartedAt, completedSetCounts, disciplineHistory, manualDisciplineStatuses],
   );
 
   const refreshPrograms = useCallback(async () => {
@@ -172,6 +180,7 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
       setActiveProgramId(undefined);
       setActiveProgramStartedAt(undefined);
       setManualDisciplineStatuses({});
+      setDisciplineHistory({});
       setCompletedSetCounts({});
       setWorkoutSessions([]);
       setWorkoutSets([]);
@@ -251,7 +260,7 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
           })),
       }));
 
-      const [sessionsResult, manualStatusesResult] = await Promise.all([
+      const [sessionsResult, manualStatusesResult, historyResult] = await Promise.all([
         supabase
           .from('workout_sessions')
           .select(
@@ -264,10 +273,15 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
           .from('manual_discipline_statuses')
           .select('discipline_date, status')
           .eq('user_id', user.id),
+        supabase
+          .from('discipline_day_history')
+          .select('discipline_date, status')
+          .eq('user_id', user.id),
       ]);
 
       if (sessionsResult.error) throw sessionsResult.error;
       if (manualStatusesResult.error) throw manualStatusesResult.error;
+      if (historyResult.error) throw historyResult.error;
 
       const sessionRows = (sessionsResult.data ?? []) as WorkoutSessionRow[];
       let workoutSetRows: WorkoutSetRow[] = [];
@@ -335,6 +349,13 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
         return statuses;
       }, {});
 
+      const loadedHistory = ((historyResult.data ?? []) as DisciplineHistoryRow[]).reduce<
+        Record<string, DisciplineStatus>
+      >((statuses, row) => {
+        statuses[row.discipline_date] = row.status;
+        return statuses;
+      }, {});
+
       const activeRow = programRows.find((program) => program.is_active);
       setPrograms(loadedPrograms);
       setActiveProgramId(activeRow?.id);
@@ -343,6 +364,7 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
       setWorkoutSets(loadedWorkoutSets);
       setCompletedSetCounts(loadedSetCounts);
       setManualDisciplineStatuses(loadedManualStatuses);
+      setDisciplineHistory(loadedHistory);
     } catch (error) {
       setProgramsError(getErrorMessage(error));
     } finally {
@@ -412,22 +434,29 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
         target_program_id: createdProgram.id,
       });
       if (activationError) throw activationError;
-      setActiveProgramId(createdProgram.id);
-      setActiveProgramStartedAt(toDateKey(new Date()));
+      // Bkz. `activateProgram`: aktif program bilgisi ve dondurulmuş geçmiş
+      // sunucudan tek seferde okunur.
+      await refreshPrograms();
     }
   }
 
   async function activateProgram(programId: string) {
-    // Bkz. `addProgram`: eski programın bekleyen günleri, program değişmeden
-    // önce sunucuda uzlaştırılır.
+    // Bkz. `addProgram`: eski programın bekleyen günleri ve GÖRÜNTÜLEME
+    // geçmişi, program değişmeden önce sunucuda dondurulur.
     const { error } = await supabase.rpc('activate_program', {
       client_today: toDateKey(new Date()),
       target_program_id: programId,
     });
     if (error) throw error;
 
-    setActiveProgramId(programId);
-    setActiveProgramStartedAt(toDateKey(new Date()));
+    /**
+     * Yerel `activeProgramStartedAt` BİLİNÇLİ olarak elle ileri alınmaz.
+     * Eskiden bu satır, sunucudan dondurulmuş geçmiş gelmeden önce yeni
+     * başlangıç tarihini uygulayıp takvimi bir anlığına sıfır gösteriyordu.
+     * Artık aktif program, başlangıç tarihi ve `discipline_day_history`
+     * sunucudan TEK seferde okunur; ara durumda takvim boşalmaz.
+     */
+    await refreshPrograms();
   }
 
   async function deleteProgram(programId: string) {
@@ -438,6 +467,9 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
     if (activeProgramId === programId) {
       setActiveProgramId(undefined);
       setActiveProgramStartedAt(undefined);
+      // Silme tetikleyicisi geçmişi silinmeden ÖNCE dondurur; dondurulan
+      // günler ancak yeniden okunduğunda takvime geri gelir.
+      await refreshPrograms();
     }
   }
 

@@ -16,7 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { WorkoutVisualPicker } from '@/components/workout-visual-picker';
-import { Layout, ThemeColors } from '@/constants/theme';
+import { Form, Layout, ThemeColors, Type } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { useWorkout } from '@/context/workout-context';
 import { EXERCISES, EXERCISE_MUSCLE_GROUPS, getProgramExerciseName } from '@/data/exercises';
@@ -71,7 +71,9 @@ export default function AddExerciseScreen() {
       <SafeAreaView style={styles.safeArea} edges={['bottom']}>
         <View style={styles.notFound}>
           <Text style={styles.notFoundTitle}>{t('addExercise.notFound')}</Text>
-          <Pressable onPress={() => router.replace('/programs')} style={styles.saveButton}>
+          <Pressable
+            onPress={() => router.replace('/programs')}
+            style={[styles.saveButton, styles.notFoundButton]}>
             <Text style={styles.saveButtonText}>{t('addExercise.backToPrograms')}</Text>
           </Pressable>
         </View>
@@ -200,7 +202,7 @@ export default function AddExerciseScreen() {
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}>
-          <View>
+          <View style={styles.header}>
             <Text style={styles.title}>{day.name}</Text>
             <Text style={styles.description}>
               {selectionCount > 0
@@ -209,51 +211,60 @@ export default function AddExerciseScreen() {
             </Text>
           </View>
 
-          <View style={styles.searchContainer}>
-            <Ionicons name="search-outline" size={20} color={colors.textTertiary} />
-            <TextInput
-              autoCapitalize="none"
-              keyboardAppearance={isDark ? 'dark' : 'light'}
-              onChangeText={setSearch}
-              placeholder={t('addExercise.searchPlaceholder')}
-              placeholderTextColor={colors.textTertiary}
-              selectionColor={colors.primary}
-              style={styles.searchInput}
-              value={search}
-            />
+          <View style={styles.searchSection}>
+            <View style={styles.searchField}>
+              <Ionicons name="search-outline" size={17} color={colors.textTertiary} />
+              <TextInput
+                autoCapitalize="none"
+                keyboardAppearance={isDark ? 'dark' : 'light'}
+                onChangeText={setSearch}
+                placeholder={t('addExercise.searchPlaceholder')}
+                placeholderTextColor={colors.textTertiary}
+                selectionColor={colors.primary}
+                style={styles.searchInput}
+                value={search}
+              />
+            </View>
+
+            {customExerciseName && selectedExercises.length === 0 ? (
+              <View style={styles.customExerciseNotice}>
+                <Ionicons name="create-outline" size={15} color={colors.accent} />
+                <Text style={styles.customExerciseNoticeText}>
+                  {t('addExercise.customNotice', { name: customExerciseName })}
+                </Text>
+              </View>
+            ) : (
+              <ScrollView
+                contentContainerStyle={styles.categoryList}
+                horizontal
+                showsHorizontalScrollIndicator={false}>
+                {EXERCISE_MUSCLE_GROUPS.map((muscleGroup) => {
+                  const selected = muscleGroup === selectedMuscleGroup;
+
+                  return (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      hitSlop={6}
+                      key={muscleGroup}
+                      onPress={() => setSelectedMuscleGroup(muscleGroup)}
+                      style={({ pressed }) => [
+                        styles.categoryTab,
+                        selected && styles.categoryTabSelected,
+                        pressed && styles.pressed,
+                      ]}>
+                      <Text style={[styles.categoryText, selected && styles.categoryTextSelected]}>
+                        {getMuscleGroupLabel(muscleGroup, t)}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            )}
           </View>
 
-          {customExerciseName && selectedExercises.length === 0 ? (
-            <View style={styles.customExerciseNotice}>
-              <Ionicons name="create-outline" size={20} color={colors.accentText} />
-              <Text style={styles.customExerciseNoticeText}>
-                {t('addExercise.customNotice', { name: customExerciseName })}
-              </Text>
-            </View>
-          ) : (
-            <ScrollView
-              contentContainerStyle={styles.categoryList}
-              horizontal
-              showsHorizontalScrollIndicator={false}>
-              {EXERCISE_MUSCLE_GROUPS.map((muscleGroup) => {
-                const selected = muscleGroup === selectedMuscleGroup;
-
-                return (
-                  <Pressable
-                    key={muscleGroup}
-                    onPress={() => setSelectedMuscleGroup(muscleGroup)}
-                    style={[styles.categoryChip, selected && styles.categoryChipSelected]}>
-                    <Text style={[styles.categoryChipText, selected && styles.categoryChipTextSelected]}>
-                      {getMuscleGroupLabel(muscleGroup, t)}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-          )}
-
           <View style={styles.exerciseLibrary}>
-            {filteredExercises.map((exercise) => {
+            {filteredExercises.map((exercise, index) => {
               const selected = selectedExerciseIds.includes(exercise.id);
 
               return (
@@ -264,23 +275,18 @@ export default function AddExerciseScreen() {
                   onPress={() => toggleExercise(exercise.id)}
                   style={({ pressed }) => [
                     styles.exerciseOption,
-                    selected && styles.exerciseOptionSelected,
+                    index > 0 && styles.rowDivided,
                     pressed && styles.pressed,
                   ]}>
-                  <View style={[styles.exerciseIcon, selected && styles.exerciseIconSelected]}>
-                    <Ionicons
-                      name="barbell-outline"
-                      size={20}
-                      color={selected ? colors.onPrimary : colors.primaryIcon}
-                    />
-                  </View>
                   <View style={styles.exerciseInfo}>
-                    <Text style={styles.exerciseName}>{exercise.name}</Text>
+                    <Text style={[styles.exerciseName, selected && styles.exerciseNameSelected]}>
+                      {exercise.name}
+                    </Text>
                     <Text style={styles.exerciseMeta}>
                       {getMuscleGroupLabel(exercise.muscleGroup, t)} · {getEquipmentLabel(exercise.equipment, t)}
                     </Text>
                   </View>
-                  {selected && <Ionicons name="checkmark-circle" size={22} color={colors.primary} />}
+                  {selected && <Ionicons name="checkmark-circle" size={20} color={colors.primary} />}
                 </Pressable>
               );
             })}
@@ -292,9 +298,9 @@ export default function AddExerciseScreen() {
             )}
           </View>
 
-          <View style={styles.targetsCard}>
-            <Text style={styles.targetsTitle}>{t('addExercise.targets')}</Text>
-            <Text style={styles.targetsDescription}>
+          <View style={styles.formSection}>
+            <Text style={styles.sectionTitle}>{t('addExercise.targets')}</Text>
+            <Text style={styles.sectionDescription}>
               {selectedExercises.length > 0
                 ? selectedExercises.map((exercise) => exercise.name).join(', ')
                 : customExerciseName || t('addExercise.nameRequiredBody')}
@@ -326,11 +332,15 @@ export default function AddExerciseScreen() {
             </View>
           </View>
 
-          <View style={styles.visualCard}>
-            <Text style={styles.targetsTitle}>{t('addExercise.visual')}</Text>
-            <Text style={styles.targetsDescription}>{t('visualPicker.choosePhoto')}</Text>
+          <View style={styles.formSection}>
+            <Text style={styles.sectionTitle}>{t('addExercise.visual')}</Text>
+            <Text style={styles.sectionDescription}>{t('visualPicker.choosePhoto')}</Text>
             <View style={styles.visualPicker}>
-              <WorkoutVisualPicker onSelect={setExerciseVisual} selectedVisual={exerciseVisual} />
+              <WorkoutVisualPicker
+                onSelect={setExerciseVisual}
+                selectedVisual={exerciseVisual}
+                variant="programEdit"
+              />
             </View>
           </View>
         </ScrollView>
@@ -383,141 +393,142 @@ function TargetInput({ colors, isDark, keyboardType = 'number-pad', label, onCha
   return (
     <View style={styles.targetField}>
       <Text style={styles.targetLabel}>{label}</Text>
-      <TextInput
-        keyboardAppearance={isDark ? 'dark' : 'light'}
-        keyboardType={keyboardType}
-        maxLength={7}
-        onChangeText={onChangeText}
-        selectionColor={colors.primary}
-        style={styles.targetInput}
-        value={value}
-      />
+      <View style={styles.targetInputRow}>
+        <TextInput
+          keyboardAppearance={isDark ? 'dark' : 'light'}
+          keyboardType={keyboardType}
+          maxLength={7}
+          onChangeText={onChangeText}
+          selectionColor={colors.primary}
+          style={styles.targetInput}
+          value={value}
+        />
+      </View>
     </View>
   );
 }
 
 function createStyles(colors: ThemeColors) {
+  /** Satırları ayıran saç teli çizgi — Ana Sayfa'daki `lastSection` deseni. */
+  const rowDivider = {
+    borderTopColor: colors.separator,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  };
+
   return StyleSheet.create({
     safeArea: { backgroundColor: colors.background, flex: 1 },
     keyboardView: { flex: 1 },
+    // Ana Sayfa ile aynı yatay boşluk ve bölüm aralığı.
+    content: {
+      gap: 26,
+      paddingBottom: 32,
+      paddingHorizontal: Layout.screenPadding,
+      paddingTop: 12,
+    },
+    header: { gap: 4 },
+    title: { color: colors.text, ...Type.sectionTitle },
+    description: { color: colors.textSecondary, ...Type.caption },
+
+    searchSection: { gap: 16 },
+    // Gerçek form alanı olduğu için yüzey kullanılır; çerçeve yok.
+    searchField: {
+      alignItems: 'center',
+      backgroundColor: colors.surfaceMuted,
+      borderRadius: Form.controlRadius,
+      flexDirection: 'row',
+      gap: 8,
+      minHeight: Form.controlHeight,
+      paddingHorizontal: 12,
+    },
+    searchInput: {
+      color: colors.text,
+      flex: 1,
+      ...Type.body,
+      minHeight: Form.controlHeight,
+      paddingVertical: 0,
+    },
+    customExerciseNotice: { alignItems: 'flex-start', flexDirection: 'row', gap: 7 },
+    customExerciseNoticeText: { color: colors.textSecondary, flex: 1, ...Type.caption },
+
+    // Ana Sayfa'daki Hafta/Ay/Yıl seçicisi: aynı punto, renk + ağırlık + alt çizgi.
+    categoryList: { gap: 20, paddingRight: Layout.screenPadding },
+    categoryTab: {
+      borderBottomColor: 'transparent',
+      borderBottomWidth: 2,
+      justifyContent: 'center',
+      minHeight: 34,
+      paddingBottom: 5,
+    },
+    categoryTabSelected: { borderBottomColor: colors.text },
+    categoryText: { color: colors.textSecondary, ...Type.body },
+    categoryTextSelected: { color: colors.text, fontWeight: '600' },
+
+    exerciseLibrary: {},
+    exerciseOption: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 12,
+      minHeight: 56,
+      paddingVertical: 12,
+    },
+    rowDivided: rowDivider,
+    exerciseInfo: { flex: 1, gap: 3 },
+    exerciseName: { color: colors.text, ...Type.rowTitle },
+    exerciseNameSelected: { color: colors.primary },
+    exerciseMeta: { color: colors.textSecondary, ...Type.caption },
+    noResults: { paddingVertical: 26 },
+    noResultsText: { color: colors.textSecondary, ...Type.caption, textAlign: 'center' },
+
+    formSection: { gap: 4 },
+    sectionTitle: { color: colors.text, ...Type.sectionTitle },
+    sectionDescription: { color: colors.textSecondary, ...Type.caption },
+    // Üç alan "Egzersizi düzenle" ile aynı sistemden gelir.
+    targetFields: { flexDirection: 'row', gap: 12, marginTop: 14 },
+    targetField: { flex: 1, gap: Form.fieldGap },
+    targetLabel: { color: colors.textSecondary, ...Type.eyebrow },
+    targetInputRow: {
+      alignItems: 'center',
+      borderBottomColor: colors.separator,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row',
+      minHeight: Form.controlHeight,
+    },
+    targetInput: {
+      color: colors.text,
+      flex: 1,
+      ...Form.title,
+      fontVariant: ['tabular-nums'],
+      padding: 0,
+    },
+    // Ortak seçicinin kendi ölçüleri korunur; yalnızca bölüm aralığı verilir.
+    visualPicker: { marginTop: Form.fieldGap },
+
     actionBar: {
       alignItems: 'center',
       borderTopColor: colors.separator,
       borderTopWidth: StyleSheet.hairlineWidth,
       flexDirection: 'row',
-      gap: 10,
+      gap: 12,
       paddingHorizontal: Layout.screenPadding,
       paddingVertical: 12,
     },
-    clearButton: { justifyContent: 'center', minHeight: Layout.minTouchSize, paddingHorizontal: 12 },
-    clearButtonText: { color: colors.textSecondary, fontSize: 14 },
-    content: { gap: 15, padding: 18, paddingBottom: 30 },
-    notFound: { alignItems: 'center', flex: 1, gap: 16, justifyContent: 'center', padding: 30 },
-    notFoundTitle: { color: colors.text, fontSize: 18, fontWeight: '500', textAlign: 'center' },
-    eyebrow: { color: colors.accentBright, fontSize: 12, fontWeight: '500', letterSpacing: 1.1 },
-    title: { color: colors.text, fontSize: 27, fontWeight: '500', marginTop: 4 },
-    description: { color: colors.textSecondary, fontSize: 14, lineHeight: 21, marginTop: 6 },
-    searchContainer: {
-      alignItems: 'center',
-      backgroundColor: colors.surface,
-      borderColor: colors.inputBorder,
-      borderRadius: 9,
-      borderWidth: 1,
-      flexDirection: 'row',
-      gap: 9,
-      paddingHorizontal: 14,
-    },
-    searchInput: { color: colors.text, flex: 1, fontSize: 15, paddingVertical: 14 },
-    customExerciseNotice: {
-      alignItems: 'center',
-      backgroundColor: colors.accentSoft,
-      borderColor: colors.accent,
-      borderRadius: 9,
-      borderWidth: 1,
-      flexDirection: 'row',
-      gap: 9,
-      padding: 12,
-    },
-    customExerciseNoticeText: { color: colors.accentText, flex: 1, fontSize: 13, lineHeight: 19 },
-    categoryList: { gap: 8, paddingRight: 20 },
-    categoryChip: {
-      backgroundColor: colors.surface,
-      borderColor: colors.border,
-      borderRadius: 999,
-      borderWidth: 1,
-      paddingHorizontal: 13,
-      paddingVertical: 8,
-    },
-    categoryChipSelected: { backgroundColor: colors.primarySoft, borderColor: colors.primary },
-    categoryChipText: { color: colors.textSecondary, fontSize: 12, fontWeight: '500' },
-    categoryChipTextSelected: { color: colors.primarySoftText },
-    exerciseLibrary: { gap: 9 },
-    exerciseOption: {
-      alignItems: 'center',
-      backgroundColor: colors.surface,
-      borderColor: colors.border,
-      borderRadius: 9,
-      borderWidth: 1,
-      flexDirection: 'row',
-      gap: 11,
-      padding: 12,
-    },
-    exerciseOptionSelected: { backgroundColor: colors.primarySoft, borderColor: colors.primary },
-    exerciseIcon: {
-      alignItems: 'center',
-      backgroundColor: colors.primarySoft,
-      borderRadius: 10,
-      height: 38,
-      justifyContent: 'center',
-      width: 38,
-    },
-    exerciseIconSelected: { backgroundColor: colors.primary },
-    exerciseInfo: { flex: 1 },
-    exerciseName: { color: colors.text, fontSize: 14, fontWeight: '500' },
-    exerciseMeta: { color: colors.textSecondary, fontSize: 12, marginTop: 3 },
-    pressed: { opacity: 0.72 },
-    noResults: { alignItems: 'center', backgroundColor: colors.surfaceMuted, borderRadius: 9, padding: 20 },
-    noResultsText: { color: colors.textSecondary, fontSize: 13, textAlign: 'center' },
-    targetsCard: {
-      backgroundColor: colors.surface,
-      borderColor: colors.border,
-      borderRadius: 10,
-      borderWidth: 1,
-      padding: 16,
-    },
-    targetsTitle: { color: colors.text, fontSize: 18, fontWeight: '500' },
-    targetsDescription: { color: colors.textSecondary, fontSize: 13, marginTop: 4 },
-    visualCard: {
-      backgroundColor: colors.surface,
-      borderColor: colors.border,
-      borderRadius: 10,
-      borderWidth: 1,
-      padding: 16,
-    },
-    visualPicker: { marginTop: 16 },
-    targetFields: { flexDirection: 'row', gap: 9, marginTop: 16 },
-    targetField: { flex: 1, gap: 6 },
-    targetLabel: { color: colors.textSecondary, fontSize: 11, fontWeight: '500' },
-    targetInput: {
-      backgroundColor: colors.surfaceMuted,
-      borderColor: colors.inputBorder,
-      borderRadius: 11,
-      borderWidth: 1,
-      color: colors.text,
-      fontSize: 15,
-      fontWeight: '500',
-      paddingHorizontal: 10,
-      paddingVertical: 11,
-    },
+    clearButton: { justifyContent: 'center', minHeight: Layout.minTouchSize, paddingHorizontal: 4 },
+    clearButtonText: { color: colors.textSecondary, ...Type.body },
     saveButton: {
       alignItems: 'center',
       backgroundColor: colors.primary,
-      borderRadius: Layout.radiusPill,
+      borderRadius: Form.controlRadius,
       flex: 1,
       justifyContent: 'center',
-      minHeight: 50,
+      minHeight: Form.controlHeight,
     },
-    saveButtonText: { color: colors.onPrimary, fontSize: 16, fontWeight: '500' },
-    saveButtonDisabled: { opacity: 0.58 },
+    saveButtonText: { color: colors.onPrimary, ...Form.action },
+    saveButtonDisabled: { opacity: 0.5 },
+    // Boş durumdaki düğme dikeyde esnemez.
+    notFoundButton: { flex: 0, paddingHorizontal: 24 },
+
+    notFound: { alignItems: 'center', flex: 1, gap: 12, justifyContent: 'center', padding: 32 },
+    notFoundTitle: { color: colors.text, ...Type.sectionTitle, textAlign: 'center' },
+    pressed: { opacity: 0.7 },
   });
 }
