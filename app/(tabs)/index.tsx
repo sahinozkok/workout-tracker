@@ -5,6 +5,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DisciplineCalendar } from '@/components/discipline-calendar';
+import { MotionSection } from '@/components/motion-section';
 import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { useWorkout } from '@/context/workout-context';
@@ -91,7 +92,7 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.header}>
+        <MotionSection style={styles.header}>
           <View style={styles.headerTopRow}>
             <Text style={styles.weekday}>{weekdayLabel}</Text>
             {disciplineStreak > 0 && (
@@ -112,10 +113,10 @@ export default function HomeScreen() {
                 ? activeProgram.name
                 : t('home.chooseActiveProgram')}
           </Text>
-        </View>
+        </MotionSection>
 
         {programs.length === 0 ? (
-          <View style={styles.card}>
+          <MotionSection delay={40} style={styles.card}>
             <Text style={styles.cardEyebrow}>{t('home.start')}</Text>
             <Text style={styles.cardTitle}>{t('home.firstProgram')}</Text>
             <Text style={styles.cardMeta}>{t('home.firstProgramBody')}</Text>
@@ -126,9 +127,9 @@ export default function HomeScreen() {
               <Ionicons name="add" size={18} color={colors.background} />
               <Text style={styles.startButtonText}>{t('home.createProgram')}</Text>
             </Pressable>
-          </View>
+          </MotionSection>
         ) : todayDay ? (
-          <View style={styles.card}>
+          <MotionSection delay={40} style={styles.card}>
             <Text style={styles.cardEyebrow}>{t('home.todayWorkout')}</Text>
             <Text style={styles.cardTitle}>{todayDay.isOffDay ? t('home.restDay') : todayDay.name}</Text>
             <Text style={styles.cardMeta}>
@@ -177,15 +178,15 @@ export default function HomeScreen() {
                 <Text style={styles.secondaryLinkText}>{t('home.openDay')}</Text>
               </Pressable>
             )}
-          </View>
+          </MotionSection>
         ) : activeProgram ? (
-          <View style={styles.card}>
+          <MotionSection delay={40} style={styles.card}>
             <Text style={styles.cardEyebrow}>{t('home.today')}</Text>
             <Text style={styles.cardTitle}>{t('home.noPlannedWorkout')}</Text>
             <Text style={styles.cardMeta}>{t('home.noPlannedWorkoutBody')}</Text>
-          </View>
+          </MotionSection>
         ) : (
-          <View style={styles.card}>
+          <MotionSection delay={40} style={styles.card}>
             <Text style={styles.cardEyebrow}>{t('home.activeProgram')}</Text>
             <Text style={styles.cardTitle}>{t('home.noActiveProgram')}</Text>
             <Text style={styles.cardMeta}>{t('home.noActiveProgramBody')}</Text>
@@ -195,13 +196,15 @@ export default function HomeScreen() {
               style={({ pressed }) => [styles.startButton, pressed && styles.pressed]}>
               <Text style={styles.startButtonText}>{t('home.goToPrograms')}</Text>
             </Pressable>
-          </View>
+          </MotionSection>
         )}
 
-        <DisciplineCalendar />
+        <MotionSection delay={80}>
+          <DisciplineCalendar />
+        </MotionSection>
 
         {lastCompletedSession && (
-          <View style={styles.lastSection}>
+          <MotionSection delay={120} style={styles.lastSection}>
             <View style={styles.lastRow}>
               <View style={styles.lastIcon}>
                 <Ionicons name="checkmark" size={15} color={colors.background} />
@@ -216,7 +219,7 @@ export default function HomeScreen() {
                 {formatDuration(lastCompletedSession.accumulatedDurationSeconds)}
               </Text>
             </View>
-          </View>
+          </MotionSection>
         )}
       </ScrollView>
     </SafeAreaView>

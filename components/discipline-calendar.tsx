@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 
 import { DisciplineYearGrid } from '@/components/discipline-year-grid';
+import { MotionSwap } from '@/components/motion-section';
 import { ThemeColors, Type } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { useWorkout } from '@/context/workout-context';
@@ -170,15 +171,22 @@ export function DisciplineCalendarView({
     }),
     [t],
   );
+  const accessibilityDateFormatter = useMemo(
+    () => new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'long', year: 'numeric' }),
+    [locale],
+  );
   const [period, setPeriod] = useState<CalendarPeriod>(initialPeriod);
   const today = useMemo(() => startOfDay(new Date()), []);
   const dates = useMemo(() => getPeriodDates(period, today), [period, today]);
 
-  function getAccessibilityLabel(date: Date, status: DisciplineStatus | undefined, isFuture: boolean) {
-    const dateLabel = date.toLocaleDateString(locale, { day: 'numeric', month: 'long', year: 'numeric' });
-    if (isFuture) return `${dateLabel}, ${t('calendar.futureDay')}`;
-    return `${dateLabel}, ${status ? statusLabels[status] : t('calendar.unmarked')}`;
-  }
+  const getAccessibilityLabel = useCallback(
+    (date: Date, status: DisciplineStatus | undefined, isFuture: boolean) => {
+      const dateLabel = accessibilityDateFormatter.format(date);
+      if (isFuture) return `${dateLabel}, ${t('calendar.futureDay')}`;
+      return `${dateLabel}, ${status ? statusLabels[status] : t('calendar.unmarked')}`;
+    },
+    [accessibilityDateFormatter, statusLabels, t],
+  );
 
   return (
     <View onLayout={isCompact ? handleLayout : undefined} style={styles.section}>
@@ -207,6 +215,10 @@ export function DisciplineCalendarView({
         })}
       </View>
 
+      <MotionSwap
+        contentWeight={period === 'year' ? 'heavy' : 'regular'}
+        emphasis="clear"
+        transitionKey={period}>
       {period === 'week' ? (
         <WeekStrip
           colors={colors}
@@ -246,6 +258,7 @@ export function DisciplineCalendarView({
           weekdayLabels={weekdayLabels}
         />
       )}
+      </MotionSwap>
 
       <View style={styles.legend}>
         <LegendItem color={colors.disciplineCompleted} label={t('calendar.completed')} styles={styles} />

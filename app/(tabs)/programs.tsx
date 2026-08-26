@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ProgramDetailScroll } from '@/components/program-detail-scroll';
 import ProgramList from '@/components/program-list';
+import { MotionSection } from '@/components/motion-section';
 import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { useProfile } from '@/context/profile-context';
@@ -168,18 +169,19 @@ export default function ProgramsScreen() {
         çalışabilsin diye gereklidir (Program detayı ekranıyla aynı kalıp).
       */}
       <ProgramDetailScroll contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.header}>
+        <MotionSection style={styles.header}>
           <Text style={styles.eyebrow}>{t('programs.savedProgramCount', { count: programs.length })}</Text>
           <Text style={styles.title}>{t('programs.title')}</Text>
-        </View>
+        </MotionSection>
 
         {showCreatedNotice && (
-          <View style={styles.notice}>
+          <MotionSection delay={40} style={styles.notice}>
             <Ionicons name="checkmark-circle" size={16} color={colors.disciplineCompleted} />
             <Text style={styles.noticeText}>{t('programs.created')}</Text>
-          </View>
+          </MotionSection>
         )}
 
+        <MotionSection delay={80}>
         <ProgramList
           activeProgramId={activeProgramId}
           busyProgramId={deletingProgramId ?? activatingProgramId}
@@ -189,13 +191,16 @@ export default function ProgramsScreen() {
           programs={programs}
           showIcons={showProgramIcons}
         />
+        </MotionSection>
 
+        <MotionSection delay={120}>
         <Pressable
           accessibilityRole="button"
           onPress={() => router.push('/program/create')}
           style={({ pressed }) => [styles.createAction, pressed && styles.pressed]}>
           <Text style={styles.createActionText}>{t('programs.newProgram')}</Text>
         </Pressable>
+        </MotionSection>
       </ProgramDetailScroll>
     </SafeAreaView>
   );

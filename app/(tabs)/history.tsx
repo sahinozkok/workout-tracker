@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ExerciseProgress } from '@/components/exercise-progress';
+import { MotionSection, MotionSwap } from '@/components/motion-section';
 import { ProgressRing } from '@/components/progress-ring';
 import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
@@ -127,7 +128,7 @@ export default function HistoryScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.header}>
+        <MotionSection style={styles.header}>
           <View style={styles.headerTopRow}>
             <Text style={styles.eyebrow}>{t('history.eyebrow')}</Text>
             <Pressable
@@ -144,11 +145,12 @@ export default function HistoryScreen() {
           <Text style={styles.description}>
             {activeView === 'workouts' ? t('history.workoutsDescription') : t('history.progressDescription')}
           </Text>
-        </View>
+        </MotionSection>
 
+        <MotionSwap transitionKey={activeView}>
         {activeView === 'workouts' ? (
           <>
-            <View style={styles.ringRow}>
+            <MotionSection delay={40} style={styles.ringRow}>
               <StatRing
                 color={workoutsRing}
                 colors={colors}
@@ -178,9 +180,9 @@ export default function HistoryScreen() {
                   durationMode === 'total' ? totalDurationSeconds : averageDurationSeconds,
                 )}
               />
-            </View>
+            </MotionSection>
 
-            <View style={styles.list}>
+            <MotionSection delay={80} style={styles.list}>
               {completedSessions.map((session) => (
                 <SessionHistoryRow
                   colors={colors}
@@ -203,11 +205,14 @@ export default function HistoryScreen() {
                   t={t}
                 />
               ))}
-            </View>
+            </MotionSection>
           </>
         ) : (
-          <ExerciseProgress workoutSets={completedWorkoutSets} />
+          <MotionSection delay={40}>
+            <ExerciseProgress workoutSets={completedWorkoutSets} />
+          </MotionSection>
         )}
+        </MotionSwap>
       </ScrollView>
     </SafeAreaView>
   );

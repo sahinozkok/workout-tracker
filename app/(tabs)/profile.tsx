@@ -3,7 +3,7 @@ import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -15,7 +15,11 @@ import {
   Text,
   TextInput,
   View,
+  type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from 'react-native';
+import { useReducedMotion } from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { MotionPressable } from '@/components/motion-pressable';
@@ -23,6 +27,8 @@ import { getOnAccentColor, withAlpha } from '@/constants/color-presets';
 import { LevelProgressRing } from '@/components/rewards/level-progress-ring';
 import { ProfileProofStats } from '@/components/rewards/profile-proof-stats';
 import { ProfileDisciplineCard } from '@/components/profile-discipline-card';
+import { MotionCollapsible, MotionSection } from '@/components/motion-section';
+import { MotionDuration } from '@/constants/motion';
 import { Fonts, Layout, ThemeColors, Type } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useLanguage } from '@/context/language-context';
@@ -49,6 +55,7 @@ const GOAL_OPTIONS: { glyph: string; labelKey: string; value: TrainingGoal }[] =
 
 /** Profil ekranının bugünkü vurgu tonu (seviye rozeti / ilerleme halkası). */
 const PROFILE_ACCENT_DEFAULT = '#D5755B';
+const PROFILE_CONTENT_BOTTOM_PADDING = 56;
 
 export default function ProfileScreen() {
   const { user } = useAuth();
@@ -67,6 +74,7 @@ export default function ProfileScreen() {
   const canSaveProfile = profileLoadStatus === 'ready';
   const { colors, isDark } = useAppTheme();
   const insets = useSafeAreaInsets();
+  const reduceMotion = useReducedMotion();
   const { disciplineStatuses, workoutSessions } = useWorkout();
   const { t } = useLanguage();
   const { progress: levelProgress } = useRewards();
@@ -84,6 +92,12 @@ export default function ProfileScreen() {
   const [isProfileEditorOpen, setIsProfileEditorOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [uploadingKind, setUploadingKind] = useState<ProfileImageKind>();
+  const scrollRef = useRef<ScrollView>(null);
+  const scrollYRef = useRef(0);
+  const editorAnchorYRef = useRef(0);
+  const editorAnchorHeightRef = useRef(0);
+  const scrollViewportHeightRef = useRef(0);
+  const closeEditorTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // Yüklenmiş ama henüz "Profili kaydet" ile kalıcılaşmamış dosyalar.
   // Ref kullanılır; unmount temizliği her zaman en güncel değeri görür.
   const stagedPathsRef = useRef<Partial<Record<ProfileImageKind, string>>>({});
@@ -95,6 +109,7 @@ export default function ProfileScreen() {
 
   useEffect(
     () => () => {
+      if (closeEditorTimerRef.current) clearTimeout(closeEditorTimerRef.current);
       // Kaydetmeden ekrandan çıkıldıysa yalnızca staged dosyalar silinir;
       // kalıcı olarak kaydedilmiş avatar/banner asla bu listeye girmez.
       const ownerId = userIdRef.current;
@@ -106,6 +121,59 @@ export default function ProfileScreen() {
     },
     [],
   );
+
+  const handleProfileScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      scrollYRef.current = event.nativeEvent.contentOffset.y;
+    },
+    [],
+  );
+
+  const handleEditorAnchorLayout = useCallback((event: LayoutChangeEvent) => {
+    const { height, y } = event.nativeEvent.layout;
+    editorAnchorYRef.current = y;
+    editorAnchorHeightRef.current = height;
+  }, []);
+
+  const handleScrollLayout = useCallback((event: LayoutChangeEvent) => {
+    scrollViewportHeightRef.current = event.nativeEvent.layout.height;
+  }, []);
+
+  const closeProfileEditor = useCallback(
+    (afterClose?: () => void) => {
+      if (closeEditorTimerRef.current) clearTimeout(closeEditorTimerRef.current);
+
+      // Form kaldırılınca sayfanın erişebileceği en alt kaydırma noktası,
+      // Edit/Ayarlar satırının altı + content padding'idir. Önce tam olarak bu
+      // yeni maksimum noktaya kaydırılır; ardından form kaldırılır. Böylece
+      // iOS'un içeriği kısalınca yaptığı ani ScrollView clamp'i görünmez.
+      const collapsedContentHeight =
+        editorAnchorYRef.current + editorAnchorHeightRef.current + PROFILE_CONTENT_BOTTOM_PADDING;
+      const targetY = Math.max(0, collapsedContentHeight - scrollViewportHeightRef.current);
+      const hasMeasuredViewport = scrollViewportHeightRef.current > 0;
+      const shouldScrollFirst =
+        !reduceMotion && hasMeasuredViewport && scrollYRef.current > targetY + 8;
+
+      if (!shouldScrollFirst) {
+        setIsProfileEditorOpen(false);
+        afterClose?.();
+        return;
+      }
+
+      scrollRef.current?.scrollTo({ animated: true, y: targetY });
+      closeEditorTimerRef.current = setTimeout(() => {
+        closeEditorTimerRef.current = undefined;
+        setIsProfileEditorOpen(false);
+        afterClose?.();
+      }, MotionDuration.slow);
+    },
+    [reduceMotion],
+  );
+
+  const handleProfileEditorToggle = useCallback(() => {
+    if (isProfileEditorOpen) closeProfileEditor();
+    else setIsProfileEditorOpen(true);
+  }, [closeProfileEditor, isProfileEditorOpen]);
 
   const isProfileEditorOpenRef = useRef(isProfileEditorOpen);
 
@@ -258,8 +326,7 @@ export default function ProfileScreen() {
       // sırasında yanlışlıkla silinmesinler.
       stagedPathsRef.current = {};
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setIsProfileEditorOpen(false);
-      Alert.alert(t('profile.saved'), t('profile.savedBody'));
+      closeProfileEditor(() => Alert.alert(t('profile.saved'), t('profile.savedBody')));
     } catch (error) {
       // Başarısız kayıtta context yeni dosyaları sildi; işaretler tekrar
       // silmeye çalışılmaması için temizlenir.
@@ -304,6 +371,10 @@ export default function ProfileScreen() {
         <ScrollView
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
+          onLayout={handleScrollLayout}
+          onScroll={handleProfileScroll}
+          ref={scrollRef}
+          scrollEventThrottle={16}
           showsVerticalScrollIndicator={false}>
           {/* Yalnızca sunucudan okuma başarısızken görünür. Ekranın mevcut
               yerleşimi değişmez; başarılı yüklemede hiç render edilmez. */}
@@ -347,7 +418,7 @@ export default function ProfileScreen() {
             </View>
           </View>
 
-          <View style={styles.profileSummary}>
+          <MotionSection style={styles.profileSummary}>
             <Text numberOfLines={1} style={styles.summaryUsername}>
               @{draft.username || t('profile.usernamePlaceholder')}
             </Text>
@@ -378,7 +449,7 @@ export default function ProfileScreen() {
               workoutDays={completedWorkoutDayCount}
             />
 
-          </View>
+          </MotionSection>
 
           {/* Disiplin kartı düzenleme formunun dışındadır; form kapalıyken de
               görünür ve mevcut kullanıcı için etkileşimlidir. Profil ekranına
@@ -386,11 +457,12 @@ export default function ProfileScreen() {
               veya ölçü paylaşmaz, yalnızca gerçek veri ve tarih hesaplarını
               paylaşır. Bu sayede karttaki hiçbir değişiklik Ana Sayfa'yı
               etkileyemez. */}
-          <View style={styles.calendarSection}>
+          <MotionSection delay={40} style={styles.calendarSection}>
             <ProfileDisciplineCard accentColor={profileAccent.color} collapsible />
-          </View>
+          </MotionSection>
 
           {/* Arkadaşlar: yeni sekme eklenmez; kök Stack'teki /friends ekranına gider. */}
+          <MotionSection delay={80}>
           <Pressable
             accessibilityRole="button"
             onPress={() => router.push('/friends')}
@@ -404,12 +476,14 @@ export default function ProfileScreen() {
             </View>
             <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
           </Pressable>
+          </MotionSection>
 
-          <View style={styles.headerActions}>
+          <View onLayout={handleEditorAnchorLayout}>
+          <MotionSection delay={120} style={styles.headerActions}>
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ expanded: isProfileEditorOpen }}
-              onPress={() => setIsProfileEditorOpen((current) => !current)}
+              onPress={handleProfileEditorToggle}
               style={({ pressed }) => [styles.editProfileButton, pressed && styles.pressed]}>
               <Ionicons name="pencil-outline" size={13} color={colors.text} />
               <Text style={styles.editProfileLabel}>{t('common.edit')}</Text>
@@ -422,10 +496,11 @@ export default function ProfileScreen() {
               style={({ pressed }) => [styles.settingsButton, pressed && styles.pressed]}>
               <Ionicons name="settings-outline" size={19} color={colors.textSecondary} />
             </Pressable>
+          </MotionSection>
           </View>
 
           {isProfileEditorOpen && (
-            <View style={styles.editorSection}>
+            <MotionCollapsible style={styles.editorSection}>
               <Text style={styles.introText}>{t('profile.intro')}</Text>
 
               <View style={styles.mediaEditorRow}>
@@ -600,7 +675,7 @@ export default function ProfileScreen() {
                 ]}>
                 <Text style={styles.saveButtonText}>{isSaving ? t('common.saving') : t('profile.save')}</Text>
               </MotionPressable>
-            </View>
+            </MotionCollapsible>
           )}
         </ScrollView>
       </KeyboardAvoidingView>
@@ -618,7 +693,7 @@ function createStyles(
     flex: { flex: 1 },
     // Arkadaşlar satırı en altta olduğu için alt sekme çubuğunun ve alt güvenli
     // alanın üzerinde rahat bir boşluk bırakılır.
-    content: { paddingBottom: 56, paddingTop: 0 },
+    content: { paddingBottom: PROFILE_CONTENT_BOTTOM_PADDING, paddingTop: 0 },
     editorSection: {
       backgroundColor: isDark ? '#111113' : colors.surfaceMuted,
       borderRadius: 28,

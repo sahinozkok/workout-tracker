@@ -5,6 +5,7 @@ import { NestableDraggableFlatList, ScaleDecorator } from 'react-native-draggabl
 import { useFeatureColor } from '@/hooks/use-feature-colors';
 import { ProgramListProps } from '@/components/program-list.types';
 import { WorkoutVisualDisplay } from '@/components/workout-visual-display';
+import { getFeatureFallbackColor } from '@/constants/color-presets';
 import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
@@ -33,7 +34,8 @@ export default function ProgramList({
 }: ProgramListProps) {
   const { colors, isDark } = useAppTheme();
   // Hazır program ikonlarının vurgusu Workout Days presetinden gelir.
-  const workoutDaysIconColor = useFeatureColor('workoutDays', colors.primary).color;
+  const workoutDaysDefault = getFeatureFallbackColor('workoutDays', colors, isDark);
+  const workoutDaysIconColor = useFeatureColor('workoutDays', workoutDaysDefault).color;
   const { t } = useTranslation();
   const styles = createStyles(colors);
 

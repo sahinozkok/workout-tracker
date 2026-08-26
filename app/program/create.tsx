@@ -19,6 +19,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFeatureColor } from '@/hooks/use-feature-colors';
 import { WorkoutVisualDisplay } from '@/components/workout-visual-display';
 import { WorkoutVisualPicker } from '@/components/workout-visual-picker';
+import { getFeatureFallbackColor } from '@/constants/color-presets';
 import { ThemeColors } from '@/constants/theme';
 import { getWeekdayLabel, getWeekdayOptions } from '@/constants/weekdays';
 import { useTranslation } from '@/context/language-context';
@@ -33,7 +34,8 @@ export default function CreateProgramScreen() {
   const { addProgram } = useWorkout();
   const { colors, isDark } = useAppTheme();
   // Hazır gün ikonlarının vurgusu Workout Days presetinden gelir.
-  const workoutDaysIconColor = useFeatureColor('workoutDays', colors.accentText).color;
+  const workoutDaysDefault = getFeatureFallbackColor('workoutDays', colors, isDark);
+  const workoutDaysIconColor = useFeatureColor('workoutDays', workoutDaysDefault).color;
   const { locale, t } = useTranslation();
   const weekdayOptions = getWeekdayOptions(locale);
   const styles = createStyles(colors);

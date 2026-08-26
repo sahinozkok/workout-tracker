@@ -1,5 +1,12 @@
-import { useCallback, useMemo, useRef } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useMemo } from 'react';
+import {
+  FlatList,
+  ListRenderItemInfo,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
 import { ThemeColors } from '@/constants/theme';
 import { useFeatureColor } from '@/hooks/use-feature-colors';
@@ -98,18 +105,80 @@ export function DisciplineYearGrid({
     () => createStyles(colors, metrics, todayColor),
     [colors, metrics, todayColor],
   );
-  const weeks = groupIntoWeeks(dates);
-  const scrollRef = useRef<ScrollView>(null);
-  const didInitialScrollRef = useRef(false);
+  const weeks = useMemo(() => groupIntoWeeks(dates), [dates]);
+  const monthFormatter = useMemo(
+    () => new Intl.DateTimeFormat(locale, { month: 'short' }),
+    [locale],
+  );
+  const weekStride = metrics.cellSize + metrics.cellGap;
+  const getItemLayout = useCallback(
+    (_data: ArrayLike<Date[]> | null | undefined, index: number) => ({
+      index,
+      length: weekStride,
+      offset: weekStride * index,
+    }),
+    [weekStride],
+  );
+  const renderWeek = useCallback(
+    ({ item: week }: ListRenderItemInfo<Date[]>) => {
+      const monthStart = week.find((date) => date.getDate() === 1);
 
-  // Yıllık görünüm her açıldığında en güncel hafta görünür başlar. Kullanıcı
-  // daha eski tarihlere doğru sola kaydırabilir; içerik yeniden ölçülürken
-  // konumu tekrar tekrar zorlamamak için yalnızca ilk ölçümde çalışır.
-  const handleContentSizeChange = useCallback(() => {
-    if (didInitialScrollRef.current) return;
-    didInitialScrollRef.current = true;
-    scrollRef.current?.scrollToEnd({ animated: false });
-  }, []);
+      return (
+        <View style={styles.yearWeek}>
+          <View style={styles.yearMonthLabelContainer}>
+            {monthStart && (
+              <Text numberOfLines={1} style={styles.yearMonthLabel}>
+                {monthFormatter.format(monthStart).replace('.', '')}
+              </Text>
+            )}
+          </View>
+
+          {week.map((date) => {
+            const dateKey = toDateKey(date);
+            const status = statuses[dateKey];
+            const isFuture = date.getTime() > today.getTime();
+
+            return (
+              <Pressable
+                accessibilityLabel={getLabel(date, status, isFuture)}
+                accessibilityRole="button"
+                disabled={isFuture || !onDayPress}
+                hitSlop={metrics.cellHitSlop}
+                key={dateKey}
+                onPress={onDayPress ? () => onDayPress(dateKey) : undefined}
+                style={({ pressed }) => [
+                  styles.yearDayCell,
+                  {
+                    backgroundColor: getCellColor(
+                      colors,
+                      status,
+                      isFuture,
+                      emptyCellColor,
+                      futureCellColor,
+                    ),
+                  },
+                  date.getTime() === today.getTime() && styles.todayYearCell,
+                  pressed && styles.pressed,
+                ]}
+              />
+            );
+          })}
+        </View>
+      );
+    },
+    [
+      colors,
+      emptyCellColor,
+      futureCellColor,
+      getLabel,
+      metrics.cellHitSlop,
+      monthFormatter,
+      onDayPress,
+      statuses,
+      styles,
+      today,
+    ],
+  );
 
   return (
     <View style={styles.yearGridRow}>
@@ -122,60 +191,20 @@ export function DisciplineYearGrid({
         ))}
       </View>
 
-      <ScrollView
+      <FlatList
         contentContainerStyle={styles.yearScrollContent}
+        data={weeks}
+        getItemLayout={getItemLayout}
         horizontal
-        onContentSizeChange={handleContentSizeChange}
-        ref={scrollRef}
+        initialNumToRender={8}
+        initialScrollIndex={Math.max(0, weeks.length - 1)}
+        keyExtractor={(week) => toDateKey(week[0])}
+        maxToRenderPerBatch={8}
+        renderItem={renderWeek}
         showsHorizontalScrollIndicator={false}
-        style={styles.yearScroll}>
-        {weeks.map((week) => {
-          const monthStart = week.find((date) => date.getDate() === 1);
-
-          return (
-            <View key={toDateKey(week[0])} style={styles.yearWeek}>
-              <View style={styles.yearMonthLabelContainer}>
-                {monthStart && (
-                  <Text numberOfLines={1} style={styles.yearMonthLabel}>
-                    {monthStart.toLocaleDateString(locale, { month: 'short' }).replace('.', '')}
-                  </Text>
-                )}
-              </View>
-
-              {week.map((date) => {
-                const dateKey = toDateKey(date);
-                const status = statuses[dateKey];
-                const isFuture = date.getTime() > today.getTime();
-
-                return (
-                  <Pressable
-                    accessibilityLabel={getLabel(date, status, isFuture)}
-                    accessibilityRole="button"
-                    disabled={isFuture || !onDayPress}
-                    hitSlop={metrics.cellHitSlop}
-                    key={dateKey}
-                    onPress={onDayPress ? () => onDayPress(dateKey) : undefined}
-                    style={({ pressed }) => [
-                      styles.yearDayCell,
-                      {
-                        backgroundColor: getCellColor(
-                          colors,
-                          status,
-                          isFuture,
-                          emptyCellColor,
-                          futureCellColor,
-                        ),
-                      },
-                      date.getTime() === today.getTime() && styles.todayYearCell,
-                      pressed && styles.pressed,
-                    ]}
-                  />
-                );
-              })}
-            </View>
-          );
-        })}
-      </ScrollView>
+        style={styles.yearScroll}
+        windowSize={5}
+      />
     </View>
   );
 }

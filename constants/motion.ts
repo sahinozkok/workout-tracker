@@ -38,6 +38,18 @@ export const MotionOpacity = {
   pressed: 0.92,
 } as const;
 
+/** Ekran içindeki küçük yer değiştirmeler (pt). */
+export const MotionDistance = {
+  section: 10,
+  swap: 6,
+} as const;
+
+/** Bölümlerin art arda görünmesi için ortak gecikme değerleri (ms). */
+export const MotionStagger = {
+  step: 40,
+  max: 160,
+} as const;
+
 /**
  * Easing eğrileri. `standard` iOS'un doğal "ease-out" hissine yakındır:
  * hızlı başlar, yumuşak durur.

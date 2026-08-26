@@ -12,6 +12,7 @@ import {
   useDisciplineDayPress,
 } from '@/components/discipline-calendar';
 import { DisciplineYearGrid, DisciplineYearMetrics } from '@/components/discipline-year-grid';
+import { MotionCollapsible, MotionSwap } from '@/components/motion-section';
 import { ThemeColors } from '@/constants/theme';
 import { getWeekdayShortLabel, WEEKDAY_VALUES } from '@/constants/weekdays';
 import { useTranslation } from '@/context/language-context';
@@ -168,18 +169,18 @@ function ProfileDisciplineCardView({
     }),
     [t],
   );
+  const accessibilityDateFormatter = useMemo(
+    () => new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'long', year: 'numeric' }),
+    [locale],
+  );
 
   const getLabel = useCallback(
     (date: Date, status: DisciplineStatus | undefined, isFuture: boolean) => {
-      const dateLabel = date.toLocaleDateString(locale, {
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric',
-      });
+      const dateLabel = accessibilityDateFormatter.format(date);
       if (isFuture) return `${dateLabel}, ${t('calendar.futureDay')}`;
       return `${dateLabel}, ${status ? statusLabels[status] : t('calendar.unmarked')}`;
     },
-    [locale, statusLabels, t],
+    [accessibilityDateFormatter, statusLabels, t],
   );
 
   const subtitle = useMemo(() => {
@@ -216,7 +217,7 @@ function ProfileDisciplineCardView({
       </Pressable>
 
       {isExpanded && (
-      <>
+      <MotionCollapsible>
       <Text style={styles.subtitle}>{subtitle}</Text>
 
       <View accessibilityRole="tablist" style={styles.tabs}>
@@ -241,6 +242,10 @@ function ProfileDisciplineCardView({
         })}
       </View>
 
+      <MotionSwap
+        contentWeight={period === 'year' ? 'heavy' : 'regular'}
+        emphasis="clear"
+        transitionKey={period}>
       {period === 'week' ? (
         <WeekRow
           colors={colors}
@@ -283,7 +288,8 @@ function ProfileDisciplineCardView({
           />
         </View>
       )}
-      </>
+      </MotionSwap>
+      </MotionCollapsible>
       )}
     </View>
   );

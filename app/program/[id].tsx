@@ -20,6 +20,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotionPressable } from '@/components/motion-pressable';
 import { WorkoutVisualDisplay } from '@/components/workout-visual-display';
 import { WorkoutVisualPicker } from '@/components/workout-visual-picker';
+import { getFeatureFallbackColor } from '@/constants/color-presets';
 import { Form, Layout, ThemeColors, Type } from '@/constants/theme';
 import { getWeekdayLabel } from '@/constants/weekdays';
 import { useTranslation } from '@/context/language-context';
@@ -41,7 +42,8 @@ export default function ProgramDetailScreen() {
   // Yalnızca "bugün" göstergeleri.
   const todayColor = useFeatureColor('todayHighlight', colors.primary).color;
   // Hazır program/gün ikonlarının vurgusu Workout Days presetinden gelir.
-  const workoutDaysIconColor = useFeatureColor('workoutDays', colors.primary).color;
+  const workoutDaysDefault = getFeatureFallbackColor('workoutDays', colors, isDark);
+  const workoutDaysIconColor = useFeatureColor('workoutDays', workoutDaysDefault).color;
   const styles = createStyles(colors, todayColor);
   const [isProgramEditorOpen, setIsProgramEditorOpen] = useState(false);
   const [programNameDraft, setProgramNameDraft] = useState('');
