@@ -6,6 +6,8 @@ import { useTranslation } from '@/context/language-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
 
 type ProfileProofStatsProps = {
+  /** Eyebrow (`A LITTLE PROOF`) rengi. Verilmezse bugünkü ton korunur. */
+  accentColor?: string;
   dayStreak: number;
   roseBalance: number;
   workoutDays: number;
@@ -21,7 +23,7 @@ type ProofStatProps = {
 };
 
 /** Referanstaki kompakt üçlü profil kanıtı: gül, antrenman ve seri. */
-export function ProfileProofStats({ dayStreak, roseBalance, workoutDays }: ProfileProofStatsProps) {
+export function ProfileProofStats({ accentColor, dayStreak, roseBalance, workoutDays }: ProfileProofStatsProps) {
   const { colors, isDark } = useAppTheme();
   const { t } = useTranslation();
 
@@ -35,7 +37,7 @@ export function ProfileProofStats({ dayStreak, roseBalance, workoutDays }: Profi
           justifyContent: 'space-between',
         },
         eyebrow: {
-          color: isDark ? '#D8A09C' : '#B67F7C',
+          color: accentColor ?? (isDark ? '#D8A09C' : '#B67F7C'),
           fontSize: 9,
           fontWeight: '700',
           letterSpacing: 1.35,
@@ -75,7 +77,7 @@ export function ProfileProofStats({ dayStreak, roseBalance, workoutDays }: Profi
           textTransform: 'uppercase',
         },
       }),
-    [colors.text, colors.textSecondary, isDark],
+    [accentColor, colors.text, colors.textSecondary, isDark],
   );
 
   return (

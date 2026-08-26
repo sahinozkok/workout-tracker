@@ -1,3 +1,5 @@
+import { ColorPresetId } from '@/constants/color-presets';
+
 import { DisciplineStatus } from '@/types/workout';
 
 export type FriendshipStatus = 'pending' | 'accepted';
@@ -42,6 +44,8 @@ export type FriendProfile = {
   avatarUrl?: string;
   bannerUrl?: string;
   bio: string;
+  /** Profil sahibinin seçtiği renk. Migration uygulanmadıysa `undefined`. */
+  colorPresetId?: ColorPresetId;
   displayName: string;
   id: string;
   level: number;

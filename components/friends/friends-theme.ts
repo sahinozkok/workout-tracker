@@ -12,6 +12,7 @@
 import { StyleSheet } from 'react-native';
 
 import { useAppTheme } from '@/hooks/use-app-theme';
+import { useFeatureColor } from '@/hooks/use-feature-colors';
 
 export type FriendsPalette = {
   /** Mor vurgu: seçili sekme çizgisi, Ekle/Kabul et butonları, badge. */
@@ -67,9 +68,28 @@ const LIGHT: FriendsPalette = {
   danger: '#D6291E',
 };
 
+/**
+ * Sosyal ekranın paleti.
+ *
+ * YALNIZCA semantik `accent` (ve ona bağlı `accentStrong` / `onAccent`)
+ * kullanıcı tercihinden beslenir. Yüzey, kart, ayırıcı, metin ve `danger`
+ * renkleri BU DOSYADAKİ değerlerden gelmeye devam eder — genel yüzey sistemi
+ * bozulmaz. Kullanıcı renk seçmediyse palet birebir bugünkü hâlidir.
+ */
 export function useFriendsPalette(): FriendsPalette {
   const { isDark } = useAppTheme();
-  return isDark ? DARK : LIGHT;
+  const base = isDark ? DARK : LIGHT;
+  const friendsAccent = useFeatureColor('friends', base.accent);
+
+  if (!friendsAccent.isCustom) return base;
+
+  return {
+    ...base,
+    accent: friendsAccent.color,
+    // Basılı/vurgulu durum için aynı renk kullanılır; ayrı bir ton üretilmez.
+    accentStrong: friendsAccent.color,
+    onAccent: friendsAccent.onColor,
+  };
 }
 
 /**

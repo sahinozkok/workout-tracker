@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useState } from 'react';
-import { Alert, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { MotionPressable } from '@/components/motion-pressable';
 import { WorkoutVisualDisplay } from '@/components/workout-visual-display';
 import { PROGRAM_ICON_OPTIONS } from '@/constants/program-icons';
 import { Form, ThemeColors, Type } from '@/constants/theme';
@@ -11,6 +11,12 @@ import { useAppTheme } from '@/hooks/use-app-theme';
 import { WorkoutVisual } from '@/types/workout';
 
 type WorkoutVisualPickerProps = {
+  /**
+   * Yalnızca "Uygula" düğmesinin rengini ezer. Verilmezse bileşen bugünkü
+   * görünümünü BİREBİR korur; diğer ekranlar etkilenmez.
+   */
+  accentColor?: string;
+  accentTextColor?: string;
   onSelect: (visual: WorkoutVisual) => void;
   selectedVisual: WorkoutVisual;
   variant?: 'default' | 'exerciseEdit' | 'programCreate' | 'programEdit';
@@ -19,6 +25,8 @@ type WorkoutVisualPickerProps = {
 const PROGRAM_CREATE_ACCENT = '#A56BEF';
 
 export function WorkoutVisualPicker({
+  accentColor,
+  accentTextColor,
   onSelect,
   selectedVisual,
   variant = 'default',
@@ -28,7 +36,7 @@ export function WorkoutVisualPicker({
   const isProgramCreate = variant === 'programCreate';
   const isProgramEdit = variant === 'programEdit';
   const isExerciseEdit = variant === 'exerciseEdit';
-  const styles = createStyles(colors, isExerciseEdit, isProgramCreate, isProgramEdit);
+  const styles = createStyles(colors, isExerciseEdit, isProgramCreate, isProgramEdit, accentColor, accentTextColor);
   const [textValue, setTextValue] = useState(selectedVisual.type === 'text' ? selectedVisual.text : '');
   const [iconsOpen, setIconsOpen] = useState(false);
 
@@ -56,55 +64,27 @@ export function WorkoutVisualPicker({
     if (trimmedValue) onSelect({ type: 'text', text: trimmedValue });
   }
 
-  async function pickImage() {
-    if (Platform.OS !== 'web') {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert(t('components.galleryPermission'), t('components.galleryPermissionBody'));
-        return;
-      }
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      allowsEditing: true,
-      aspect: [1, 1],
-      mediaTypes: ['images'],
-      quality: 0.8,
-    });
-
-    if (!result.canceled && result.assets[0]) {
-      setIconsOpen(false);
-      onSelect({ type: 'image', uri: result.assets[0].uri });
-    }
-  }
-
   return (
     <View style={styles.container}>
       <View style={styles.mainRow}>
-        <Pressable
-          accessibilityLabel={t('a11y.selectPhoto')}
-          accessibilityRole="button"
-          hitSlop={2}
-          onPress={() => void pickImage()}
-          style={({ pressed }) => [
-            styles.galleryButton,
-            selectedVisual.type === 'image' && styles.selectedControl,
-            pressed && styles.pressed,
-          ]}>
-          {selectedVisual.type === 'image' ? (
+        {/*
+          GALERİ SEÇİMİ KALDIRILDI: program, gün ve egzersiz simgeleri için
+          fotoğraf/GIF yükleme artık yoktur ve yeni Storage çağrısı yapılmaz.
+
+          GERİYE DÖNÜK UYUMLULUK: daha önce kaydedilmiş bir `image` görseli
+          varsa SALT OKUNUR önizleme olarak gösterilmeye devam eder — kayıt
+          silinmez, veri kaybı olmaz, uygulama çökmez. Yeni görsel seçilemez;
+          kullanıcı hazır ikon, emoji veya sayı ile değiştirebilir.
+        */}
+        {selectedVisual.type === 'image' && (
+          <View style={styles.galleryButton}>
             <WorkoutVisualDisplay
               color={isProgramCreate ? PROGRAM_CREATE_ACCENT : colors.primaryIcon}
               size={32}
               visual={selectedVisual}
             />
-          ) : (
-            <Ionicons
-              name="image-outline"
-              size={isProgramCreate || isProgramEdit || isExerciseEdit ? 22 : 31}
-              color={isProgramCreate || isProgramEdit || isExerciseEdit ? colors.textSecondary : colors.primaryIcon}
-            />
-          )}
-        </Pressable>
+          </View>
+        )}
 
         <View style={styles.textArea}>
           {!isProgramCreate && !isProgramEdit && !isExerciseEdit && (
@@ -139,13 +119,13 @@ export function WorkoutVisualPicker({
         </Pressable>
 
         {!isExerciseEdit && (
-          <Pressable
+          <MotionPressable
             accessibilityRole="button"
             hitSlop={4}
             onPress={applyTextVisual}
-            style={({ pressed }) => [styles.applyButton, pressed && styles.pressed]}>
+            style={styles.applyButton}>
             <Text style={styles.applyButtonText}>{t('components.apply')}</Text>
-          </Pressable>
+          </MotionPressable>
         )}
       </View>
 
@@ -199,6 +179,8 @@ function createStyles(
   isExerciseEdit: boolean,
   isProgramCreate: boolean,
   isProgramEdit: boolean,
+  accentColor?: string,
+  accentTextColor?: string,
 ) {
   const isCompact = isExerciseEdit || isProgramCreate || isProgramEdit;
   /**
@@ -271,14 +253,18 @@ function createStyles(
     },
     applyButton: {
       alignItems: 'center',
-      backgroundColor: isProgramCreate ? PROGRAM_CREATE_ACCENT : isProgramEdit ? colors.text : colors.primary,
+      backgroundColor:
+        accentColor ??
+        (isProgramCreate ? PROGRAM_CREATE_ACCENT : isProgramEdit ? colors.text : colors.primary),
       borderRadius: isProgramCreate ? 999 : isProgramEdit ? controlRadius : 8,
       height: isProgramEdit ? controlSize : isCompact ? 40 : 41,
       justifyContent: 'center',
       paddingHorizontal: isCompact ? 16 : 12,
     },
     applyButtonText: {
-      color: isProgramCreate ? '#111113' : isProgramEdit ? colors.background : colors.onPrimary,
+      color:
+        accentTextColor ??
+        (isProgramCreate ? '#111113' : isProgramEdit ? colors.background : colors.onPrimary),
       fontSize: isProgramEdit ? Form.action.fontSize : isCompact ? 14 : 11,
       fontWeight: isProgramEdit ? Form.action.fontWeight : '700',
     },

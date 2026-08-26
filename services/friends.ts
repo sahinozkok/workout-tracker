@@ -1,3 +1,4 @@
+import { parseColorPresetId } from '@/constants/color-presets';
 import { supabase } from '@/lib/supabase';
 import {
   FriendProfile,
@@ -129,6 +130,7 @@ export async function getFriendProfile(targetUserId: string): Promise<FriendProf
     bio: string;
     display_name: string;
     id: string;
+    color_preset: string | null;
     level: number | null;
     training_goal: string;
     username: string | null;
@@ -142,6 +144,12 @@ export async function getFriendProfile(targetUserId: string): Promise<FriendProf
     avatarUrl: toOptional(row.avatar_url),
     bannerUrl: toOptional(row.banner_url),
     bio: row.bio,
+    /**
+     * Profil rengi PROFİL SAHİBİNDEN gelir; görüntüleyen arkadaşın kendi
+     * tercihi kullanılmaz. Migration uygulanmadıysa alan gelmez ve
+     * `parseColorPresetId` `undefined` döndürür → ekran bugünkü tona düşer.
+     */
+    colorPresetId: parseColorPresetId(row.color_preset),
     displayName: row.display_name,
     id: row.id,
     // Seviye alanları RPC'den gelir; gül bakiyesi ve ödül geçmişi HİÇ gelmez.

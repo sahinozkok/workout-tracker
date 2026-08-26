@@ -11,6 +11,7 @@ import {
   ProgramExercise,
   Weekday,
   WorkoutDay,
+  WorkoutDropSetPerformance,
   WorkoutProgram,
   WorkoutSession,
   WorkoutSetPerformance,
@@ -19,6 +20,11 @@ import {
 } from '@/types/workout';
 import { toDateKey } from '@/utils/discipline';
 import { buildDisciplineStatuses, getSetProgressKey, isScheduledDate } from '@/utils/workout-schedule';
+import {
+  getActualSetCount,
+  getDisciplineCountAfterUndo,
+  getHighestSetNumber,
+} from '@/utils/workout-sets';
 
 type ExerciseUpdates = Partial<Pick<ProgramExercise, 'visual' | 'targetSets' | 'targetReps' | 'restSeconds'>>;
 type DayUpdates = Partial<Pick<WorkoutDay, 'name' | 'visual' | 'scheduledWeekday' | 'isOffDay'>>;
@@ -37,6 +43,8 @@ type WorkoutContextValue = {
   addProgram: (program: NewWorkoutProgram) => Promise<void>;
   activateProgram: (programId: string) => Promise<void>;
   deleteProgram: (programId: string) => Promise<void>;
+  reorderPrograms: (programs: WorkoutProgram[]) => Promise<void>;
+  deleteWorkoutSession: (sessionId: string) => Promise<void>;
   addExerciseToDay: (programId: string, dayId: string, exercise: NewProgramExercise) => Promise<void>;
   removeExerciseFromDay: (programId: string, dayId: string, programExerciseId: string) => Promise<void>;
   reorderExercisesInDay: (programId: string, dayId: string, exercises: ProgramExercise[]) => Promise<void>;
@@ -72,6 +80,8 @@ type ProgramRow = {
   is_active: boolean;
   active_from: string | null;
   created_at: string;
+  /** Kullanıcı içi el ile sıralama; küçük değer üstte. */
+  sort_order: number | null;
 };
 
 type ProgramDayRow = {
@@ -106,9 +116,12 @@ type WorkoutSessionRow = {
   last_resumed_at: string | null;
   accumulated_duration_seconds: number;
   completed_at: string | null;
+  /** Soft delete. Dolu satır geçmişten ve analitikten gizlenir. */
+  deleted_at: string | null;
 };
 
 type WorkoutSetRow = {
+  drop_sets: unknown;
   id: string;
   session_id: string;
   program_exercise_id: string | null;
@@ -142,6 +155,30 @@ function parseVisual(value: unknown): WorkoutVisual | undefined {
   if (visual.type === 'image' && typeof visual.uri === 'string') return value as WorkoutVisual;
 
   return undefined;
+}
+
+/**
+ * Supabase'den gelen `drop_sets` değeri GÜVENİLMEZ kabul edilir: eski kayıtlar
+ * `null` olabilir, elle düzenlenmiş bir satır beklenmedik şekil taşıyabilir.
+ * Geçersiz her durumda boş dizi döner; ekran ve analitik asla patlamaz.
+ */
+function parseDropSets(value: unknown): WorkoutDropSetPerformance[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap<WorkoutDropSetPerformance>((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const candidate = item as { repetitions?: unknown; weightKg?: unknown };
+
+    const repetitions = Number(candidate.repetitions);
+    if (!Number.isInteger(repetitions) || repetitions < 0 || repetitions > 1000) return [];
+
+    if (candidate.weightKg === undefined || candidate.weightKg === null) return [{ repetitions }];
+
+    const weightKg = Number(candidate.weightKg);
+    if (!Number.isFinite(weightKg) || weightKg < 0 || weightKg > 99999) return [];
+
+    return [{ repetitions, weightKg }];
+  });
 }
 
 function getErrorMessage(error: unknown) {
@@ -195,8 +232,11 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
     try {
       const { data: programData, error: programError } = await supabase
         .from('programs')
-        .select('id, name, visual, is_active, active_from, created_at')
+        .select('id, name, visual, is_active, active_from, created_at, sort_order')
         .eq('owner_id', user.id)
+        // `sort_order` kullanıcının el ile belirlediği sıradır. `created_at`
+        // yalnızca eşitlik bozucudur (migration öncesi satırlar için güvence).
+        .order('sort_order', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: false });
 
       if (programError) throw programError;
@@ -264,7 +304,7 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
         supabase
           .from('workout_sessions')
           .select(
-            'id, program_id, program_day_id, workout_date, status, started_at, last_resumed_at, accumulated_duration_seconds, completed_at',
+            'id, program_id, program_day_id, workout_date, status, started_at, last_resumed_at, accumulated_duration_seconds, completed_at, deleted_at',
           )
           .eq('user_id', user.id)
           .in('status', ['running', 'paused', 'completed'])
@@ -291,7 +331,7 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
         const { data: setData, error: setError } = await supabase
           .from('workout_sets')
           .select(
-            'id, session_id, program_exercise_id, exercise_name, set_number, weight_kg, repetitions, rpe, completed_at',
+            'id, session_id, program_exercise_id, exercise_name, set_number, weight_kg, repetitions, rpe, drop_sets, completed_at',
           )
           .in('session_id', sessionIds);
 
@@ -310,9 +350,27 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
         return counts;
       }, {});
 
+      /**
+       * SOFT DELETE SINIRI.
+       *
+       * `loadedSetCounts` (yukarıda) BİLİNÇLİ olarak bütün session'lardan
+       * üretilir — silinmiş antrenmanlar dahil. O sayaç disiplin takviminin
+       * kanıtıdır: filtrelenseydi antrenman silindiği anda o günün yeşil/turuncu
+       * rengi ve streak geçmişi değişirdi.
+       *
+       * Aşağıdaki iki koleksiyon ise kullanıcıya görünen geçmiş ve BÜTÜN
+       * analitiklerin (Geçmiş listesi, süre/egzersiz sayıları, egzersiz
+       * gelişimi, rekorlar, hacim, AI bağlamı) tek kaynağıdır; silinmiş
+       * session'lar buradan çıkarılır.
+       */
+      const deletedSessionIds = new Set(
+        sessionRows.filter((session) => session.deleted_at).map((session) => session.id),
+      );
+
       const loadedWorkoutSets = workoutSetRows.flatMap<WorkoutSetRecord>((workoutSet) => {
         const dateKey = sessionDateById.get(workoutSet.session_id);
         if (!dateKey) return [];
+        if (deletedSessionIds.has(workoutSet.session_id)) return [];
 
         return [{
           id: workoutSet.id,
@@ -324,12 +382,13 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
           weightKg: workoutSet.weight_kg === null ? undefined : Number(workoutSet.weight_kg),
           repetitions: workoutSet.repetitions ?? undefined,
           rpe: workoutSet.rpe === null ? undefined : Number(workoutSet.rpe),
+          dropSets: parseDropSets(workoutSet.drop_sets),
           completedAt: workoutSet.completed_at,
         }];
       });
 
       const loadedSessions = sessionRows
-        .filter((session) => session.status !== 'cancelled')
+        .filter((session) => session.status !== 'cancelled' && !session.deleted_at)
         .map<WorkoutSession>((session) => ({
           id: session.id,
           programId: session.program_id ?? '',
@@ -423,7 +482,14 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
         })),
     };
 
-    setPrograms((currentPrograms) => [createdProgram, ...currentPrograms]);
+    /**
+     * Sunucudaki `programs_set_sort_order` tetikleyicisi yeni programa
+     * `max(sort_order) + 1` verir, yani program sahibinin listesinin SONUNA
+     * eklenir. Yerel state de aynı yere eklenmelidir; başa eklenirse program
+     * önce üstte görünüp ilk yenilemede sona sıçrardı.
+     * Mevcut programların sırası değişmez.
+     */
+    setPrograms((currentPrograms) => [...currentPrograms, createdProgram]);
 
     if (!activeProgramId) {
       // `client_today`: program değişmeden ÖNCE eski programın bekleyen
@@ -457,6 +523,50 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
      * sunucudan TEK seferde okunur; ara durumda takvim boşalmaz.
      */
     await refreshPrograms();
+  }
+
+  /**
+   * Programları verilen sırayla kalıcı kılar.
+   *
+   * Optimistik: liste hemen güncellenir. RPC hata verirse ÖNCEKİ sıra geri
+   * yüklenir ve hata çağırana iletilir (ekran yerelleştirilmiş uyarıyı gösterir).
+   * Sunucu tarafında dizi kullanıcının programlarının tamamını içermeli ve
+   * hepsi ona ait olmalıdır; aksi hâlde hiçbir satır yazılmaz.
+   */
+  async function reorderPrograms(reorderedPrograms: WorkoutProgram[]) {
+    const previousPrograms = programs;
+    setPrograms(reorderedPrograms);
+
+    const { error } = await supabase.rpc('reorder_programs', {
+      program_ids: reorderedPrograms.map((program) => program.id),
+    });
+
+    if (error) {
+      setPrograms(previousPrograms);
+      throw error;
+    }
+  }
+
+  /**
+   * Antrenmanı geçmişten ve analitikten kaldırır (soft delete).
+   *
+   * Setler ve session satırı sunucuda KALIR: o günün disiplin durumu, streak
+   * geçmişi ve daha önce verilmiş ödüller değişmez. Optimistik kaldırma
+   * başarısız olursa satır geri gelir.
+   */
+  async function deleteWorkoutSession(sessionId: string) {
+    const previousSessions = workoutSessions;
+    const previousSets = workoutSets;
+    setWorkoutSessions((current) => current.filter((session) => session.id !== sessionId));
+    setWorkoutSets((current) => current.filter((workoutSet) => workoutSet.sessionId !== sessionId));
+
+    const { error } = await supabase.rpc('soft_delete_workout_session', { session_id: sessionId });
+
+    if (error) {
+      setWorkoutSessions(previousSessions);
+      setWorkoutSets(previousSets);
+      throw error;
+    }
   }
 
   async function deleteProgram(programId: string) {
@@ -641,8 +751,6 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
     performance: WorkoutSetPerformance,
   ) {
     const progressKey = getSetProgressKey(dateKey, programExerciseId);
-    const currentCount = completedSetCounts[progressKey] ?? 0;
-    if (currentCount >= targetSets) return;
 
     const program = programs.find((item) =>
       item.days.some((day) => day.exercises.some((exercise) => exercise.id === programExerciseId)),
@@ -662,16 +770,27 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
     if (!exercise || !session) throw new Error('Seti kaydetmek için antrenmanı başlatmalısın.');
     const exerciseName = getProgramExerciseName(exercise.exerciseId, exercise.customExerciseName);
 
+    /**
+     * Yeni set numarası, hedefe CLAMP EDİLMİŞ sayaçtan değil, aktif oturumdaki
+     * GERÇEK en yüksek set numarasından türetilir. Hedefi 3 olan bir egzersize
+     * 4. set eklendiğinde `completedSetCounts` 3'te sabit kaldığı için
+     * `currentCount + 1` yeniden 4 üretip benzersizliği bozardı.
+     */
+    const nextSetNumber = getHighestSetNumber(workoutSets, session.id, programExerciseId) + 1;
+    const dropSets = performance.dropSets ?? [];
+
     const { data, error } = await supabase
       .from('workout_sets')
       .insert({
         session_id: session.id,
         program_exercise_id: programExerciseId,
         exercise_name: exerciseName,
-        set_number: currentCount + 1,
+        set_number: nextSetNumber,
         weight_kg: performance.weightKg ?? null,
         repetitions: performance.repetitions,
         rpe: performance.rpe ?? null,
+        // Drop setler ana satırın içinde; ayrı set satırı OLUŞTURULMAZ.
+        drop_sets: dropSets,
       })
       .select('id, completed_at')
       .single();
@@ -686,12 +805,18 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
         programExerciseId,
         exerciseName,
         dateKey,
-        setNumber: currentCount + 1,
+        setNumber: nextSetNumber,
         ...performance,
+        dropSets,
         completedAt: data.completed_at,
       },
     ]);
 
+    /**
+     * Disiplin/plan sayacı hedefe CLAMP EDİLMEYE devam eder: hedefin üstündeki
+     * ekstra setler takvimde fazladan ilerleme üretmez. `currentCount` yalnızca
+     * bu clamp için kullanılır, set numarası için değil.
+     */
     setCompletedSetCounts((currentCounts) => ({
       ...currentCounts,
       [progressKey]: Math.min((currentCounts[progressKey] ?? 0) + 1, targetSets),
@@ -713,8 +838,7 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
 
   async function undoCompletedSet(dateKey: string, programExerciseId: string) {
     const progressKey = getSetProgressKey(dateKey, programExerciseId);
-    const currentCount = completedSetCounts[progressKey] ?? 0;
-    if (currentCount === 0) return;
+    if ((completedSetCounts[progressKey] ?? 0) === 0) return;
 
     const program = programs.find((item) =>
       item.days.some((day) => day.exercises.some((exercise) => exercise.id === programExerciseId)),
@@ -731,12 +855,24 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
     );
     if (!session) throw new Error('Setin bağlı olduğu aktif antrenman bulunamadı.');
 
+    /**
+     * Silinecek set, hedefe clamp edilmiş sayaçtan DEĞİL, oturumdaki gerçek en
+     * yüksek set numarasından bulunur. Hedefi 3 olan egzersizde 4/3 durumunda
+     * sayaç 3'te sabittir; eski davranış 4. yerine 3. seti silerdi.
+     * Ana satır silindiğinde `drop_sets` JSON alanı da doğal olarak gider.
+     */
+    const lastSetNumber = getHighestSetNumber(workoutSets, session.id, programExerciseId);
+    if (lastSetNumber === 0) return;
+
+    // Hedef, disiplin sayacını yeniden hesaplamak için gerekir.
+    const exercise = day?.exercises.find((item) => item.id === programExerciseId);
+
     const { error } = await supabase
       .from('workout_sets')
       .delete()
       .eq('session_id', session.id)
       .eq('program_exercise_id', programExerciseId)
-      .eq('set_number', currentCount);
+      .eq('set_number', lastSetNumber);
 
     if (error) throw error;
 
@@ -746,14 +882,31 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
           !(
             workoutSet.sessionId === session.id &&
             workoutSet.programExerciseId === programExerciseId &&
-            workoutSet.setNumber === currentCount
+            workoutSet.setNumber === lastSetNumber
           ),
       ),
     );
 
+    /**
+     * Sayaç, mevcut değerden 1 ÇIKARILARAK değil, KALAN gerçek set sayısının
+     * hedefe clamp'iyle yeniden hesaplanır.
+     *
+     * 4/3 durumunda sayaç zaten 3'te sabittir; 4. set silinince gerçek sayı 3
+     * olur ve sayaç 3 KALMALIDIR. Eski çıkarma onu 2'ye düşürüp o günün
+     * disiplin ilerlemesini haksız yere geri alıyordu.
+     */
+    const remainingActualSetCount = Math.max(
+      getActualSetCount(workoutSets, session.id, programExerciseId) - 1,
+      0,
+    );
+    const targetSets = exercise?.targetSets;
+
     setCompletedSetCounts((currentCounts) => ({
       ...currentCounts,
-      [progressKey]: Math.max((currentCounts[progressKey] ?? 0) - 1, 0),
+      [progressKey]:
+        targetSets === undefined
+          ? Math.max((currentCounts[progressKey] ?? 0) - 1, 0)
+          : getDisciplineCountAfterUndo(remainingActualSetCount, targetSets),
     }));
   }
 
@@ -859,18 +1012,32 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
 
   async function resumeWorkout(sessionId: string) {
     const resumedAt = new Date().toISOString();
+    const session = workoutSessions.find((item) => item.id === sessionId);
+    if (!session || (session.status !== 'paused' && session.status !== 'completed')) return;
+
     const { error } = await supabase
       .from('workout_sessions')
-      .update({ status: 'running', last_resumed_at: resumedAt })
+      .update({
+        status: 'running',
+        last_resumed_at: resumedAt,
+        // Bütün planlı setler tamamlandığında oturum otomatik kapanır.
+        // Kullanıcı ekstra set için devam ederse aynı oturum yeniden açılır.
+        completed_at: null,
+      })
       .eq('id', sessionId);
 
     if (error) throw error;
 
     setWorkoutSessions((currentSessions) =>
-      currentSessions.map((session) =>
-        session.id === sessionId && session.status === 'paused'
-          ? { ...session, status: 'running', lastResumedAt: resumedAt }
-          : session,
+      currentSessions.map((currentSession) =>
+        currentSession.id === sessionId
+          ? {
+              ...currentSession,
+              status: 'running',
+              lastResumedAt: resumedAt,
+              completedAt: undefined,
+            }
+          : currentSession,
       ),
     );
   }
@@ -973,6 +1140,8 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
       addProgram,
       activateProgram,
       deleteProgram,
+      deleteWorkoutSession,
+      reorderPrograms,
       addExerciseToDay,
       removeExerciseFromDay,
       reorderExercisesInDay,

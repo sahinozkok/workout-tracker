@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { useFeatureColor } from '@/hooks/use-feature-colors';
 import { WorkoutVisualDisplay } from '@/components/workout-visual-display';
 import { WorkoutVisualPicker } from '@/components/workout-visual-picker';
 import { ThemeColors } from '@/constants/theme';
@@ -31,6 +32,8 @@ const PROGRAM_CREATE_ACCENT = '#A56BEF';
 export default function CreateProgramScreen() {
   const { addProgram } = useWorkout();
   const { colors, isDark } = useAppTheme();
+  // Hazır gün ikonlarının vurgusu Workout Days presetinden gelir.
+  const workoutDaysIconColor = useFeatureColor('workoutDays', colors.accentText).color;
   const { locale, t } = useTranslation();
   const weekdayOptions = getWeekdayOptions(locale);
   const styles = createStyles(colors);
@@ -43,7 +46,11 @@ export default function CreateProgramScreen() {
   const [isSaving, setIsSaving] = useState(false);
 
   function handleAddDay() {
-    const trimmedDayName = dayName.trim() || (isOffDay ? `${getWeekdayLabel(selectedWeekday)} Off Day` : '');
+    // Otomatik ad YALNIZCA oluşturma anında, aktif dile göre üretilir.
+    // Kullanıcının kendi yazdığı adlar dil değişince yeniden yazılmaz.
+    const trimmedDayName =
+      dayName.trim() ||
+      (isOffDay ? t('createProgram.autoOffDayName', { weekday: getWeekdayLabel(selectedWeekday, locale) }) : '');
 
     if (!trimmedDayName) {
       Alert.alert(t('day.dayNameRequiredTitle'), t('day.dayNameRequiredBody'));
@@ -216,6 +223,7 @@ export default function CreateProgramScreen() {
                     <View style={styles.dayNumber}>
                       <WorkoutVisualDisplay
                         color={colors.accentText}
+                        iconColor={workoutDaysIconColor}
                         size={22}
                         visual={day.visual ?? { type: 'text', text: String(index + 1) }}
                       />

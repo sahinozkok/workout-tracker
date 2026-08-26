@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { MotionPressable } from '@/components/motion-pressable';
 import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useTranslation } from '@/context/language-context';
@@ -28,6 +29,7 @@ import { useMascot } from '@/context/mascot-context';
 import { useProfile } from '@/context/profile-context';
 import { useWorkout } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
+import { useFeatureColor } from '@/hooks/use-feature-colors';
 import {
   clearCoachMessages,
   createClientMessageId,
@@ -192,7 +194,9 @@ export default function CoachScreen() {
   const { user } = useAuth();
   const { colors } = useAppTheme();
   const { t, tList } = useTranslation();
-  const styles = createStyles(colors);
+  // Rosea sohbeti vurgusu; seçilmediyse bugünkü mavi.
+  const chatAccent = useFeatureColor('roseaChat', colors.primary);
+  const styles = createStyles(colors, chatAccent.color);
   const listRef = useRef<FlatList<CoachChatMessage>>(null);
 
   const [messages, setMessages] = useState<CoachChatMessage[]>([]);
@@ -486,22 +490,21 @@ export default function CoachScreen() {
             style={styles.input}
             value={input}
           />
-          <Pressable
+          <MotionPressable
             accessibilityLabel={t('coach.send')}
             accessibilityRole="button"
             disabled={isSending || input.trim().length === 0}
             onPress={() => submit(input)}
-            style={({ pressed }) => [
+            style={[
               styles.sendButton,
               (isSending || input.trim().length === 0) && styles.sendButtonDisabled,
-              pressed && styles.pressed,
             ]}>
             {isSending ? (
               <ActivityIndicator color={colors.onPrimary} size="small" />
             ) : (
               <Ionicons name="arrow-up" size={18} color={colors.onPrimary} />
             )}
-          </Pressable>
+          </MotionPressable>
         </View>
       </KeyboardAvoidingView>
 
@@ -692,10 +695,12 @@ type WelcomeProps = {
 };
 
 function WelcomeState({ colors, disabled, onPick, questions, styles, subtitle, title }: WelcomeProps) {
+  const chatAccent = useFeatureColor('roseaChat', colors.primary);
+
   return (
     <View style={styles.welcome}>
       <View style={styles.welcomeMark}>
-        <Ionicons name="sparkles-outline" size={22} color={colors.primary} />
+        <Ionicons name="sparkles-outline" size={22} color={chatAccent.color} />
       </View>
       <Text style={styles.welcomeTitle}>{title}</Text>
       <Text style={styles.welcomeText}>{subtitle}</Text>
@@ -737,6 +742,7 @@ function AnalysisSheet({
 }) {
   const { profile } = useProfile();
   const { t } = useTranslation();
+  const chatAccent = useFeatureColor('roseaChat', colors.primary);
   const { activeProgramId, completedSetCounts, disciplineStatuses, programs, workoutSessions, workoutSets } =
     useWorkout();
   const [mode, setMode] = useState<'weekly' | 'exercise'>('weekly');
@@ -878,7 +884,7 @@ function AnalysisSheet({
               ))}
               {insight.nextSteps.map((item) => (
                 <View key={item} style={styles.insightItem}>
-                  <Ionicons name="arrow-forward" size={13} color={colors.primary} />
+                  <Ionicons name="arrow-forward" size={13} color={chatAccent.color} />
                   <Text style={styles.insightItemText}>{item}</Text>
                 </View>
               ))}
@@ -911,7 +917,7 @@ function AnalysisSheet({
   );
 }
 
-function createStyles(colors: ThemeColors) {
+function createStyles(colors: ThemeColors, chatAccent: string) {
   return StyleSheet.create({
     safeArea: { backgroundColor: colors.background, flex: 1 },
     flex: { flex: 1 },
@@ -965,7 +971,7 @@ function createStyles(colors: ThemeColors) {
     talkingMouth: { backgroundColor: '#6E183A', borderRadius: 3, height: 3.5, width: 4.5 },
     bubbleColumn: { flexShrink: 1, gap: 6 },
     bubble: { borderRadius: 18, paddingHorizontal: 15, paddingVertical: 11 },
-    bubbleUser: { backgroundColor: colors.primary, borderBottomRightRadius: 6 },
+    bubbleUser: { backgroundColor: chatAccent, borderBottomRightRadius: 6 },
     bubbleAssistant: {
       backgroundColor: colors.background,
       borderColor: colors.separator,
@@ -981,7 +987,7 @@ function createStyles(colors: ThemeColors) {
     welcome: { alignItems: 'center', gap: 10, paddingHorizontal: 8 },
     welcomeMark: {
       alignItems: 'center',
-      borderColor: colors.primary,
+      borderColor: chatAccent,
       borderRadius: 24,
       borderWidth: StyleSheet.hairlineWidth,
       height: 48,
@@ -1000,7 +1006,7 @@ function createStyles(colors: ThemeColors) {
     quickRow: { gap: 8, paddingBottom: 4, paddingHorizontal: Layout.screenPadding, paddingTop: 4 },
     quickChip: {
       alignSelf: 'flex-start',
-      borderColor: colors.primary,
+      borderColor: chatAccent,
       borderRadius: Layout.radiusPill,
       borderWidth: StyleSheet.hairlineWidth,
       justifyContent: 'center',
@@ -1009,7 +1015,7 @@ function createStyles(colors: ThemeColors) {
       paddingVertical: 7,
     },
     quickChipDisabled: { opacity: 0.5 },
-    quickChipText: { color: colors.primary, fontSize: 13, fontWeight: '500' },
+    quickChipText: { color: chatAccent, fontSize: 13, fontWeight: '500' },
     errorBar: {
       alignItems: 'center',
       flexDirection: 'row',
@@ -1041,7 +1047,7 @@ function createStyles(colors: ThemeColors) {
     },
     sendButton: {
       alignItems: 'center',
-      backgroundColor: colors.primary,
+      backgroundColor: chatAccent,
       borderRadius: 22,
       height: 44,
       justifyContent: 'center',
@@ -1076,7 +1082,7 @@ function createStyles(colors: ThemeColors) {
       minHeight: 34,
       paddingHorizontal: 14,
     },
-    sheetChipSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
+    sheetChipSelected: { backgroundColor: chatAccent, borderColor: chatAccent },
     sheetChipText: { color: colors.textSecondary, fontSize: 13 },
     sheetChipTextSelected: { color: colors.onPrimary, fontWeight: '500' },
     insightBlock: { gap: 12 },
@@ -1089,7 +1095,7 @@ function createStyles(colors: ThemeColors) {
     sheetError: { color: colors.danger, fontSize: 13 },
     sheetButton: {
       alignItems: 'center',
-      backgroundColor: colors.primary,
+      backgroundColor: chatAccent,
       borderRadius: Layout.radiusPill,
       justifyContent: 'center',
       minHeight: 50,

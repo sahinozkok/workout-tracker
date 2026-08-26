@@ -7,14 +7,18 @@ import { Layout, ThemeColors } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { getProgramExerciseName } from '@/data/exercises';
 import { useAppTheme } from '@/hooks/use-app-theme';
+import { useFeatureColor } from '@/hooks/use-feature-colors';
 import { getExerciseVisual } from '@/utils/workout-visual';
 
+/** Varsayılan Antrenman Günleri rengi; kullanıcı seçim yapmadıysa bu kullanılır. */
 const WORKOUT_ORANGE = '#FF9138';
 
 export default function ProgramExerciseList({ exercises, onEdit, onReorder, showIcons = false }: ProgramExerciseListProps) {
   const { colors } = useAppTheme();
   const { t } = useTranslation();
-  const styles = createStyles(colors);
+  // Antrenman Günleri semantik rengi; seçilmediyse bugünkü turuncu.
+  const workoutDaysColor = useFeatureColor('workoutDays', WORKOUT_ORANGE).color;
+  const styles = createStyles(colors, workoutDaysColor);
   const [draggingIndex, setDraggingIndex] = useState<number>();
   const didDragRef = useRef(false);
 
@@ -66,7 +70,7 @@ export default function ProgramExerciseList({ exercises, onEdit, onReorder, show
               style={({ pressed }) => [styles.exerciseMain, pressed && styles.pressed]}>
               {showIcons && (
                 <View style={styles.exerciseIcon}>
-                  <WorkoutVisualDisplay color={WORKOUT_ORANGE} size={20} visual={getExerciseVisual(exercise.visual)} />
+                  <WorkoutVisualDisplay color={workoutDaysColor} size={20} visual={getExerciseVisual(exercise.visual)} />
                 </View>
               )}
               <View style={styles.exerciseInfo}>
@@ -86,7 +90,7 @@ export default function ProgramExerciseList({ exercises, onEdit, onReorder, show
   );
 }
 
-function createStyles(colors: ThemeColors) {
+function createStyles(colors: ThemeColors, workoutDaysColor: string) {
   return StyleSheet.create({
     container: { borderTopColor: colors.separator, borderTopWidth: StyleSheet.hairlineWidth },
     exerciseRow: {
@@ -115,7 +119,7 @@ function createStyles(colors: ThemeColors) {
     exerciseInfo: { alignItems: 'center', flex: 1, flexDirection: 'row', gap: 12 },
     exerciseName: { color: colors.text, flex: 1, fontSize: 16, fontWeight: '600' },
     targetInfo: { alignItems: 'flex-end', gap: 2 },
-    exerciseTarget: { color: WORKOUT_ORANGE, fontSize: 16, fontWeight: '600' },
+    exerciseTarget: { color: workoutDaysColor, fontSize: 16, fontWeight: '600' },
     exerciseRest: { color: colors.textTertiary, fontSize: 13 },
     pressed: { opacity: 0.6 },
   });

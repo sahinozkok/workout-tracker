@@ -16,8 +16,10 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { MotionPressable } from '@/components/motion-pressable';
+import { getOnAccentColor, withAlpha } from '@/constants/color-presets';
 import { LevelProgressRing } from '@/components/rewards/level-progress-ring';
 import { ProfileProofStats } from '@/components/rewards/profile-proof-stats';
 import { ProfileDisciplineCard } from '@/components/profile-discipline-card';
@@ -28,6 +30,7 @@ import { useProfile } from '@/context/profile-context';
 import { useRewards } from '@/context/reward-context';
 import { useWorkout } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
+import { useFeatureColor } from '@/hooks/use-feature-colors';
 import {
   getStoragePathFromUrl,
   ProfileImageKind,
@@ -43,6 +46,9 @@ const GOAL_OPTIONS: { glyph: string; labelKey: string; value: TrainingGoal }[] =
   { glyph: '🏋️', labelKey: 'profile.goalMuscle', value: 'muscle' },
   { glyph: '♡', labelKey: 'profile.goalFitness', value: 'fitness' },
 ];
+
+/** Profil ekranının bugünkü vurgu tonu (seviye rozeti / ilerleme halkası). */
+const PROFILE_ACCENT_DEFAULT = '#D5755B';
 
 export default function ProfileScreen() {
   const { user } = useAuth();
@@ -60,10 +66,20 @@ export default function ProfileScreen() {
    */
   const canSaveProfile = profileLoadStatus === 'ready';
   const { colors, isDark } = useAppTheme();
+  const insets = useSafeAreaInsets();
   const { disciplineStatuses, workoutSessions } = useWorkout();
   const { t } = useLanguage();
   const { progress: levelProgress } = useRewards();
-  const styles = createStyles(colors, isDark);
+  /**
+   * Profil vurgusu. Sunucudan gelen tercih her zaman doludur; yine de
+   * savunmacı olarak bugünkü tona düşülür.
+   */
+  const profileAccent = useFeatureColor('profile', PROFILE_ACCENT_DEFAULT);
+  const styles = createStyles(colors, isDark, {
+    accent: profileAccent.color,
+    // Renkli düğme yazısı parlaklıktan hesaplanır; sabit beyaz/siyah yok.
+    onAccent: getOnAccentColor(profileAccent.color),
+  });
   const [draft, setDraft] = useState<UserProfile>(profile);
   const [isProfileEditorOpen, setIsProfileEditorOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -272,7 +288,18 @@ export default function ProfileScreen() {
   ).size;
   const disciplineStreak = calculateDisciplineStreak(disciplineStatuses);
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
+    /*
+      Banner ekranın EN ÜSTÜNDEN başlasın diye üst safe-area kenarı bilinçli
+      olarak uygulanmaz. Banner'ın kendi yüksekliği, `contentFit`, GIF ve
+      yükleme mantığı değişmez; yalnızca çentiğin arkasına uzanır.
+
+      Bu yalnızca BU ekranı etkiler: global SafeArea veya navigation ayarı
+      değiştirilmez, alt tab bar ve diğer ekranlar aynı kalır. Banner'dan
+      sonraki bütün içerik zaten onun altında olduğu için fazladan üst boşluk
+      oluşmaz; yalnızca banner'dan ÖNCE çizilebilen hata satırı `insets.top`
+      kadar aşağı alınır ki status bar'ın arkasında kalmasın.
+    */
+    <SafeAreaView style={styles.safeArea} edges={[]}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
         <ScrollView
           contentContainerStyle={styles.content}
@@ -281,7 +308,7 @@ export default function ProfileScreen() {
           {/* Yalnızca sunucudan okuma başarısızken görünür. Ekranın mevcut
               yerleşimi değişmez; başarılı yüklemede hiç render edilmez. */}
           {profileLoadStatus === 'error' && (
-            <View style={styles.loadErrorRow}>
+            <View style={[styles.loadErrorRow, { marginTop: insets.top }]}>
               <View style={styles.loadErrorText}>
                 <Text style={styles.loadErrorTitle}>{t('profile.loadFailed')}</Text>
                 <Text style={styles.loadErrorBody}>{t('profile.loadFailedBody')}</Text>
@@ -325,7 +352,6 @@ export default function ProfileScreen() {
               @{draft.username || t('profile.usernamePlaceholder')}
             </Text>
             <Text style={styles.summaryName}>{draft.displayName || t('profile.displayNamePlaceholder')}</Text>
-            {draft.bio.trim().length > 0 && <Text style={styles.summaryBio}>{draft.bio.trim()}</Text>}
 
             <View style={styles.levelIdentityRow}>
               <View style={styles.levelPill}>
@@ -336,13 +362,17 @@ export default function ProfileScreen() {
 
             <View style={styles.levelSection}>
               <LevelProgressRing
+                accentColor={profileAccent.color}
+                fillColor={profileAccent.color}
                 level={levelProgress.level}
+                message={draft.bio.trim() || undefined}
                 xpForNextLevel={levelProgress.xpForNextLevel}
                 xpIntoLevel={levelProgress.xpIntoLevel}
               />
             </View>
 
             <ProfileProofStats
+              accentColor={profileAccent.color}
               dayStreak={disciplineStreak}
               roseBalance={levelProgress.roseBalance}
               workoutDays={completedWorkoutDayCount}
@@ -357,7 +387,7 @@ export default function ProfileScreen() {
               paylaşır. Bu sayede karttaki hiçbir değişiklik Ana Sayfa'yı
               etkileyemez. */}
           <View style={styles.calendarSection}>
-            <ProfileDisciplineCard collapsible />
+            <ProfileDisciplineCard accentColor={profileAccent.color} collapsible />
           </View>
 
           {/* Arkadaşlar: yeni sekme eklenmez; kök Stack'teki /friends ekranına gider. */}
@@ -556,18 +586,20 @@ export default function ProfileScreen() {
                 </View>
               </View>
 
-              <Pressable
+              <MotionPressable
                 accessibilityRole="button"
                 // Profil okunamadıysa kaydetme kapalıdır: ekrandaki boş taslak
                 // gerçek kaydın üzerine yazılamaz. Kesin engel context'tedir.
                 disabled={isSaving || !canSaveProfile}
                 onPress={handleSave}
-                style={({ pressed }) => [
+                style={[
                   styles.saveButton,
-                  (pressed || isSaving || !canSaveProfile) && styles.pressed,
+                  // Devre dışı sönükleştirme korunur; basılı geri bildirimi
+                  // artık `MotionPressable` üretir.
+                  (isSaving || !canSaveProfile) && styles.pressed,
                 ]}>
                 <Text style={styles.saveButtonText}>{isSaving ? t('common.saving') : t('profile.save')}</Text>
-              </Pressable>
+              </MotionPressable>
             </View>
           )}
         </ScrollView>
@@ -576,7 +608,11 @@ export default function ProfileScreen() {
   );
 }
 
-function createStyles(colors: ThemeColors, isDark: boolean) {
+function createStyles(
+  colors: ThemeColors,
+  isDark: boolean,
+  profile: { accent: string; onAccent: string },
+) {
   return StyleSheet.create({
     safeArea: { backgroundColor: colors.background, flex: 1 },
     flex: { flex: 1 },
@@ -644,7 +680,8 @@ function createStyles(colors: ThemeColors, isDark: boolean) {
     },
     mediaPreviewImage: { height: '100%', width: '100%' },
     mediaPreviewPlaceholder: { backgroundColor: isDark ? '#222225' : '#E5E5EA', flex: 1 },
-    mediaPreviewLetter: { color: isDark ? '#D5A0AA' : colors.primarySoftText, fontSize: 25, fontWeight: '600' },
+    // Profil medyası ön izleme harfi de profil vurgusunu kullanır.
+    mediaPreviewLetter: { color: profile.accent, fontSize: 25, fontWeight: '600' },
     mediaPreviewOverlay: {
       alignItems: 'center',
       backgroundColor: '#00000099',
@@ -657,7 +694,9 @@ function createStyles(colors: ThemeColors, isDark: boolean) {
     },
     mediaEditorCopy: { alignItems: 'flex-start', flex: 1 },
     mediaChangeButton: { justifyContent: 'center', minHeight: 36 },
-    mediaChangeText: { color: colors.text, fontSize: 17, fontWeight: '700' },
+    // Olumlu medya eylemleri (fotoğraf/banner değiştir-ekle) profil vurgusunu
+    // kullanır. Hemen altındaki `mediaRemoveText` nötr kalır.
+    mediaChangeText: { color: profile.accent, fontSize: 17, fontWeight: '700' },
     mediaRemoveButton: { justifyContent: 'center', minHeight: 30 },
     mediaRemoveText: { color: colors.textSecondary, fontSize: 15, textDecorationLine: 'underline' },
     avatar: {
@@ -675,7 +714,7 @@ function createStyles(colors: ThemeColors, isDark: boolean) {
     avatarLetter: { color: colors.primarySoftText, fontSize: 28, fontWeight: '500' },
     profileSummary: { alignItems: 'center', gap: 8, paddingHorizontal: Layout.screenPadding, paddingBottom: 18 },
     summaryUsername: {
-      color: isDark ? '#D5A0AA' : '#A77882',
+      color: profile.accent,
       fontSize: 11,
       fontWeight: '700',
       letterSpacing: 2.1,
@@ -689,13 +728,6 @@ function createStyles(colors: ThemeColors, isDark: boolean) {
       fontWeight: '700',
       lineHeight: 44,
     },
-    summaryBio: {
-      color: colors.textSecondary,
-      fontSize: 15,
-      lineHeight: 21,
-      maxWidth: '88%',
-      textAlign: 'center',
-    },
     levelIdentityRow: {
       alignItems: 'center',
       flexDirection: 'row',
@@ -705,15 +737,18 @@ function createStyles(colors: ThemeColors, isDark: boolean) {
     },
     levelPill: {
       alignItems: 'center',
-      backgroundColor: isDark ? '#291C20' : '#F5E8E3',
+      // Arka plan profil renginden düşük opaklıkla türetilir.
+      backgroundColor: withAlpha(profile.accent, isDark ? 0.18 : 0.12),
+      borderColor: withAlpha(profile.accent, isDark ? 0.32 : 0.24),
       borderRadius: Layout.radiusPill,
+      borderWidth: StyleSheet.hairlineWidth,
       flexDirection: 'row',
       gap: 5,
       minHeight: 28,
       paddingHorizontal: 11,
     },
-    levelPillIcon: { color: '#D5755B', fontSize: 11 },
-    levelPillText: { color: isDark ? '#E1B8B5' : '#9B625F', fontSize: 11, fontWeight: '600' },
+    levelPillIcon: { color: profile.accent, fontSize: 11 },
+    levelPillText: { color: profile.accent, fontSize: 11, fontWeight: '600' },
     editProfileButton: {
       alignItems: 'center',
       borderColor: isDark ? '#4B383D' : '#E8CFC7',
@@ -787,12 +822,12 @@ function createStyles(colors: ThemeColors, isDark: boolean) {
       paddingHorizontal: 18,
     },
     goalOptionSelected: {
-      backgroundColor: isDark ? '#F2F2F2' : '#1C1C1E',
-      borderColor: isDark ? '#F2F2F2' : '#1C1C1E',
+      backgroundColor: profile.accent,
+      borderColor: profile.accent,
     },
     goalGlyph: { fontSize: 13 },
     goalText: { color: colors.textSecondary, fontSize: 15, fontWeight: '400' },
-    goalTextSelected: { color: isDark ? '#161618' : '#FFFFFF', fontWeight: '600' },
+    goalTextSelected: { color: profile.onAccent, fontWeight: '600' },
     /**
      * Yükleme hatası satırı. Ekranın mevcut tipografisini ve tema renklerini
      * kullanır; yeni bir tasarım dili getirmez ve hata yokken hiç çizilmez.
@@ -819,14 +854,14 @@ function createStyles(colors: ThemeColors, isDark: boolean) {
     loadErrorButtonText: { color: colors.primary, fontSize: 15, fontWeight: '600' },
     saveButton: {
       alignItems: 'center',
-      backgroundColor: isDark ? '#F2F2F2' : '#1C1C1E',
+      backgroundColor: profile.accent,
       borderRadius: 20,
       justifyContent: 'center',
       marginHorizontal: 24,
       marginTop: 10,
       minHeight: 58,
     },
-    saveButtonText: { color: isDark ? '#161618' : '#FFFFFF', fontSize: 17, fontWeight: '700' },
+    saveButtonText: { color: profile.onAccent, fontSize: 17, fontWeight: '700' },
     friendsRow: {
       alignItems: 'center',
       alignSelf: 'center',

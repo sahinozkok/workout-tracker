@@ -1,6 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from '@react-navigation/native';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -15,31 +17,119 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { MotionPressable } from '@/components/motion-pressable';
 import { WorkoutVisualPicker } from '@/components/workout-visual-picker';
 import { Form, Layout, ThemeColors, Type } from '@/constants/theme';
+import { useAuth } from '@/context/auth-context';
 import { useTranslation } from '@/context/language-context';
 import { useWorkout } from '@/context/workout-context';
 import { EXERCISES, EXERCISE_MUSCLE_GROUPS, getProgramExerciseName } from '@/data/exercises';
 import { useAppTheme } from '@/hooks/use-app-theme';
+import { useFeatureColor } from '@/hooks/use-feature-colors';
 import { WorkoutVisual } from '@/types/workout';
 import { getEquipmentLabel, getMuscleGroupLabel } from '@/utils/exercise-labels';
 import { DEFAULT_EXERCISE_VISUAL } from '@/utils/workout-visual';
+
+/**
+ * Yeni egzersizin varsayılan dinlenme süresi.
+ *
+ * İlk kez egzersiz ekleyen her kullanıcı için 180 sn. Kullanıcı süreyi değiştirip
+ * egzersizi BAŞARIYLA kaydederse değer "son kullanılan" olarak cihazda saklanır
+ * ve sonraki eklemelerde otomatik gelir. Anahtar kullanıcı kimliğiyle
+ * ayrılır: aynı cihazdaki iki hesap birbirinin tercihini almaz.
+ */
+const DEFAULT_REST_SECONDS = '180';
+const LAST_REST_SECONDS_KEY_PREFIX = 'workout-last-rest-seconds';
+
+function getLastRestSecondsKey(userId: string) {
+  return `${LAST_REST_SECONDS_KEY_PREFIX}:${userId}`;
+}
+
+/** Kaydedilmiş değer yalnızca mevcut doğrulama sınırları içindeyse kabul edilir. */
+function parseStoredRestSeconds(value: string | null) {
+  if (!value) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 600) return undefined;
+  return String(parsed);
+}
+
+/** Antrenman Günleri varsayılanı — plan ekranındaki `WORKOUT_ORANGE` ile aynı. */
+const WORKOUT_DAYS_DEFAULT = '#FF9138';
 
 export default function AddExerciseScreen() {
   const { id, dayId } = useLocalSearchParams<{ id: string; dayId: string }>();
   const { addExerciseToDay, isProgramsLoading, programs } = useWorkout();
   const { colors, isDark } = useAppTheme();
+  const { user } = useAuth();
+  const userId = user?.id;
   const { t } = useTranslation();
-  const styles = createStyles(colors);
+  /**
+   * Add Exercise, gün planı ekranıyla AYNI "Antrenman Günleri" rengini kullanır.
+   * Seçim yapılmadıysa bugünkü turuncu (#FF9138) uygulanır.
+   */
+  const workoutDays = useFeatureColor('workoutDays', WORKOUT_DAYS_DEFAULT);
+  const styles = createStyles(colors, {
+    accent: workoutDays.color,
+    onAccent: workoutDays.isCustom ? workoutDays.onColor : colors.onPrimary,
+  });
   const [search, setSearch] = useState('');
   const [selectedMuscleGroup, setSelectedMuscleGroup] = useState(EXERCISE_MUSCLE_GROUPS[0]);
   // Seçim sırası korunur; kullanıcı hangi sırayla seçtiyse o sırayla eklenir.
   const [selectedExerciseIds, setSelectedExerciseIds] = useState<string[]>([]);
   const [targetSets, setTargetSets] = useState('3');
   const [targetReps, setTargetReps] = useState('8-10');
-  const [restSeconds, setRestSeconds] = useState('90');
+  const [restSeconds, setRestSeconds] = useState(DEFAULT_REST_SECONDS);
+  /** Kullanıcı dinlenme alanına dokunduysa depolamadan gelen değer uygulanmaz. */
+  const hasEditedRestRef = useRef(false);
   const [exerciseVisual, setExerciseVisual] = useState<WorkoutVisual>(DEFAULT_EXERCISE_VISUAL);
   const [isSaving, setIsSaving] = useState(false);
+
+  /**
+   * Son kullanılan dinlenme süresi ekran HER odaklandığında yeniden okunur:
+   * kullanıcı egzersiz ekleyip geri döndüğünde ve ekran bellekte kalmışken
+   * tekrar açıldığında güncel değer gelir.
+   *
+   * Üç koruma:
+   *   1. `hasEditedRestRef` — kullanıcı alanı elle değiştirdiyse geç dönen bir
+   *      okuma o değeri EZEMEZ.
+   *   2. `isActive` — unmount veya odak kaybı sonrası state güncellenmez.
+   *   3. Geçersiz/bulunmayan kayıtta `DEFAULT_REST_SECONDS` (180) korunur.
+   */
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+      if (!userId) return undefined;
+
+      /**
+       * Her YENİ odaklanma taze bir yükleme turudur: düzenleme bayrağı
+       * okumadan ÖNCE sıfırlanır. Aksi hâlde kullanıcı bir kez alana
+       * dokunduğunda bayrak component ömrü boyunca açık kalır ve ekran
+       * blur olup tekrar focus olduğunda güncel kayıt bir daha yüklenmezdi.
+       * Yarış koruması bozulmaz: bayrak yalnızca BU turda tekrar yazılırsa
+       * geç dönen cevap yok sayılır.
+       */
+      hasEditedRestRef.current = false;
+
+      AsyncStorage.getItem(getLastRestSecondsKey(userId))
+        .then((stored) => {
+          if (!isActive || hasEditedRestRef.current) return;
+          const parsed = parseStoredRestSeconds(stored);
+          if (parsed) setRestSeconds(parsed);
+        })
+        .catch(() => {
+          // Okuma hatası varsayılanı bozmaz; 180 sn ile devam edilir.
+        });
+
+      return () => {
+        isActive = false;
+      };
+    }, [userId]),
+  );
+
+  function handleRestSecondsChange(value: string) {
+    hasEditedRestRef.current = true;
+    setRestSeconds(value);
+  }
 
   const program = programs.find((item) => item.id === id);
   const day = program?.days.find((item) => item.id === dayId);
@@ -167,6 +257,22 @@ export default function AddExerciseScreen() {
         }
       }
 
+      /**
+       * Son kullanılan değer YALNIZCA en az bir egzersiz gerçekten eklendiğinde
+       * yazılır. Doğrulama hatasında bu noktaya hiç gelinmez; tamamen başarısız
+       * bir denemede de (`failed.length === pending.length`) tercih değişmez.
+       */
+      if (userId && failed.length < pending.length) {
+        try {
+          // `await`: ekran `router.back()` ile kapanmadan önce yazma tamamlanır.
+          // Fire-and-forget bırakıldığında yazma yarıda kalabiliyordu.
+          await AsyncStorage.setItem(getLastRestSecondsKey(userId), String(parsedRestSeconds));
+        } catch {
+          // Tercihin saklanamaması egzersizin eklenmesini GERİ ALMAZ; akış
+          // normal şekilde devam eder.
+        }
+      }
+
       if (failed.length > 0) {
         Alert.alert(
           t('addExercise.addFailed'),
@@ -286,7 +392,7 @@ export default function AddExerciseScreen() {
                       {getMuscleGroupLabel(exercise.muscleGroup, t)} · {getEquipmentLabel(exercise.equipment, t)}
                     </Text>
                   </View>
-                  {selected && <Ionicons name="checkmark-circle" size={20} color={colors.primary} />}
+                  {selected && <Ionicons name="checkmark-circle" size={20} color={workoutDays.color} />}
                 </Pressable>
               );
             })}
@@ -324,7 +430,7 @@ export default function AddExerciseScreen() {
               />
               <TargetInput
                 label={t('addExercise.rest')}
-                onChangeText={setRestSeconds}
+                onChangeText={handleRestSecondsChange}
                 value={restSeconds}
                 colors={colors}
                 isDark={isDark}
@@ -337,6 +443,8 @@ export default function AddExerciseScreen() {
             <Text style={styles.sectionDescription}>{t('visualPicker.choosePhoto')}</Text>
             <View style={styles.visualPicker}>
               <WorkoutVisualPicker
+                accentColor={workoutDays.isCustom ? workoutDays.color : undefined}
+                accentTextColor={workoutDays.isCustom ? workoutDays.onColor : undefined}
                 onSelect={setExerciseVisual}
                 selectedVisual={exerciseVisual}
                 variant="programEdit"
@@ -355,14 +463,13 @@ export default function AddExerciseScreen() {
               <Text style={styles.clearButtonText}>{t('addExercise.clearSelection')}</Text>
             </Pressable>
           )}
-          <Pressable
+          <MotionPressable
             accessibilityRole="button"
             disabled={isSaving || selectionCount === 0}
             onPress={() => void handleSave()}
-            style={({ pressed }) => [
+            style={[
               styles.saveButton,
               (isSaving || selectionCount === 0) && styles.saveButtonDisabled,
-              pressed && styles.pressed,
             ]}>
             {isSaving ? (
               <ActivityIndicator color={colors.onPrimary} />
@@ -371,7 +478,7 @@ export default function AddExerciseScreen() {
                 {hasCustomExercise ? t('addExercise.addCustom') : t('addExercise.addSelected', { count: selectionCount })}
               </Text>
             )}
-          </Pressable>
+          </MotionPressable>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -388,7 +495,8 @@ type TargetInputProps = {
 };
 
 function TargetInput({ colors, isDark, keyboardType = 'number-pad', label, onChangeText, value }: TargetInputProps) {
-  const styles = createStyles(colors);
+  // Yardımcı bileşen yalnızca alan stillerini kullanır; vurgu varsayılanda.
+  const styles = createStyles(colors, { accent: WORKOUT_DAYS_DEFAULT, onAccent: colors.onPrimary });
 
   return (
     <View style={styles.targetField}>
@@ -408,7 +516,7 @@ function TargetInput({ colors, isDark, keyboardType = 'number-pad', label, onCha
   );
 }
 
-function createStyles(colors: ThemeColors) {
+function createStyles(colors: ThemeColors, feature: { accent: string; onAccent: string }) {
   /** Satırları ayıran saç teli çizgi — Ana Sayfa'daki `lastSection` deseni. */
   const rowDivider = {
     borderTopColor: colors.separator,
@@ -459,9 +567,9 @@ function createStyles(colors: ThemeColors) {
       minHeight: 34,
       paddingBottom: 5,
     },
-    categoryTabSelected: { borderBottomColor: colors.text },
+    categoryTabSelected: { borderBottomColor: feature.accent },
     categoryText: { color: colors.textSecondary, ...Type.body },
-    categoryTextSelected: { color: colors.text, fontWeight: '600' },
+    categoryTextSelected: { color: feature.accent, fontWeight: '600' },
 
     exerciseLibrary: {},
     exerciseOption: {
@@ -474,7 +582,7 @@ function createStyles(colors: ThemeColors) {
     rowDivided: rowDivider,
     exerciseInfo: { flex: 1, gap: 3 },
     exerciseName: { color: colors.text, ...Type.rowTitle },
-    exerciseNameSelected: { color: colors.primary },
+    exerciseNameSelected: { color: feature.accent },
     exerciseMeta: { color: colors.textSecondary, ...Type.caption },
     noResults: { paddingVertical: 26 },
     noResultsText: { color: colors.textSecondary, ...Type.caption, textAlign: 'center' },
@@ -516,13 +624,13 @@ function createStyles(colors: ThemeColors) {
     clearButtonText: { color: colors.textSecondary, ...Type.body },
     saveButton: {
       alignItems: 'center',
-      backgroundColor: colors.primary,
+      backgroundColor: feature.accent,
       borderRadius: Form.controlRadius,
       flex: 1,
       justifyContent: 'center',
       minHeight: Form.controlHeight,
     },
-    saveButtonText: { color: colors.onPrimary, ...Form.action },
+    saveButtonText: { color: feature.onAccent, ...Form.action },
     saveButtonDisabled: { opacity: 0.5 },
     // Boş durumdaki düğme dikeyde esnemez.
     notFoundButton: { flex: 0, paddingHorizontal: 24 },

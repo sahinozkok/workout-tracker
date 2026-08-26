@@ -34,13 +34,31 @@ const RING_SIZE = 96;
 const RING_STROKE = 7;
 
 type LevelProgressRingProps = {
+  /**
+   * Eyebrow (`YOUR RHYTHM`) rengi. Verilmezse bugünkü ton korunur.
+   */
+  accentColor?: string;
+  /**
+   * Halka dolgu rengi. Verilmezse bugünkü `FILL_COLOR` kullanılır; böylece
+   * bileşenin başka kullanımları etkilenmez.
+   */
+  fillColor?: string;
+  /**
+   * Eyebrow'un hemen altında gösterilen metin (kısa biyografi). Boş veya
+   * verilmemişse satır HİÇ render edilmez — eski sabit "Small steps count."
+   * metni fallback olarak geri gelmez.
+   */
+  message?: string;
   level: number;
   xpForNextLevel: number;
   xpIntoLevel: number;
 };
 
 export function LevelProgressRing({
+  accentColor,
+  fillColor,
   level,
+  message,
   xpForNextLevel,
   xpIntoLevel,
 }: LevelProgressRingProps) {
@@ -76,7 +94,7 @@ export function LevelProgressRing({
         },
         copy: { flex: 1, gap: 6, minWidth: 0 },
         eyebrow: {
-          color: '#C28A91',
+          color: accentColor ?? '#C28A91',
           fontSize: 9,
           fontWeight: '700',
           letterSpacing: 1.45,
@@ -126,7 +144,7 @@ export function LevelProgressRing({
           fontWeight: '600',
         },
       }),
-    [cardBackground, isDark, primaryText, secondaryText],
+    [accentColor, cardBackground, isDark, primaryText, secondaryText],
   );
 
   return (
@@ -134,7 +152,8 @@ export function LevelProgressRing({
       <View style={styles.topRow}>
         <View style={styles.copy}>
           <Text style={styles.eyebrow}>{t('rewards.levelCardEyebrow')}</Text>
-          <Text style={styles.message}>{t('rewards.levelCardMessage')}</Text>
+          {/* Kısa biyografi. Boşsa satır hiç render edilmez. */}
+          {message ? <Text style={styles.message}>{message}</Text> : null}
         </View>
 
         {/* Erişilebilirlik halkanın tamamındadır: iç metinler ayrı ayrı
@@ -148,7 +167,7 @@ export function LevelProgressRing({
           accessibilityRole="progressbar"
           accessible>
           <ProgressRing
-            color={FILL_COLOR}
+            color={fillColor ?? FILL_COLOR}
             progress={ratio}
             size={RING_SIZE}
             strokeWidth={RING_STROKE}

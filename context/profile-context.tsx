@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
 import {
   createContext,
   PropsWithChildren,
@@ -11,6 +12,14 @@ import {
 } from 'react';
 import { Platform } from 'react-native';
 
+import {
+  COLOR_FEATURES,
+  ColorFeature,
+  ColorPresetId,
+  DEFAULT_PROFILE_COLOR_PRESET,
+  parseColorPresetId,
+  parseProfileColorPresetId,
+} from '@/constants/color-presets';
 import { useAuth } from '@/context/auth-context';
 import { supabase } from '@/lib/supabase';
 import {
@@ -47,6 +56,14 @@ type ProfileContextValue = {
   restTimerEnabled: boolean;
   showExerciseIcons: boolean;
   showProgramIcons: boolean;
+  /**
+   * Özellik renk tercihleri. `undefined` = kullanıcı seçmedi → ekran bugünkü
+   * rengini kullanmaya devam eder (varsayılan görünüm birebir korunur).
+   * `profile` alanı sunucudan gelir ve her zaman gerçek bir değere sahiptir.
+   */
+  colorPresets: Partial<Record<ColorFeature, ColorPresetId>>;
+  setColorPreset: (feature: ColorFeature, presetId: ColorPresetId | undefined) => Promise<void>;
+  resetColorPresets: () => Promise<void>;
   /** Başarısız yüklemeyi yeniden dener. */
   reloadProfile: () => void;
   saveProfile: (profile: UserProfile) => Promise<void>;
@@ -65,6 +82,7 @@ type ProfileRow = {
   bio: string;
   display_name: string;
   preferred_language?: string | null;
+  color_preset?: string | null;
   rest_timer_enabled: boolean;
   training_goal: TrainingGoal;
   username: string | null;
@@ -82,17 +100,38 @@ const DEFAULT_PROFILE: UserProfile = {
 const LOCAL_AVATAR_KEY_PREFIX = '@workout-tracker/local-avatar';
 const SHOW_EXERCISE_ICONS_KEY_PREFIX = '@workout-tracker/show-exercise-icons';
 const SHOW_PROGRAM_ICONS_KEY_PREFIX = '@workout-tracker/show-program-icons';
+/**
+ * Özellik renk tercihleri. Anahtar kullanıcı kimliğiyle biter: aynı cihazdaki
+ * iki hesap birbirinin renklerini görmez. Profil rengi buraya YAZILMAZ; o
+ * sunucuda saklanır ve arkadaşlara gösterilir.
+ */
+const COLOR_PRESET_KEY_PREFIX = '@workout-tracker/color-preset';
+/**
+ * OTORİTE AYRIMI.
+ *
+ *   * `profile` rengi YALNIZCA Supabase'de saklanır ve oradan yüklenir; çünkü
+ *     arkadaşlara gösterilir ve cihazlar arası aynı olmalıdır. Bu özellik için
+ *     AsyncStorage'a hiç okuma/yazma/silme yapılmaz.
+ *   * Diğer altı tercih cihaz yerelidir ve kullanıcı kimliği içeren
+ *     AsyncStorage anahtarlarında tutulur.
+ *
+ * İki kaynak `colorPresets` state'ini paylaştığı için her biri YALNIZCA kendi
+ * sahip olduğu alanları yazar (functional update). Böylece hangi isteğin önce
+ * bittiği sonucu değiştirmez.
+ */
+const LOCAL_COLOR_FEATURES = COLOR_FEATURES.filter((feature) => feature !== 'profile');
 const LEGACY_COLUMNS = 'display_name, username, bio, avatar_url, training_goal, rest_timer_enabled';
-const EXTENDED_COLUMNS = `${LEGACY_COLUMNS}, banner_url, preferred_language`;
+const EXTENDED_COLUMNS = `${LEGACY_COLUMNS}, banner_url, preferred_language, color_preset`;
 /** Postgres: kolon bulunamadı. PostgREST ise şema önbelleği için PGRST204 döner. */
 const UNDEFINED_COLUMN = '42703';
 const POSTGREST_MISSING_COLUMN = 'PGRST204';
 /** Yalnızca bu iki yeni kolonun eksikliği "migration uygulanmamış" sayılır. */
-const OPTIONAL_COLUMNS = ['banner_url', 'preferred_language'];
+const OPTIONAL_COLUMNS = ['banner_url', 'preferred_language', 'color_preset'];
 const ProfileContext = createContext<ProfileContextValue | undefined>(undefined);
 
 /**
- * Sadece `banner_url` / `preferred_language` eksikliğini eksik kolon kabul eder.
+ * Sadece `banner_url` / `preferred_language` / `color_preset` eksikliğini eksik
+ * kolon kabul eder.
  * Başka PGRST204 veya veritabanı hataları yutulmaz; çağırana iletilir.
  */
 function isMissingOptionalColumnError(error: { code?: string; message?: string } | null) {
@@ -108,6 +147,23 @@ function isMissingOptionalColumnError(error: { code?: string; message?: string }
   return /column .* does not exist/i.test(message) || /schema cache/i.test(message);
 }
 
+/**
+ * Profil rengini sunucuya yazar.
+ *
+ * Profil rengi YALNIZCA Supabase'de saklanır; AsyncStorage'a hiçbir aşamada
+ * yazılmaz, okunmaz veya silinmez. Arkadaşlara gösterildiği ve cihazlar arası
+ * aynı olması gerektiği için tek doğru kaynağı sunucudur.
+ *
+ * Migration HENÜZ UYGULANMADIYSA `color_preset` kolonu yoktur; bu durumda hata
+ * yutulur ve uygulama çalışmaya devam eder (mevcut optional-column yaklaşımı).
+ * O sürede renk kalıcı olmaz ve arkadaş paylaşımı devre dışı kalır; oturum
+ * içinde seçilen değer yalnızca ekranda görünür.
+ */
+async function saveProfileColorPreset(userId: string, presetId: ColorPresetId) {
+  const { error } = await supabase.from('profiles').update({ color_preset: presetId }).eq('id', userId);
+  if (error && !isMissingOptionalColumnError(error)) throw error;
+}
+
 export function ProfileProvider({ children }: PropsWithChildren) {
   const { user } = useAuth();
   const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
@@ -115,6 +171,13 @@ export function ProfileProvider({ children }: PropsWithChildren) {
   const [restTimerEnabled, setRestTimerEnabledState] = useState(true);
   const [showExerciseIcons, setShowExerciseIconsState] = useState(false);
   const [showProgramIcons, setShowProgramIconsState] = useState(false);
+  const [colorPresets, setColorPresetsState] = useState<Partial<Record<ColorFeature, ColorPresetId>>>({});
+  /**
+   * `colorPresets` state'inin hangi kullanıcıya ait olduğu. Hesap değişince
+   * ANINDA güncellenir; her iki async yükleme yolu yazmadan önce bunu kontrol
+   * eder, böylece geç tamamlanan eski istek yeni hesabın rengini ezemez.
+   */
+  const colorPresetsUserRef = useRef<string | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(true);
   /**
    * Durum, AİT OLDUĞU kullanıcıyla birlikte tutulur. `_layout` sağlayıcıyı
@@ -245,6 +308,27 @@ export function ProfileProvider({ children }: PropsWithChildren) {
         trainingGoal: data.training_goal,
       });
       setPreferredLanguage(data.preferred_language === 'en' || data.preferred_language === 'tr' ? data.preferred_language : undefined);
+      /**
+       * Profil rengi YALNIZCA sunucudan gelir. Bu yol state'in TAMAMINI değil
+       * yalnızca `profile` alanını yazar; aynı anda yüklenen yerel tercihler
+       * korunur (sıra bağımsızlığı).
+       *
+       * Sunucudaki değer varsayılana eşitse state'te `undefined` olarak
+       * normalize edilir; aksi hâlde kullanıcı hiçbir şey seçmediği hâlde
+       * arayüzde "özel seçim" varmış gibi görünürdü.
+       *
+       * Kolon yoksa (migration uygulanmadıysa) veya değer geçersizse yine
+       * varsayılana düşülür — mevcut optional-column davranışı korunur.
+       */
+      if (colorPresetsUserRef.current === userId) {
+        const serverProfilePreset = parseProfileColorPresetId(data.color_preset);
+        setColorPresetsState((current) => {
+          const next = { ...current };
+          if (serverProfilePreset === DEFAULT_PROFILE_COLOR_PRESET) delete next.profile;
+          else next.profile = serverProfilePreset;
+          return next;
+        });
+      }
       setRestTimerEnabledState(data.rest_timer_enabled);
       // `ready` YALNIZCA veri gerçekten uygulandıktan sonra yazılır; erken
       // dönülen hiçbir yol bu satıra ulaşamaz.
@@ -278,6 +362,17 @@ export function ProfileProvider({ children }: PropsWithChildren) {
   }, []);
 
   useEffect(() => {
+    /**
+     * Hesap değiştiği anda (veya çıkışta) renk state'i SENKRON olarak temizlenir
+     * ve sahiplik yeni kullanıcıya geçer. Bu effect'in gövdesi, iki async
+     * yükleme yolunun cevaplarından ÖNCE çalışır; dolayısıyla A hesabının geç
+     * gelen cevabı B'ye yazamaz.
+     */
+    if (colorPresetsUserRef.current !== userId) {
+      colorPresetsUserRef.current = userId;
+      setColorPresetsState({});
+    }
+
     if (!userId) {
       setShowExerciseIconsState(false);
       setShowProgramIconsState(false);
@@ -286,19 +381,47 @@ export function ProfileProvider({ children }: PropsWithChildren) {
 
     let isMounted = true;
 
+    // Profil rengi BİLİNÇLİ olarak dışarıda: o yalnızca Supabase'de yaşar.
+    const colorKeys = LOCAL_COLOR_FEATURES.map(
+      (feature) => `${COLOR_PRESET_KEY_PREFIX}:${feature}:${userId}`,
+    );
+
     AsyncStorage.multiGet([
       `${SHOW_PROGRAM_ICONS_KEY_PREFIX}:${userId}`,
       `${SHOW_EXERCISE_ICONS_KEY_PREFIX}:${userId}`,
+      ...colorKeys,
     ])
       .then((entries) => {
         if (!isMounted) return;
         setShowProgramIconsState(entries[0]?.[1] === 'true');
         setShowExerciseIconsState(entries[1]?.[1] === 'true');
+
+        if (colorPresetsUserRef.current !== userId) return;
+
+        // Eski/geçersiz ID sessizce düşer; o özellik varsayılana döner.
+        const loadedPresets: Partial<Record<ColorFeature, ColorPresetId>> = {};
+        LOCAL_COLOR_FEATURES.forEach((feature, index) => {
+          const presetId = parseColorPresetId(entries[index + 2]?.[1]);
+          if (presetId) loadedPresets[feature] = presetId;
+        });
+
+        /**
+         * State'in TAMAMI değiştirilmez: Supabase'den gelmiş olabilecek
+         * `profile` değeri korunur, yalnızca yerel alanlar birleştirilir.
+         */
+        setColorPresetsState((current) => ({
+          ...(current.profile ? { profile: current.profile } : {}),
+          ...loadedPresets,
+        }));
       })
       .catch(() => {
         if (!isMounted) return;
         setShowProgramIconsState(false);
         setShowExerciseIconsState(false);
+        // Yalnızca YEREL alanlar sıfırlanır; sunucudan gelen profil korunur.
+        if (colorPresetsUserRef.current === userId) {
+          setColorPresetsState((current) => (current.profile ? { profile: current.profile } : {}));
+        }
       });
 
     return () => {
@@ -535,6 +658,153 @@ export function ProfileProvider({ children }: PropsWithChildren) {
     [restTimerEnabled, userId],
   );
 
+  /**
+   * Tek bir özelliğin rengini kaydeder. `undefined` verilirse tercih silinir ve
+   * o özellik BUGÜNKÜ varsayılan rengine döner.
+   *
+   * Profil rengi ayrıca sunucuya yazılır: arkadaşlar profili sahibinin seçtiği
+   * renkte görür. Sunucu yazımı başarısız olursa yerel değişiklik de geri
+   * alınır — iki taraf tutarsız kalmaz.
+   */
+  /**
+   * Tek bir özelliğin rengini kaydeder.
+   *
+   * Yazma hedefi özelliğin SAHİBİNE göre seçilir: `profile` yalnızca Supabase'e,
+   * diğer altısı yalnızca AsyncStorage'a. Profil için AsyncStorage'a hiç
+   * dokunulmaz.
+   *
+   * Hata durumunda YALNIZCA bu alan geri alınır — eski state nesnesinin tamamı
+   * yazılsaydı, bu sırada değiştirilen başka bir renk sessizce ezilirdi.
+   */
+  const setColorPreset = useCallback(
+    async (feature: ColorFeature, presetId: ColorPresetId | undefined) => {
+      if (!userId) throw new Error('missingSession');
+      const previousValue = colorPresets[feature];
+
+      setColorPresetsState((current) => {
+        const next = { ...current };
+        if (presetId) next[feature] = presetId;
+        else delete next[feature];
+        return next;
+      });
+
+      try {
+        if (feature === 'profile') {
+          await saveProfileColorPreset(userId, presetId ?? DEFAULT_PROFILE_COLOR_PRESET);
+        } else {
+          const storageKey = `${COLOR_PRESET_KEY_PREFIX}:${feature}:${userId}`;
+          if (presetId) await AsyncStorage.setItem(storageKey, presetId);
+          else await AsyncStorage.removeItem(storageKey);
+        }
+      } catch (error) {
+        /**
+         * SAHİPLİK GUARD'I: istek geç hata verdiğinde hesap değişmiş olabilir.
+         * Eski hesabın değeri yeni hesabın ekranına YAZILMAZ; kalıcı kaynaklar
+         * yakalanmış `userId` ile zaten doğru hesaba yazılmıştır.
+         */
+        if (colorPresetsUserRef.current === userId) {
+          setColorPresetsState((current) => {
+            const next = { ...current };
+            if (previousValue) next[feature] = previousValue;
+            else delete next[feature];
+            return next;
+          });
+        }
+        throw error;
+      }
+    },
+    [colorPresets, userId],
+  );
+
+  /**
+   * Bütün özellikleri varsayılana döndürür.
+   *
+   * İKİ KALICI KAYNAK, TEK İŞLEM: altı yerel renk AsyncStorage'dan silinir,
+   * profil rengi Supabase'de varsayılana yazılır. Bunlar arasında dağıtık bir
+   * transaction yoktur; bu yüzden herhangi bir adım başarısız olursa ELDE
+   * EDİLEN KALICI DEĞİŞİKLİKLER DE GERİ ALINIR (telafi/compensation).
+   *
+   * Eski davranış yalnızca React state'ini geri alıyordu: AsyncStorage silme
+   * başarılı olup Supabase yazımı başarısız olduğunda ekranda renkler geri
+   * gelmiş görünüyor ama kayıtlar silinmiş kalıyordu; uygulama yeniden
+   * açıldığında altı yerel renk kayboluyordu.
+   */
+  const resetColorPresets = useCallback(async () => {
+    if (!userId) throw new Error('missingSession');
+
+    const previousPresets = colorPresets;
+    const localStorageKeys = LOCAL_COLOR_FEATURES.map(
+      (feature) => `${COLOR_PRESET_KEY_PREFIX}:${feature}:${userId}`,
+    );
+    /**
+     * Geri alma için EKSİKSİZ snapshot. `multiGet` her anahtar için bir satır
+     * döndürür; değeri `null` olanlar "kayıt yoktu" demektir ve rollback'te
+     * YENİDEN OLUŞTURULMAZ.
+     */
+    const localSnapshot = await AsyncStorage.multiGet(localStorageKeys);
+    const previousProfilePreset = previousPresets.profile ?? DEFAULT_PROFILE_COLOR_PRESET;
+
+    /**
+     * SAHİPLİK GUARD'I — `multiGet` beklenirken kullanıcı hesap değiştirmiş
+     * olabilir. Bu durumda A'nın optimistic yazımı B'nin yeni yüklenmiş renk
+     * state'ini `{}` ile silerdi.
+     *
+     * Kalıcı adımlar (Supabase + AsyncStorage) yakalanmış `userId` ile devam
+     * eder ve A'nın kaynaklarını doğru şekilde tamamlar/geri alır; değişen tek
+     * şey, artık B'nin React state'ine HİÇBİR koşulda yazılmamasıdır.
+     */
+    const ownsState = () => colorPresetsUserRef.current === userId;
+
+    // Optimistic: ekran hemen varsayılana döner.
+    if (ownsState()) setColorPresetsState({});
+
+    let didResetProfile = false;
+    /**
+     * `multiRemove` REDDEDİLSE bile bazı anahtarlar silinmiş olabilir. Bu
+     * yüzden bayrak çağrıdan ÖNCE set edilir: telafi "başarıyla silindi mi"
+     * değil, "dokunuldu mu" sorusuna göre çalışır.
+     */
+    let didTouchLocal = false;
+
+    try {
+      /**
+       * SIRA ÖNEMLİ: önce sunucu, sonra yerel. Sunucu adımı başarısız olursa
+       * yerel kayıtlara hiç dokunulmamış olur ve telafiye gerek kalmaz.
+       */
+      await saveProfileColorPreset(userId, DEFAULT_PROFILE_COLOR_PRESET);
+      didResetProfile = true;
+
+      didTouchLocal = true;
+      await AsyncStorage.multiRemove(localStorageKeys);
+    } catch (error) {
+      // Aynı guard: A'nın renkleri B'nin ekranına yazılamaz.
+      if (ownsState()) setColorPresetsState(previousPresets);
+
+      /**
+       * Telafi adımları. `allSettled`: rollback sırasında oluşan ikincil bir
+       * hata ASIL hatayı gizlemez — çağırana her zaman ilk gerçek hata gider.
+       * Yalnızca gerçekten uygulanmış adımlar geri alınır.
+       */
+      const rollbacks: Promise<unknown>[] = [];
+
+      if (didTouchLocal) {
+        const restorePairs = localSnapshot
+          .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+          .map(([key, value]) => [key, value] as [string, string]);
+
+        if (restorePairs.length > 0) rollbacks.push(AsyncStorage.multiSet(restorePairs));
+      }
+
+      if (didResetProfile) {
+        rollbacks.push(saveProfileColorPreset(userId, previousProfilePreset));
+      }
+
+      if (rollbacks.length > 0) await Promise.allSettled(rollbacks);
+
+      throw error;
+    }
+  }, [colorPresets, userId]);
+
   const setShowProgramIcons = useCallback(
     async (enabled: boolean) => {
       if (!userId) throw new Error('missingSession');
@@ -575,6 +845,9 @@ export function ProfileProvider({ children }: PropsWithChildren) {
       reloadProfile,
       profile,
       restTimerEnabled,
+      colorPresets,
+      resetColorPresets,
+      setColorPreset,
       showExerciseIcons,
       showProgramIcons,
       saveProfile,
@@ -592,6 +865,9 @@ export function ProfileProvider({ children }: PropsWithChildren) {
       reloadProfile,
       profile,
       restTimerEnabled,
+      colorPresets,
+      resetColorPresets,
+      setColorPreset,
       showExerciseIcons,
       showProgramIcons,
       saveProfile,

@@ -16,6 +16,7 @@ import { ThemeColors } from '@/constants/theme';
 import { getWeekdayShortLabel, WEEKDAY_VALUES } from '@/constants/weekdays';
 import { useTranslation } from '@/context/language-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
+import { useFeatureColor } from '@/hooks/use-feature-colors';
 import { DisciplineStatus } from '@/types/workout';
 import { toDateKey } from '@/utils/discipline';
 
@@ -37,6 +38,15 @@ function clamp(value: number, min: number, max: number) {
 }
 
 export type ProfileDisciplineCardProps = {
+  /**
+   * Seçili dönem (Hafta/Ay/Yıl) vurgusunun rengi. Kendi profilde kullanıcının
+   * `profile` preseti, arkadaş profilinde ARKADAŞIN Supabase'de saklı rengi
+   * geçirilir. Verilmezse bugünkü `colors.primary` görünümü korunur.
+   *
+   * Takvimin durum renkleri (yeşil/turuncu/gri) ve bugün çerçevesi bundan
+   * ETKİLENMEZ; Ana Sayfa takvimi ayrı bir bileşendir ve hiç dokunulmaz.
+   */
+  accentColor?: string;
   /**
    * Gösterilecek disiplin verisi. **Verilmezse** kart mevcut kullanıcının
    * context verisini ve mevcut gün basma davranışını kullanır (kendi profili).
@@ -61,6 +71,7 @@ export type ProfileDisciplineCardProps = {
  * adapter render edilir. İkisi de aynı görünümü paylaşır.
  */
 export function ProfileDisciplineCard({
+  accentColor,
   collapsible = false,
   statuses,
   readOnly,
@@ -69,6 +80,7 @@ export function ProfileDisciplineCard({
   if (statuses) {
     return (
       <ProfileDisciplineCardView
+        accentColor={accentColor}
         collapsible={collapsible}
         onDayPress={readOnly ? undefined : onDayPress}
         statuses={statuses}
@@ -76,18 +88,25 @@ export function ProfileDisciplineCard({
     );
   }
 
-  return <CurrentUserProfileDisciplineCard collapsible={collapsible} />;
+  return <CurrentUserProfileDisciplineCard accentColor={accentColor} collapsible={collapsible} />;
 }
 
 /**
  * Kendi profili: `WorkoutContext` verisini ve mevcut gün ayrıntısı/durum
  * değiştirme davranışını kullanan adapter.
  */
-function CurrentUserProfileDisciplineCard({ collapsible }: { collapsible: boolean }) {
+function CurrentUserProfileDisciplineCard({
+  accentColor,
+  collapsible,
+}: {
+  accentColor?: string;
+  collapsible: boolean;
+}) {
   const { handleDayPress, statuses } = useDisciplineDayPress();
 
   return (
     <ProfileDisciplineCardView
+      accentColor={accentColor}
       collapsible={collapsible}
       onDayPress={handleDayPress}
       statuses={statuses}
@@ -100,10 +119,12 @@ function CurrentUserProfileDisciplineCard({ collapsible }: { collapsible: boolea
  * arkadaş profilinde de aynı tasarım salt okunur olarak kullanılabilir.
  */
 function ProfileDisciplineCardView({
+  accentColor,
   collapsible,
   onDayPress,
   statuses,
 }: {
+  accentColor?: string;
   collapsible: boolean;
   /** Verilmezse günler basılamaz (salt okunur kart). */
   onDayPress?: (dateKey: string) => void;
@@ -122,7 +143,12 @@ function ProfileDisciplineCardView({
     setMeasuredWidth((current) => (current === next ? current : next));
   }, []);
 
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const todayColor = useFeatureColor('todayHighlight', colors.primary).color;
+  const periodAccent = accentColor ?? colors.primary;
+  const styles = useMemo(
+    () => createStyles(colors, todayColor, periodAccent),
+    [colors, periodAccent, todayColor],
+  );
   const today = useMemo(() => startOfDay(new Date()), []);
   const weekdayLabels = useMemo(
     () => WEEKDAY_VALUES.map((value) => getWeekdayShortLabel(value, locale)),
@@ -386,7 +412,7 @@ function MonthGrid({ styles, weekdayLabels, width, ...rest }: GridProps & { week
  * sığmıyor (53 sütun ≈ 480 pt eder), bu yüzden ızgara devriktir. Hücre boyutu
  * gerçek genişlikten hesaplanır; yatay kaydırma ve kırpma yoktur.
  */
-function createStyles(colors: ThemeColors) {
+function createStyles(colors: ThemeColors, todayColor: string, periodAccent: string) {
   return StyleSheet.create({
     card: {
       backgroundColor: 'transparent',
@@ -416,7 +442,7 @@ function createStyles(colors: ThemeColors) {
       marginTop: 4,
       width: 16,
     },
-    tabUnderlineSelected: { backgroundColor: colors.primary },
+    tabUnderlineSelected: { backgroundColor: periodAccent },
     weekRow: { flexDirection: 'row', marginTop: 12 },
     weekCell: { alignItems: 'center', flex: 1, gap: 6 },
     weekdayLabel: { color: colors.textTertiary, fontSize: 10, fontWeight: '500' },
@@ -431,10 +457,11 @@ function createStyles(colors: ThemeColors) {
       textAlign: 'center',
     },
     dayCircleOutlined: { borderColor: colors.separator, borderWidth: StyleSheet.hairlineWidth },
-    dayCircleToday: { borderColor: colors.primary, borderWidth: 1.5 },
+    // Yalnızca dış çember; durum dolgusu değişmez.
+    dayCircleToday: { borderColor: todayColor, borderWidth: 1.5 },
     dayNumber: { color: colors.textSecondary, fontWeight: '500' },
     dayNumberFilled: { color: colors.background, fontWeight: '700' },
-    dayNumberToday: { color: colors.primary, fontWeight: '700' },
+    dayNumberToday: { color: todayColor, fontWeight: '700' },
     dayNumberFuture: { color: colors.textTertiary },
     yearWrapper: { marginTop: 12 },
     pressed: { opacity: 0.6 },

@@ -1,16 +1,17 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { WorkoutVisualDisplay } from '@/components/workout-visual-display';
+import { ProgramDetailScroll } from '@/components/program-detail-scroll';
+import ProgramList from '@/components/program-list';
 import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { useProfile } from '@/context/profile-context';
 import { useWorkout } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
-import { getProgramVisual } from '@/utils/workout-visual';
+import { WorkoutProgram } from '@/types/workout';
 
 export default function ProgramsScreen() {
   const { created } = useLocalSearchParams<{ created?: string }>();
@@ -22,6 +23,7 @@ export default function ProgramsScreen() {
     programs,
     programsError,
     refreshPrograms,
+    reorderPrograms,
   } = useWorkout();
   const { colors } = useAppTheme();
   const { showProgramIcons } = useProfile();
@@ -49,6 +51,18 @@ export default function ProgramsScreen() {
       );
     } finally {
       setActivatingProgramId(undefined);
+    }
+  }
+
+  async function handleReorderPrograms(reordered: WorkoutProgram[]) {
+    try {
+      await reorderPrograms(reordered);
+    } catch (error) {
+      // `reorderPrograms` hata durumunda listeyi eski sıraya geri almış olur.
+      Alert.alert(
+        t('programs.reorderFailed'),
+        error instanceof Error ? error.message : t('common.networkError'),
+      );
     }
   }
 
@@ -148,7 +162,12 @@ export default function ProgramsScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      {/*
+        `ProgramDetailScroll` native'de `NestableScrollContainer`, web'de düz
+        `ScrollView`'dur. Sürüklenebilir liste bir kaydırma kabının içinde
+        çalışabilsin diye gereklidir (Program detayı ekranıyla aynı kalıp).
+      */}
+      <ProgramDetailScroll contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
           <Text style={styles.eyebrow}>{t('programs.savedProgramCount', { count: programs.length })}</Text>
           <Text style={styles.title}>{t('programs.title')}</Text>
@@ -161,59 +180,15 @@ export default function ProgramsScreen() {
           </View>
         )}
 
-        <View style={styles.list}>
-          {programs.map((program) => {
-            const isActive = program.id === activeProgramId;
-            const isBusy = deletingProgramId === program.id || activatingProgramId === program.id;
-            const workoutDays = program.days.filter((day) => !day.isOffDay).length;
-            const restDays = program.days.filter((day) => day.isOffDay).length;
-
-            return (
-              <Pressable
-                accessibilityHint={t('programs.openHint')}
-                accessibilityRole="button"
-                key={program.id}
-                onLongPress={() => openProgramMenu(program.id, program.name, isActive)}
-                onPress={() => router.push({ pathname: '/program/[id]', params: { id: program.id } })}
-                style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}>
-                {showProgramIcons && (
-                  <View style={styles.programIcon}>
-                    <WorkoutVisualDisplay
-                      color={colors.primary}
-                      size={22}
-                      visual={getProgramVisual(program.visual, program.icon)}
-                    />
-                  </View>
-                )}
-                <View style={styles.rowText}>
-                  <Text numberOfLines={1} style={styles.rowTitle}>
-                    {program.name}
-                  </Text>
-                  <View style={styles.rowMetaLine}>
-                    <Text numberOfLines={1} style={styles.rowMeta}>
-                      {t('programs.weeklySummary', { workouts: workoutDays })}
-                      {restDays > 0 ? t('programs.restSuffix', { count: restDays }) : ''}
-                    </Text>
-                    {isActive && <Text style={styles.activeText}>{t('programs.active')}</Text>}
-                  </View>
-                </View>
-                <Pressable
-                  accessibilityLabel={t('programs.options', { name: program.name })}
-                  accessibilityRole="button"
-                  disabled={isBusy}
-                  hitSlop={12}
-                  onPress={() => openProgramMenu(program.id, program.name, isActive)}
-                  style={({ pressed }) => [styles.moreButton, pressed && styles.pressed]}>
-                  {isBusy ? (
-                    <ActivityIndicator color={colors.textSecondary} size="small" />
-                  ) : (
-                    <Ionicons name="ellipsis-horizontal" size={18} color={colors.textTertiary} />
-                  )}
-                </Pressable>
-              </Pressable>
-            );
-          })}
-        </View>
+        <ProgramList
+          activeProgramId={activeProgramId}
+          busyProgramId={deletingProgramId ?? activatingProgramId}
+          onOpen={(programId) => router.push({ pathname: '/program/[id]', params: { id: programId } })}
+          onOptions={(program, isActive) => openProgramMenu(program.id, program.name, isActive)}
+          onReorder={(reordered) => void handleReorderPrograms(reordered)}
+          programs={programs}
+          showIcons={showProgramIcons}
+        />
 
         <Pressable
           accessibilityRole="button"
@@ -221,7 +196,7 @@ export default function ProgramsScreen() {
           style={({ pressed }) => [styles.createAction, pressed && styles.pressed]}>
           <Text style={styles.createActionText}>{t('programs.newProgram')}</Text>
         </Pressable>
-      </ScrollView>
+      </ProgramDetailScroll>
     </SafeAreaView>
   );
 }
@@ -238,32 +213,7 @@ function createStyles(colors: ThemeColors) {
     title: { color: colors.text, ...Type.pageTitle },
     notice: { alignItems: 'center', flexDirection: 'row', gap: 8, marginBottom: 16 },
     noticeText: { color: colors.textSecondary, ...Type.caption },
-    list: { borderTopColor: colors.separator, borderTopWidth: StyleSheet.hairlineWidth },
-    row: {
-      alignItems: 'center',
-      borderBottomColor: colors.separator,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      flexDirection: 'row',
-      gap: 12,
-      minHeight: 64,
-      paddingVertical: 14,
-    },
-    rowPressed: { opacity: 0.6 },
-    programIcon: {
-      alignItems: 'center',
-      backgroundColor: colors.primarySoft,
-      borderRadius: 10,
-      height: 38,
-      justifyContent: 'center',
-      overflow: 'hidden',
-      width: 38,
-    },
-    rowText: { flex: 1, gap: 4 },
-    rowTitle: { color: colors.text, ...Type.rowTitle },
-    rowMetaLine: { alignItems: 'center', flexDirection: 'row' },
-    rowMeta: { color: colors.textSecondary, flexShrink: 1, ...Type.caption },
-    activeText: { color: colors.disciplineCompleted, ...Type.caption, fontWeight: '500' },
-    moreButton: { alignItems: 'center', height: 32, justifyContent: 'center', width: 32 },
+    // Satır stilleri `components/program-list` içinde yaşıyor.
     createAction: {
       alignSelf: 'flex-start',
       justifyContent: 'center',

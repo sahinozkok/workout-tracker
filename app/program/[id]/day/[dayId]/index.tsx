@@ -18,6 +18,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { MotionPressable } from '@/components/motion-pressable';
 import { ProgramDetailScroll } from '@/components/program-detail-scroll';
 import ProgramExerciseList from '@/components/program-exercise-list';
 import { WorkoutVisualPicker } from '@/components/workout-visual-picker';
@@ -29,14 +30,20 @@ import { useProfile } from '@/context/profile-context';
 import { useWorkout } from '@/context/workout-context';
 import { getProgramExerciseName } from '@/data/exercises';
 import { useAppTheme } from '@/hooks/use-app-theme';
+import { useFeatureColor } from '@/hooks/use-feature-colors';
 import {
   ProgramExercise,
   Weekday,
+  WorkoutDropSetPerformance,
   WorkoutSetPerformance,
   WorkoutSetRecord,
   WorkoutVisual,
 } from '@/types/workout';
 import { toDateKey } from '@/utils/discipline';
+import {
+  completesWholeWorkout as computeCompletesWholeWorkout,
+  getActiveSetLabelNumber,
+} from '@/utils/workout-sets';
 import {
   cancelRestNotification,
   isRestNotificationScheduled,
@@ -86,22 +93,40 @@ export default function WorkoutDayScreen() {
     workoutSets,
   } = useWorkout();
   const { restTimerEnabled, showExerciseIcons } = useProfile();
-  const { colors } = useAppTheme();
+  const { colors, isDark } = useAppTheme();
   const { locale, t } = useTranslation();
-  const styles = createStyles(colors);
+  /**
+   * Üç semantik renk. Kullanıcı seçim yapmadıysa hepsi bugünkü değerlerine
+   * düşer; varsayılan görünüm birebir korunur.
+   */
+  const workoutDays = useFeatureColor('workoutDays', WORKOUT_ORANGE);
+  const activePrimary = useFeatureColor('activeWorkoutPrimary', colors.text);
+  const activeSecondary = useFeatureColor('activeWorkoutSecondary', colors.primary);
+  const styles = createStyles(colors, {
+    activePrimary: activePrimary.color,
+    // "Seti tamamla" düğmesinin yazısı: varsayılanda bugünkü `colors.background`,
+    // özel renkte parlaklığa göre hesaplanan okunabilir renk.
+    activePrimaryOn: activePrimary.isCustom ? activePrimary.onColor : colors.background,
+    activeSecondary: activeSecondary.color,
+    workoutDays: workoutDays.color,
+    workoutDaysOn: workoutDays.isCustom ? workoutDays.onColor : '#111111',
+  });
   const weekdayOptions = getWeekdayOptions(locale);
   const program = programs.find((item) => item.id === id);
   const day = program?.days.find((item) => item.id === dayId);
   const today = new Date();
   const todayKey = toDateKey(today);
   const restTimerStorageKey = getRestTimerStorageKey(id, dayId, todayKey);
-  const workoutSession = workoutSessions.find(
+  const matchingWorkoutSessions = workoutSessions.filter(
     (session) =>
       session.programId === id &&
       session.dayId === dayId &&
-      session.dateKey === todayKey &&
-      session.status !== 'completed',
+      session.dateKey === todayKey,
   );
+  const workoutSession =
+    matchingWorkoutSessions.find(
+      (session) => session.status === 'running' || session.status === 'paused',
+    ) ?? matchingWorkoutSessions.find((session) => session.status === 'completed');
   const isWorkoutRunning = workoutSession?.status === 'running';
   // Mount durumu YALNIZCA React state yazımını kontrol eder; molanın mantıksal
   // geçerliliği AsyncStorage'daki kaydın `timerId` değerinden okunur.
@@ -126,6 +151,18 @@ export default function WorkoutDayScreen() {
   const [weightInput, setWeightInput] = useState('');
   const [repetitionsInput, setRepetitionsInput] = useState('');
   const [rpeInput, setRpeInput] = useState('');
+  /**
+   * Kullanıcı "Tüm egzersizler" panelinden TAMAMLANMIŞ bir egzersizi elle
+   * seçtiyse otomatik temizleme effect'i seçimi hemen bırakmaz; böylece hedefin
+   * üstüne ekstra set girilebilir.
+   */
+  const [isManualSelection, setIsManualSelection] = useState(false);
+  /**
+   * Egzersiz bazında drop set taslakları. Ekran açık kaldığı sürece korunur:
+   * sonraki sete geçilince veya başka egzersizden dönülünce satırlar ve
+   * değerler yerinde kalır. Antrenman/ekran kapanınca doğal olarak temizlenir.
+   */
+  const [dropSetDrafts, setDropSetDrafts] = useState<Record<string, { weight: string; reps: string }[]>>({});
   const [validationError, setValidationError] = useState<string>();
   const [isSetDetailsOpen, setIsSetDetailsOpen] = useState(false);
 
@@ -166,7 +203,15 @@ export default function WorkoutDayScreen() {
       workoutSet.dateKey === activePreviousRecords[0]?.dateKey &&
       workoutSet.setNumber === activeCompletedSets + 1,
   );
+  /** Aktif egzersizin BUGÜNKÜ oturumda kaydedilmiş gerçek set sayısı. */
+  const activeActualSetCount = activeSetRecords.length;
   const isActiveExerciseComplete = Boolean(activeExercise && activeCompletedSets >= activeExercise.targetSets);
+  /**
+   * Tamamlanmış bir egzersiz panelden ELLE seçildiğinde hedefin üstüne ekstra
+   * set girilebilir. Normal akışta (otomatik ilerleme) düğme yine kilitlidir.
+   */
+  const isExtraSetMode =
+    isActiveExerciseComplete && isManualSelection && selectedExerciseId === activeExercise?.id;
 
 
   // Panelden seçilen egzersizin son seti tamamlandığında seçim bırakılır ve
@@ -178,24 +223,47 @@ export default function WorkoutDayScreen() {
     const selectedExercise = dayExercises.find((exercise) => exercise.id === selectedExerciseId);
     if (!selectedExercise) {
       setSelectedExerciseId(undefined);
+      setIsManualSelection(false);
       return;
     }
 
-    const completedSets = completedSetCounts[getSetProgressKey(todayKey, selectedExercise.id)] ?? 0;
-    if (completedSets >= selectedExercise.targetSets) setSelectedExerciseId(undefined);
-  }, [completedSetCounts, dayExercises, selectedExerciseId, todayKey]);
+    // Kullanıcı tamamlanmış egzersizi BİLEREK seçtiyse seçim korunur; aksi
+    // hâlde son set tamamlanınca sıradaki tamamlanmamış egzersize geçilir.
+    if (isManualSelection) return;
 
-  // Aktif egzersiz veya tamamlanan set değişince giriş alanları önerilen
-  // değerlerle tazelenir (önceki antrenmandaki set veya hedef tekrar).
+    const completedSets = completedSetCounts[getSetProgressKey(todayKey, selectedExercise.id)] ?? 0;
+    if (completedSets >= selectedExercise.targetSets) {
+      setSelectedExerciseId(undefined);
+      setIsManualSelection(false);
+    }
+  }, [completedSetCounts, dayExercises, isManualSelection, selectedExerciseId, todayKey]);
+
+  /**
+   * Giriş alanları YALNIZCA egzersiz değiştiğinde önerilen değerlerle tazelenir.
+   *
+   * Eskiden `activeCompletedSets` de bağımlılıktaydı: set başarıyla
+   * kaydedilince sayaç artıyor, effect yeniden çalışıyor ve kullanıcının az
+   * önce girdiği ağırlık/tekrar önceki antrenmanın değerleriyle EZİLİYORDU.
+   * Artık aynı egzersizin sonraki setinde son kaydedilen değerler ekranda
+   * kalır; kullanıcı tekrar yazmak zorunda değildir.
+   *
+   * Öneri sırası (yalnızca egzersize ilk geçişte):
+   *   1. bugünkü aktif oturumdaki son set,
+   *   2. yoksa önceki antrenmandaki uygun set,
+   *   3. o da yoksa hedef tekrar değeri.
+   */
   useEffect(() => {
     setValidationError(undefined);
     setRpeInput('');
-    setWeightInput(activePreviousSet?.weightKg?.toString() ?? '');
+
+    const latestSessionSet = activeSetRecords[activeSetRecords.length - 1];
+    const suggestedSet = latestSessionSet ?? activePreviousSet;
+    setWeightInput(suggestedSet?.weightKg?.toString() ?? '');
     const suggestedRepetitions =
-      activePreviousSet?.repetitions ?? getFirstTargetRepetition(activeExercise?.targetReps ?? '');
+      suggestedSet?.repetitions ?? getFirstTargetRepetition(activeExercise?.targetReps ?? '');
     setRepetitionsInput(suggestedRepetitions?.toString() ?? '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeExercise?.id, activeCompletedSets]);
+  }, [activeExercise?.id]);
 
 
   useEffect(() => {
@@ -329,6 +397,37 @@ export default function WorkoutDayScreen() {
   const elapsedSeconds = workoutSession ? getWorkoutDurationSeconds(workoutSession, clockNow) : 0;
   const restProgress = restTimer ? getRestTimerProgress(restTimer, clockNow) : undefined;
   const canCompleteSets = canTrackToday && workoutSession?.status === 'running';
+  const isCompleteSetDisabled =
+    !canCompleteSets || Boolean(pendingExerciseId) || (isActiveExerciseComplete && !isExtraSetMode);
+
+  const activeDropSetDrafts = activeExercise ? (dropSetDrafts[activeExercise.id] ?? []) : [];
+
+  function addDropSetDraft() {
+    if (!activeExercise) return;
+    setDropSetDrafts((current) => ({
+      ...current,
+      [activeExercise.id]: [...(current[activeExercise.id] ?? []), { reps: '', weight: '' }],
+    }));
+  }
+
+  function updateDropSetDraft(index: number, field: 'reps' | 'weight', value: string) {
+    if (!activeExercise) return;
+    setDropSetDrafts((current) => {
+      const rows = [...(current[activeExercise.id] ?? [])];
+      if (!rows[index]) return current;
+      rows[index] = { ...rows[index], [field]: value };
+      return { ...current, [activeExercise.id]: rows };
+    });
+  }
+
+  /** Kaldırılan satır taslaktan KALICI olarak çıkar. */
+  function removeDropSetDraft(index: number) {
+    if (!activeExercise) return;
+    setDropSetDrafts((current) => {
+      const rows = (current[activeExercise.id] ?? []).filter((_row, rowIndex) => rowIndex !== index);
+      return { ...current, [activeExercise.id]: rows };
+    });
+  }
 
   async function submitActiveSet() {
     if (!activeExercise || pendingExerciseId) return;
@@ -352,8 +451,39 @@ export default function WorkoutDayScreen() {
       return;
     }
 
+    /**
+     * Drop set doğrulaması ana set kurallarıyla AYNI sınırları kullanır.
+     *   * Tamamen boş satır → drop set yapılmamış sayılır, kayda girmez.
+     *   * Kısmen doldurulmuş/geçersiz satır → kayıt engellenir ve lokalize
+     *     hata gösterilir.
+     */
+    const dropSets: WorkoutDropSetPerformance[] = [];
+    for (const draft of activeDropSetDrafts) {
+      const isEmpty = draft.weight.trim() === '' && draft.reps.trim() === '';
+      if (isEmpty) continue;
+
+      const dropRepetitions = parseNumberInput(draft.reps);
+      const dropWeightKg = parseOptionalNumberInput(draft.weight);
+
+      if (
+        dropRepetitions === undefined ||
+        !Number.isInteger(dropRepetitions) ||
+        dropRepetitions < 0 ||
+        dropRepetitions > 1000 ||
+        dropWeightKg === null ||
+        (dropWeightKg !== undefined && (dropWeightKg < 0 || dropWeightKg > 99999))
+      ) {
+        setValidationError(t('day.dropSetValidation'));
+        return;
+      }
+
+      dropSets.push(dropWeightKg === undefined ? { repetitions: dropRepetitions } : { repetitions: dropRepetitions, weightKg: dropWeightKg });
+    }
+
     setValidationError(undefined);
-    await handleCompleteSet(activeExercise, { repetitions, weightKg, rpe });
+    // Ana set ve dolu drop setler TEK insert'te kaydedilir; mola yalnızca
+    // hepsi kaydedildikten sonra bir kez başlar (bkz. `handleCompleteSet`).
+    await handleCompleteSet(activeExercise, { repetitions, weightKg, rpe, dropSets });
   }
 
   /**
@@ -383,6 +513,24 @@ export default function WorkoutDayScreen() {
         return;
       }
 
+      await resumeWorkout(workoutSession.id);
+    } catch (error) {
+      showWorkoutError(t('day.workoutStateFailed'), error, t);
+    } finally {
+      setIsWorkoutActionPending(false);
+    }
+  }
+
+  async function handleExerciseSelection(exerciseId: string, isComplete: boolean) {
+    setSelectedExerciseId(exerciseId);
+    setIsManualSelection(isComplete);
+
+    // Son planlı set antrenmanı otomatik bitirir. Kullanıcı tamamlanmış
+    // bir egzersize yeniden dokunursa aynı oturumu ekstra set için devam ettir.
+    if (!isComplete || workoutSession?.status !== 'completed') return;
+
+    setIsWorkoutActionPending(true);
+    try {
       await resumeWorkout(workoutSession.id);
     } catch (error) {
       showWorkoutError(t('day.workoutStateFailed'), error, t);
@@ -423,9 +571,26 @@ export default function WorkoutDayScreen() {
   async function handleCompleteSet(exercise: ProgramExercise, performance: WorkoutSetPerformance) {
     setPendingExerciseId(exercise.id);
     try {
+      /**
+       * KATKI KONTROLÜ, kayıt gönderilmeden ÖNCEKİ sayaçla yapılır.
+       *
+       * Hedefi dolmuş bir egzersize eklenen EKSTRA set planlı ilerlemeyi
+       * artırmaz; eski hesap (`totalCompletedSets + 1 >= totalTargetSets`)
+       * başka egzersizde eksik planlı set varken bile antrenmanı bitiriyordu.
+       */
+      const exerciseCompletedSets = Math.min(
+        completedSetCounts[getSetProgressKey(todayKey, exercise.id)] ?? 0,
+        exercise.targetSets,
+      );
+
       await completeSet(todayKey, exercise.id, exercise.targetSets, performance);
 
-      const completesWholeWorkout = totalCompletedSets + 1 >= totalTargetSets;
+      const completesWholeWorkout = computeCompletesWholeWorkout({
+        completedSets: exerciseCompletedSets,
+        targetSets: exercise.targetSets,
+        totalCompletedSets,
+        totalTargetSets,
+      });
       if (completesWholeWorkout) {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         if (workoutSession?.status === 'running') {
@@ -653,21 +818,30 @@ export default function WorkoutDayScreen() {
     </Pressable>
   );
 
+  function openAddExercise() {
+    router.push({
+      pathname: '/program/[id]/day/[dayId]/add-exercise',
+      params: { id: selectedProgramId, dayId: selectedDayId },
+    });
+  }
+
+  /**
+   * "Egzersiz ekle" düğmesi AKTİF ANTRENMAN görünümünde özet satırından
+   * kaldırıldı; oradaki tek kopyası "Tüm egzersizler" panelinin hemen
+   * altındadır. Plan modunda (antrenman başlamadan önce) panel hiç render
+   * edilmediği için düğme burada kalır — iki konum birbirini dışlar, aynı
+   * anda iki kopya görünmez.
+   */
   const daySummaryRow = (
     <View style={styles.summaryRow}>
       <Text style={styles.summaryText}>
         {t('day.summary', { exercises: day.exercises.length, sets: totalTargetSets })}
       </Text>
-      {!day.isOffDay && (
+      {isPlanMode && !day.isOffDay && (
         <Pressable
           accessibilityLabel={t('day.addExerciseLabel')}
           accessibilityRole="button"
-          onPress={() =>
-            router.push({
-              pathname: '/program/[id]/day/[dayId]/add-exercise',
-              params: { id: selectedProgramId, dayId: selectedDayId },
-            })
-          }
+          onPress={openAddExercise}
           style={({ pressed }) => [styles.addExerciseButton, pressed && styles.pressed]}>
           <Text style={styles.addExerciseText}>{t('day.addExercise')}</Text>
         </Pressable>
@@ -675,92 +849,144 @@ export default function WorkoutDayScreen() {
     </View>
   );
 
-  const dayEditor = isDayEditorOpen && (
-    <View style={styles.editor}>
-      <Text style={styles.editorTitle}>{t('day.editDay')}</Text>
-      <View style={styles.field}>
-        <Text style={styles.label}>{t('day.dayName')}</Text>
-        <TextInput
-          autoFocus
-          maxLength={30}
-          onChangeText={setDayNameDraft}
-          placeholder={t('day.dayName')}
-          placeholderTextColor={colors.textTertiary}
-          selectionColor={colors.primary}
-          style={styles.input}
-          value={dayNameDraft}
-        />
-      </View>
-
-      <View style={styles.field}>
-        <Text style={styles.label}>{t('day.calendarDay')}</Text>
-        <ScrollView contentContainerStyle={styles.weekdayOptions} horizontal showsHorizontalScrollIndicator={false}>
-          {weekdayOptions.map((option) => {
-            const selected = dayWeekdayDraft === option.value;
-            const usedByOtherDay = programDays.some(
-              (programDay) => programDay.id !== selectedDayId && programDay.scheduledWeekday === option.value,
-            );
-
-            return (
-              <Pressable
-                accessibilityRole="radio"
-                accessibilityState={{ checked: selected, disabled: usedByOtherDay }}
-                disabled={usedByOtherDay}
-                key={option.value}
-                onPress={() => setDayWeekdayDraft(option.value)}
-                style={({ pressed }) => [
-                  styles.weekdayOption,
-                  selected && styles.weekdayOptionSelected,
-                  usedByOtherDay && styles.weekdayOptionDisabled,
-                  pressed && styles.pressed,
-                ]}>
-                <Text style={[styles.weekdayOptionText, selected && styles.weekdayOptionTextSelected]}>
-                  {option.shortLabel}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      </View>
-
-      <View style={styles.switchRow}>
-        <View style={styles.switchText}>
-          <Text style={styles.label}>{t('day.offDay')}</Text>
-          <Text style={styles.caption}>{t('day.offDayCaption')}</Text>
-        </View>
-        <Switch
-          onValueChange={setDayIsOffDraft}
-          trackColor={{ false: colors.surfaceMuted, true: colors.primary }}
-          value={dayIsOffDraft}
-        />
-      </View>
-
-      <WorkoutVisualPicker onSelect={setDayVisualDraft} selectedVisual={dayVisualDraft} />
-
-      <View style={styles.editorActions}>
+  /**
+   * "Günü düzenle" sayfa içine gömülü form OLARAK DEĞİL, ayrı bir alt sayfa
+   * (bottom sheet) olarak açılır — "Programı düzenle" ve "Egzersizi düzenle"
+   * ile aynı tasarım ailesi.
+   *
+   * Aynı modal hem normal antrenman günü hem Off Day ekranında render edilir;
+   * formun ikinci bir kopyası YOKTUR. State ve `saveDayChanges` aynen
+   * yeniden kullanılır.
+   */
+  const dayEditorModal = (
+    <Modal
+      animationType="slide"
+      onRequestClose={() => setIsDayEditorOpen(false)}
+      presentationStyle="overFullScreen"
+      transparent
+      visible={isDayEditorOpen}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.dayEditorModal}>
         <Pressable
+          accessibilityLabel={t('common.cancel')}
           accessibilityRole="button"
           onPress={() => setIsDayEditorOpen(false)}
-          style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}>
-          <Text style={styles.secondaryButtonText}>{t('common.cancel')}</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => void saveDayChanges()}
-          style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}>
-          <Text style={styles.saveButtonText}>{t('common.save')}</Text>
-        </Pressable>
-      </View>
-    </View>
+          style={styles.dayEditorBackdrop}
+        />
+        <SafeAreaView edges={['bottom']} style={styles.dayEditorSheet}>
+          <View style={styles.dayEditorHandle} />
+          <ScrollView
+            contentContainerStyle={styles.dayEditorContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}>
+            <Text style={styles.dayEditorTitle}>{t('day.editDay')}</Text>
+
+            <View style={styles.dayEditorField}>
+              <Text style={styles.dayEditorLabel}>{t('day.dayName')}</Text>
+              <TextInput
+                keyboardAppearance={isDark ? 'dark' : 'light'}
+                maxLength={30}
+                onChangeText={setDayNameDraft}
+                placeholder={t('day.dayName')}
+                placeholderTextColor={colors.textTertiary}
+                selectionColor={colors.primary}
+                style={styles.dayEditorInput}
+                value={dayNameDraft}
+              />
+            </View>
+
+            <View style={styles.dayEditorField}>
+              <Text style={styles.dayEditorLabel}>{t('day.calendarDay')}</Text>
+              <ScrollView
+                contentContainerStyle={styles.dayWeekdayOptions}
+                horizontal
+                keyboardShouldPersistTaps="handled"
+                showsHorizontalScrollIndicator={false}>
+                {weekdayOptions.map((option) => {
+                  const selected = dayWeekdayDraft === option.value;
+                  // Başka bir günün kullandığı takvim günü seçilemez.
+                  const usedByOtherDay = programDays.some(
+                    (programDay) => programDay.id !== selectedDayId && programDay.scheduledWeekday === option.value,
+                  );
+
+                  return (
+                    <Pressable
+                      accessibilityRole="radio"
+                      accessibilityState={{ checked: selected, disabled: usedByOtherDay }}
+                      disabled={usedByOtherDay}
+                      key={option.value}
+                      onPress={() => setDayWeekdayDraft(option.value)}
+                      style={({ pressed }) => [
+                        styles.dayWeekdayOption,
+                        selected && styles.dayWeekdayOptionSelected,
+                        usedByOtherDay && styles.dayWeekdayOptionDisabled,
+                        pressed && styles.pressed,
+                      ]}>
+                      <Text
+                        style={[
+                          styles.dayWeekdayOptionText,
+                          selected && styles.dayWeekdayOptionTextSelected,
+                        ]}>
+                        {option.shortLabel}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </View>
+
+            <View style={styles.dayEditorSwitchRow}>
+              <View style={styles.dayEditorSwitchText}>
+                <Text style={styles.dayEditorLabel}>{t('day.offDay')}</Text>
+                <Text style={styles.dayEditorCaption}>{t('day.offDayCaption')}</Text>
+              </View>
+              <Switch
+                onValueChange={setDayIsOffDraft}
+                trackColor={{ false: colors.surfaceMuted, true: colors.primary }}
+                value={dayIsOffDraft}
+              />
+            </View>
+
+            {/* Programı düzenle ile AYNI kompakt seçici; Apply akışı korunur. */}
+            <WorkoutVisualPicker
+              onSelect={setDayVisualDraft}
+              selectedVisual={dayVisualDraft}
+              variant="programEdit"
+            />
+
+            <MotionPressable
+              accessibilityRole="button"
+              onPress={() => void saveDayChanges()}
+              style={styles.dayEditorSaveButton}>
+              <Text style={styles.dayEditorSaveButtonText}>{t('common.save')}</Text>
+            </MotionPressable>
+
+            <Pressable
+              accessibilityRole="button"
+              hitSlop={8}
+              onPress={() => setIsDayEditorOpen(false)}
+              style={({ pressed }) => [styles.dayEditorCancelButton, pressed && styles.pressed]}>
+              <Text style={styles.dayEditorCancelButtonText}>{t('common.cancel')}</Text>
+            </Pressable>
+          </ScrollView>
+        </SafeAreaView>
+      </KeyboardAvoidingView>
+    </Modal>
   );
 
   if (day.isOffDay) {
     return (
       <SafeAreaView style={styles.safeArea} edges={['bottom']}>
-        <Stack.Screen options={{ title: day.name }} />
+        {/*
+          KÖK NEDEN: off-day dalında `headerRight` verilmediği için "Günü
+          düzenle" menüsünü açan ⋯ düğmesi hiç çizilmiyordu ve off day bir daha
+          normal güne çevrilemiyordu. Normal günle AYNI başlık düğmesi ve AYNI
+          `dayEditorModal` kullanılır; yeni bir tasarım eklenmez.
+        */}
+        <Stack.Screen options={{ headerRight: () => dayHeaderButton, title: day.name }} />
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           {daySummaryRow}
-          {dayEditor}
           <View style={styles.restDayContainer}>
             <Ionicons name="moon-outline" size={32} color={colors.textTertiary} />
             <Text style={styles.restDayEyebrow}>
@@ -780,6 +1006,7 @@ export default function WorkoutDayScreen() {
             </Text>
           </View>
         </ScrollView>
+        {dayEditorModal}
       </SafeAreaView>
     );
   }
@@ -828,7 +1055,7 @@ export default function WorkoutDayScreen() {
               hitSlop={8}
               onPress={handleFinishWorkout}
               style={({ pressed }) => [styles.topBarButton, pressed && styles.pressed]}>
-              <Text style={styles.topBarFinish}>{t('day.finish')}</Text>
+              <Text numberOfLines={1} style={styles.topBarFinish}>{t('day.finish')}</Text>
             </Pressable>
           </View>
 
@@ -847,7 +1074,6 @@ export default function WorkoutDayScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}>
         {daySummaryRow}
-        {dayEditor}
 
         {isPlanMode ? (
           <>
@@ -920,7 +1146,9 @@ export default function WorkoutDayScreen() {
               <View style={styles.activeSetBlock}>
                 <Text style={styles.activeSetLabel}>
                   {t('day.setOfTotal', {
-                    current: Math.min(activeCompletedSets + 1, activeExercise.targetSets),
+                    // Ekstra sette gerçek sıra gösterilir (4/3, 5/3); disiplin
+                    // sayacı bundan bağımsız olarak clamp edilmeye devam eder.
+                    current: getActiveSetLabelNumber(activeActualSetCount),
                     total: activeExercise.targetSets,
                   })}
                 </Text>
@@ -961,24 +1189,75 @@ export default function WorkoutDayScreen() {
                   </View>
                 </View>
 
-                {validationError && <Text style={styles.validationError}>{validationError}</Text>}
+                {activeDropSetDrafts.length > 0 && (
+                  <View style={styles.dropSetList}>
+                    {activeDropSetDrafts.map((draft, index) => (
+                      <View key={index} style={styles.dropSetRow}>
+                        <Text style={styles.dropSetLabel}>{t('day.dropSetNumber', { number: index + 1 })}</Text>
+                        <TextInput
+                          accessibilityLabel={`${t('day.dropSetNumber', { number: index + 1 })} ${t('day.kg')}`}
+                          editable={canCompleteSets && !pendingExerciseId}
+                          keyboardType="decimal-pad"
+                          maxLength={8}
+                          onChangeText={(value) => updateDropSetDraft(index, 'weight', value)}
+                          placeholder="—"
+                          placeholderTextColor={colors.textTertiary}
+                          selectTextOnFocus
+                          style={styles.dropSetInput}
+                          value={draft.weight}
+                        />
+                        <Text style={styles.dropSetUnit}>{t('day.kgUnit')}</Text>
+                        <TextInput
+                          accessibilityLabel={`${t('day.dropSetNumber', { number: index + 1 })} ${t('day.repsShort')}`}
+                          editable={canCompleteSets && !pendingExerciseId}
+                          keyboardType="number-pad"
+                          maxLength={5}
+                          onChangeText={(value) => updateDropSetDraft(index, 'reps', value)}
+                          placeholder="—"
+                          placeholderTextColor={colors.textTertiary}
+                          selectTextOnFocus
+                          style={styles.dropSetInput}
+                          value={draft.reps}
+                        />
+                        <Text style={styles.dropSetUnit}>{t('day.repsUnit')}</Text>
+                        <Pressable
+                          accessibilityLabel={t('day.dropSetRemoveLabel', { number: index + 1 })}
+                          accessibilityRole="button"
+                          disabled={Boolean(pendingExerciseId)}
+                          onPress={() => removeDropSetDraft(index)}
+                          style={({ pressed }) => [styles.dropSetRemoveButton, pressed && styles.pressed]}>
+                          <Ionicons name="close" size={16} color={colors.textSecondary} />
+                        </Pressable>
+                      </View>
+                    ))}
+                  </View>
+                )}
 
                 <Pressable
+                  accessibilityLabel={t('day.addDropSetLabel')}
+                  accessibilityRole="button"
+                  disabled={!canCompleteSets || Boolean(pendingExerciseId)}
+                  onPress={addDropSetDraft}
+                  style={({ pressed }) => [styles.addDropSetButton, pressed && styles.pressed]}>
+                  <Text style={styles.addDropSetText}>{t('day.addDropSet')}</Text>
+                </Pressable>
+
+                {validationError && <Text style={styles.validationError}>{validationError}</Text>}
+
+                <MotionPressable
                   accessibilityLabel={t('day.completeSetLabel', { name: activeExerciseName })}
                   accessibilityRole="button"
-                  disabled={!canCompleteSets || Boolean(pendingExerciseId) || isActiveExerciseComplete}
+                  disabled={isCompleteSetDisabled}
                   onPress={() => void submitActiveSet()}
-                  style={({ pressed }) => [
+                  style={[
                     styles.completeSetPill,
-                    (!canCompleteSets || Boolean(pendingExerciseId) || isActiveExerciseComplete) &&
-                      styles.completeSetPillDisabled,
-                    pressed && styles.pressed,
+                    isCompleteSetDisabled && styles.completeSetPillDisabled,
                   ]}>
                   {pendingExerciseId === activeExercise.id ? (
                     <ActivityIndicator color={colors.background} size="small" />
                   ) : (
                     <Text style={styles.completeSetPillText}>
-                      {isActiveExerciseComplete
+                      {isActiveExerciseComplete && !isExtraSetMode
                         ? t('day.completed')
                         : canCompleteSets
                           ? t('day.completeSet')
@@ -989,7 +1268,7 @@ export default function WorkoutDayScreen() {
                               : t('day.availableOnScheduledDay')}
                     </Text>
                   )}
-                </Pressable>
+                </MotionPressable>
 
                 <Pressable
                   accessibilityRole="button"
@@ -1099,6 +1378,16 @@ export default function WorkoutDayScreen() {
                   exercise.targetSets,
                 );
                 const isComplete = completedSets >= exercise.targetSets;
+                /**
+                 * Panelde GERÇEK set sayısı gösterilir: hedefi 3 olan bir
+                 * egzersize ekstra set eklenirse `4/3` görünür. Disiplin
+                 * sayacı (`completedSets`) hedefe clamp edilmeye devam eder.
+                 */
+                const recordedSets = workoutSets.filter(
+                  (workoutSet) =>
+                    workoutSet.dateKey === todayKey && workoutSet.programExerciseId === exercise.id,
+                ).length;
+                const displayedSets = Math.max(completedSets, recordedSets);
                 const isActive = exercise.id === activeExercise?.id;
 
                 return (
@@ -1107,10 +1396,20 @@ export default function WorkoutDayScreen() {
                     accessibilityRole="button"
                     accessibilityState={{ selected: isActive }}
                     key={exercise.id}
-                    onPress={() => setSelectedExerciseId(exercise.id)}
+                    onPress={() => {
+                      /**
+                       * Ekstra set modu YALNIZCA zaten tamamlanmış bir egzersiz
+                       * seçildiğinde açılır. Tamamlanmamış egzersizde açık
+                       * kalsaydı, son planlı set bittikten sonra seçim
+                       * bırakılmaz ve sıradaki egzersize otomatik geçiş
+                       * bozulurdu. Her dokunuş bayrağı yeniden yazdığı için
+                       * eski mod başka egzersize taşınmaz.
+                       */
+                      void handleExerciseSelection(exercise.id, isComplete);
+                    }}
                     style={({ pressed }) => [styles.panelRow, pressed && styles.pressed]}>
                     <View style={styles.panelMarker}>
-                      {isActive && <Ionicons name="caret-forward" size={11} color={colors.primary} />}
+                      {isActive && <Ionicons name="caret-forward" size={11} color={activeSecondary.color} />}
                     </View>
                     <Text
                       numberOfLines={1}
@@ -1122,15 +1421,26 @@ export default function WorkoutDayScreen() {
                       {exerciseName}
                     </Text>
                     <Text style={[styles.panelSetCount, isComplete && styles.panelSetCountComplete]}>
-                      {completedSets}/{exercise.targetSets}
+                      {displayedSets}/{exercise.targetSets}
                     </Text>
                   </Pressable>
                 );
               })}
+
+              {!day.isOffDay && (
+                <Pressable
+                  accessibilityLabel={t('day.addExerciseLabel')}
+                  accessibilityRole="button"
+                  onPress={openAddExercise}
+                  style={({ pressed }) => [styles.panelAddExerciseButton, pressed && styles.pressed]}>
+                  <Text style={styles.panelAddExerciseText}>{t('day.addExercise')}</Text>
+                </Pressable>
+              )}
             </View>
           </>
         )}
       </ProgramDetailScroll>
+      {dayEditorModal}
       <Modal
         animationType="fade"
         onRequestClose={() => setEditingExerciseId(null)}
@@ -1215,18 +1525,18 @@ export default function WorkoutDayScreen() {
       </Modal>
       {isPlanMode && canTrackToday && day.exercises.length > 0 && (
         <View style={styles.startWorkoutFooter}>
-          <Pressable
+          <MotionPressable
             accessibilityRole="button"
             disabled={isWorkoutActionPending}
             onPress={() => void handleWorkoutToggle()}
-            style={({ pressed }) => [styles.startWorkoutButton, pressed && styles.pressed]}>
+            style={styles.startWorkoutButton}>
             {isWorkoutActionPending ? (
               <ActivityIndicator color="#111111" size="small" />
             ) : (
               <Ionicons name="play" size={16} color="#111111" />
             )}
             <Text style={styles.startWorkoutText}>{t('day.startWorkout')}</Text>
-          </Pressable>
+          </MotionPressable>
         </View>
       )}
       {restTimerEnabled && restTimer && restProgress && (
@@ -1296,7 +1606,15 @@ function ExerciseTargetInput({
   suffix?: string;
   value: string;
 }) {
-  const styles = createStyles(colors);
+  // Yardımcı bileşen yalnızca hedef alanı stillerini kullanır; semantik
+  // renkler varsayılanda bırakılır.
+  const styles = createStyles(colors, {
+    activePrimary: colors.text,
+    activePrimaryOn: colors.background,
+    activeSecondary: colors.primary,
+    workoutDays: WORKOUT_ORANGE,
+    workoutDaysOn: '#111111',
+  });
 
   return (
     <View style={styles.targetField}>
@@ -1352,10 +1670,18 @@ function formatSetPerformance(
   return parts.filter(Boolean).join(' · ');
 }
 
-function createStyles(colors: ThemeColors) {
+type FeatureColors = {
+  activePrimary: string;
+  activePrimaryOn: string;
+  activeSecondary: string;
+  workoutDays: string;
+  workoutDaysOn: string;
+};
+
+function createStyles(colors: ThemeColors, feature: FeatureColors) {
   return StyleSheet.create({
     activeSetBlock: { alignItems: 'center', gap: 10, paddingTop: 18 },
-    activeSetLabel: { color: colors.primary, fontSize: 12, fontWeight: '600', letterSpacing: 0.6 },
+    activeSetLabel: { color: feature.activeSecondary, fontSize: 12, fontWeight: '600', letterSpacing: 0.6 },
     activeExerciseName: { color: colors.text, fontSize: 24, fontWeight: '600', textAlign: 'center' },
     activeValues: { alignItems: 'baseline', flexDirection: 'row', gap: 20, marginTop: 6 },
     valueGroup: { alignItems: 'baseline', flexDirection: 'row', gap: 4 },
@@ -1369,10 +1695,55 @@ function createStyles(colors: ThemeColors) {
       textAlign: 'center',
     },
     valueUnit: { color: colors.textSecondary, fontSize: 13 },
+
+    /**
+     * Drop set satırı: ana set alanından belirgin biçimde daha KÜÇÜK ama
+     * okunabilir. Tipografi ana set girişiyle aynı aileden (tabular-nums,
+     * ince ağırlık); yalnızca ölçek küçülür.
+     */
+    dropSetList: { gap: 8, width: '100%' },
+    dropSetRow: { alignItems: 'center', flexDirection: 'row', gap: 6, justifyContent: 'center' },
+    dropSetLabel: { color: colors.textTertiary, ...Type.footnote, minWidth: 46 },
+    dropSetInput: {
+      color: colors.text,
+      fontSize: 20,
+      fontVariant: ['tabular-nums'],
+      fontWeight: '300',
+      minWidth: 46,
+      paddingVertical: 2,
+      textAlign: 'center',
+    },
+    dropSetUnit: { color: colors.textSecondary, ...Type.footnote },
+    // Dokunma alanı en az 44×44.
+    dropSetRemoveButton: {
+      alignItems: 'center',
+      height: Layout.minTouchSize,
+      justifyContent: 'center',
+      width: Layout.minTouchSize,
+    },
+    addDropSetButton: {
+      alignItems: 'center',
+      alignSelf: 'center',
+      justifyContent: 'center',
+      minHeight: Layout.minTouchSize,
+      paddingHorizontal: 12,
+    },
+    addDropSetText: { color: feature.activeSecondary, ...Type.caption, fontWeight: '600' },
+    /** All exercises panelinin altındaki tek "Egzersiz ekle" düğmesi. */
+    panelAddExerciseButton: {
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+      justifyContent: 'center',
+      minHeight: Layout.minTouchSize,
+      marginTop: 4,
+      minWidth: Layout.minTouchSize,
+    },
+    panelAddExerciseText: { color: feature.activeSecondary, ...Type.body, fontWeight: '600' },
     completeSetPill: {
       alignItems: 'center',
       alignSelf: 'center',
-      backgroundColor: colors.text,
+      // Active Workout — Primary: SADECE bu düğme.
+      backgroundColor: feature.activePrimary,
       borderRadius: Layout.radiusPill,
       justifyContent: 'center',
       marginTop: 8,
@@ -1381,7 +1752,7 @@ function createStyles(colors: ThemeColors) {
       paddingHorizontal: 32,
     },
     completeSetPillDisabled: { backgroundColor: colors.surfaceMuted },
-    completeSetPillText: { color: colors.background, fontSize: 16, fontWeight: '600' },
+    completeSetPillText: { color: feature.activePrimaryOn, fontSize: 16, fontWeight: '600' },
     detailsToggle: {
       alignItems: 'center',
       flexDirection: 'row',
@@ -1457,10 +1828,23 @@ function createStyles(colors: ThemeColors) {
       paddingHorizontal: Layout.screenPadding,
       paddingVertical: 10,
     },
-    topBarButton: { alignItems: 'center', height: Layout.minTouchSize, justifyContent: 'center', width: Layout.minTouchSize },
+    /**
+     * KÖK NEDEN: sabit `width: 44` idi. "Finish" 16 pt'de ~45 pt yer kapladığı
+     * için satıra sığmayıp son harf alt satıra düşüyordu. Artık genişlik
+     * minimum dokunma alanıdır, metin kadar büyüyebilir ve sıkışmaz.
+     */
+    topBarButton: {
+      alignItems: 'center',
+      flexShrink: 0,
+      height: Layout.minTouchSize,
+      justifyContent: 'center',
+      minWidth: Layout.minTouchSize,
+      paddingHorizontal: 6,
+    },
     topBarCenter: { alignItems: 'center', flex: 1, justifyContent: 'center', minHeight: Layout.minTouchSize },
     topBarStatus: { color: colors.textSecondary, fontSize: 13, fontVariant: ['tabular-nums'] },
-    topBarFinish: { color: colors.primary, fontSize: 16, fontWeight: '500' },
+    // Active Workout — Secondary. Satır kırılması ve dokunma alanı değişmez.
+    topBarFinish: { color: feature.activeSecondary, fontSize: 16, fontWeight: '500' },
     topBarProgressTrack: { backgroundColor: colors.surfaceMuted, height: 2, marginHorizontal: Layout.screenPadding },
     topBarProgressFill: { backgroundColor: colors.text, height: '100%' },
     safeArea: { backgroundColor: colors.background, flex: 1 },
@@ -1500,22 +1884,14 @@ function createStyles(colors: ThemeColors) {
     controlButtonDisabled: { opacity: 0.35 },
     addExerciseButton: {
       alignItems: 'center',
-      backgroundColor: WORKOUT_ORANGE,
+      backgroundColor: feature.workoutDays,
       borderRadius: Layout.radiusPill,
       justifyContent: 'center',
       minHeight: 36,
       paddingHorizontal: 18,
     },
-    addExerciseText: { color: '#111111', fontSize: 14, fontWeight: '600' },
+    addExerciseText: { color: feature.workoutDaysOn, fontSize: 14, fontWeight: '600' },
 
-    editor: {
-      borderColor: colors.separator,
-      borderRadius: Layout.radiusLarge,
-      borderWidth: StyleSheet.hairlineWidth,
-      gap: 14,
-      padding: 16,
-    },
-    editorTitle: { color: colors.text, fontSize: 15, fontWeight: '600' },
     editorSubtitle: { color: colors.textSecondary, ...Type.caption, marginTop: -8 },
     exerciseEditorModal: {
       alignItems: 'center',
@@ -1597,65 +1973,98 @@ function createStyles(colors: ThemeColors) {
       minHeight: Form.controlHeight,
     },
     exerciseRemoveButtonText: { color: colors.danger, ...Type.caption },
-    field: { gap: 8 },
-    label: { color: colors.textSecondary, fontSize: 13 },
-    caption: { color: colors.textTertiary, fontSize: 12, lineHeight: 16 },
-    input: {
-      backgroundColor: colors.background,
+    targetField: { flex: 1, gap: 8 },
+
+    /**
+     * "Günü düzenle" alt sayfası — ölçüler `app/program/[id].tsx` içindeki
+     * "Programı düzenle" sheet'inden BİREBİR alındı; iki ekran aynı görünür.
+     * Bütün renkler tema tokenlarından gelir, sabit siyah/beyaz yoktur.
+     */
+    dayEditorModal: { flex: 1, justifyContent: 'flex-end' },
+    dayEditorBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(0, 0, 0, 0.58)',
+    },
+    dayEditorSheet: {
+      alignSelf: 'center',
+      backgroundColor: colors.surface,
+      borderTopLeftRadius: 28,
+      borderTopRightRadius: 28,
+      // İçerik kadar yüksek; taşarsa içeride kaydırılır.
+      maxHeight: '92%',
+      overflow: 'hidden',
+      width: '100%',
+    },
+    dayEditorHandle: {
+      alignSelf: 'center',
+      backgroundColor: colors.textTertiary,
+      borderRadius: 3,
+      height: 5,
+      marginTop: 14,
+      opacity: 0.48,
+      width: 52,
+    },
+    dayEditorContent: {
+      gap: Form.sectionGap,
+      paddingBottom: 16,
+      paddingHorizontal: Layout.screenPadding,
+      paddingTop: 20,
+    },
+    dayEditorTitle: { color: colors.text, ...Form.title },
+    dayEditorField: { gap: Form.fieldGap },
+    dayEditorLabel: { color: colors.textSecondary, ...Type.eyebrow },
+    dayEditorCaption: { color: colors.textTertiary, ...Type.caption },
+    dayEditorInput: {
+      backgroundColor: colors.surfaceMuted,
       borderColor: colors.inputBorder,
-      borderRadius: Layout.radiusMedium,
+      borderRadius: Form.controlRadius,
       borderWidth: StyleSheet.hairlineWidth,
       color: colors.text,
-      fontSize: 15,
-      minHeight: 46,
+      ...Type.body,
+      minHeight: Form.controlHeight,
       paddingHorizontal: 14,
       paddingVertical: 10,
     },
-    targetFields: { flexDirection: 'row', gap: 10 },
-    targetField: { flex: 1, gap: 8 },
-    weekdayOptions: { gap: 8 },
-    weekdayOption: {
+    dayWeekdayOptions: { gap: 8 },
+    // Kompakt ama dokunma alanı `Form.controlHeight` (44 pt).
+    dayWeekdayOption: {
       alignItems: 'center',
       borderColor: colors.separator,
-      borderRadius: Layout.radiusPill,
+      borderRadius: Form.controlRadius,
       borderWidth: StyleSheet.hairlineWidth,
       justifyContent: 'center',
-      minHeight: 36,
+      minHeight: Form.controlHeight,
+      minWidth: Form.controlHeight,
       paddingHorizontal: 14,
     },
-    weekdayOptionSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
-    weekdayOptionDisabled: { opacity: 0.3 },
-    weekdayOptionText: { color: colors.textSecondary, fontSize: 13 },
-    weekdayOptionTextSelected: { color: colors.onPrimary, fontWeight: '500' },
-    switchRow: { alignItems: 'center', flexDirection: 'row', gap: 12 },
-    switchText: { flex: 1, gap: 2 },
-    editorActions: { flexDirection: 'row', gap: 10 },
-    secondaryButton: {
+    dayWeekdayOptionSelected: { backgroundColor: colors.text, borderColor: colors.text },
+    // Başka günün kullandığı takvim günü: soluk ve dokunulamaz.
+    dayWeekdayOptionDisabled: { opacity: 0.3 },
+    dayWeekdayOptionText: { color: colors.textSecondary, ...Type.body },
+    dayWeekdayOptionTextSelected: { color: colors.background, fontWeight: '600' },
+    dayEditorSwitchRow: { alignItems: 'center', flexDirection: 'row', gap: 12 },
+    dayEditorSwitchText: { flex: 1, gap: 2 },
+    dayEditorSaveButton: {
       alignItems: 'center',
-      borderColor: colors.separator,
-      borderRadius: Layout.radiusPill,
-      borderWidth: StyleSheet.hairlineWidth,
+      backgroundColor: colors.text,
+      borderRadius: Form.controlRadius,
       justifyContent: 'center',
-      minHeight: Layout.minTouchSize,
-      paddingHorizontal: 20,
+      minHeight: Form.controlHeight,
     },
-    secondaryButtonText: { color: colors.text, fontSize: 15 },
-    saveButton: {
+    dayEditorSaveButtonText: { color: colors.background, ...Form.action },
+    dayEditorCancelButton: {
       alignItems: 'center',
-      backgroundColor: colors.primary,
-      borderRadius: Layout.radiusPill,
-      flex: 1,
       justifyContent: 'center',
-      minHeight: Layout.minTouchSize,
+      minHeight: Form.controlHeight,
     },
-    saveButtonText: { color: colors.onPrimary, fontSize: 15, fontWeight: '600' },
+    dayEditorCancelButtonText: { color: colors.textSecondary, ...Type.body },
     removeButton: { alignItems: 'center', justifyContent: 'center', minHeight: 36 },
     removeButtonText: { color: colors.danger, fontSize: 14, fontWeight: '500' },
 
     startWorkoutButton: {
       alignItems: 'center',
       alignSelf: 'stretch',
-      backgroundColor: WORKOUT_ORANGE,
+      backgroundColor: feature.workoutDays,
       borderRadius: Layout.radiusPill,
       flexDirection: 'row',
       gap: 8,
@@ -1664,14 +2073,14 @@ function createStyles(colors: ThemeColors) {
       paddingHorizontal: 22,
     },
     startWorkoutFooter: { paddingBottom: 10, paddingHorizontal: Layout.screenPadding, paddingTop: 10 },
-    startWorkoutText: { color: '#111111', fontSize: 16, fontWeight: '700' },
+    startWorkoutText: { color: feature.workoutDaysOn, fontSize: 16, fontWeight: '700' },
 
     workoutHeader: { gap: 12 },
     progressTextRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
     progressLabel: { color: colors.textSecondary, ...Type.caption },
     progressValue: { color: colors.text, fontSize: 13, fontVariant: ['tabular-nums'], fontWeight: '500' },
     progressTrack: { backgroundColor: colors.surfaceMuted, borderRadius: 2, height: 3, overflow: 'hidden' },
-    progressFill: { backgroundColor: colors.primary, borderRadius: 2, height: '100%' },
+    progressFill: { backgroundColor: feature.activeSecondary, borderRadius: 2, height: '100%' },
     workoutControls: { alignItems: 'center', flexDirection: 'row', gap: 14, marginTop: 4 },
     workoutToggleButton: {
       alignItems: 'center',
@@ -1763,7 +2172,7 @@ function createStyles(colors: ThemeColors) {
       height: 3,
       overflow: 'hidden',
     },
-    exerciseProgressFill: { backgroundColor: colors.primary, borderRadius: 2, height: '100%' },
+    exerciseProgressFill: { backgroundColor: feature.activeSecondary, borderRadius: 2, height: '100%' },
     exerciseProgressFillComplete: { backgroundColor: colors.disciplineCompleted },
     completedSetList: { gap: 6 },
     completedSetRow: { alignItems: 'center', flexDirection: 'row', gap: 10 },

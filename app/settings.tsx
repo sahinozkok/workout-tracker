@@ -2,6 +2,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ColorPresetRow } from '@/components/color-preset-picker';
+import { COLOR_FEATURES, ColorFeature, ColorPresetId, SETTINGS_ACCENT_DARK, SETTINGS_ACCENT_LIGHT, getColorPresetHex, getFeatureFallbackColor, getOnAccentColor, withAlpha } from '@/constants/color-presets';
 import { MASCOT_NAME } from '@/constants/mascot';
 import { Form, Layout, ThemeColors, Type } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
@@ -10,6 +12,7 @@ import { useMascot } from '@/context/mascot-context';
 import { useProfile } from '@/context/profile-context';
 import { ThemePreference } from '@/context/theme-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
+import { useFeatureColor } from '@/hooks/use-feature-colors';
 import { AppLanguage } from '@/types/profile';
 import { cancelAllRestNotifications } from '@/utils/rest-notifications';
 import { clearAllRestTimers } from '@/utils/rest-timer-storage';
@@ -18,6 +21,21 @@ const LANGUAGE_OPTIONS: { labelKey: string; value: AppLanguage }[] = [
   { labelKey: 'profile.languageTurkish', value: 'tr' },
   { labelKey: 'profile.languageEnglish', value: 'en' },
 ];
+
+const FEATURE_LABEL_KEYS: Record<ColorFeature, string> = {
+  workoutDays: 'profile.colorFeatureWorkoutDays',
+  activeWorkoutPrimary: 'profile.colorFeatureActiveWorkoutPrimary',
+  activeWorkoutSecondary: 'profile.colorFeatureActiveWorkoutSecondary',
+  historyProgress: 'profile.colorFeatureHistoryProgress',
+  roseaChat: 'profile.colorFeatureRoseaChat',
+  profile: 'profile.colorFeatureProfile',
+  friends: 'profile.colorFeatureFriends',
+  todayHighlight: 'profile.colorFeatureTodayHighlight',
+  historyWorkoutsRing: 'profile.colorFeatureHistoryWorkoutsRing',
+  historyExercisesRing: 'profile.colorFeatureHistoryExercisesRing',
+  historyDurationRing: 'profile.colorFeatureHistoryDurationRing',
+  settings: 'profile.colorFeatureSettings',
+};
 
 export default function SettingsScreen() {
   const { signOut } = useAuth();
@@ -29,11 +47,25 @@ export default function SettingsScreen() {
     setShowProgramIcons,
     showExerciseIcons,
     showProgramIcons,
+    colorPresets,
+    resetColorPresets,
+    setColorPreset,
   } = useProfile();
   const { enabled: mascotEnabled, setEnabled: setMascotEnabled } = useMascot();
   const { colors, isDark, preference, setPreference } = useAppTheme();
   const { language, setLanguage, t } = useLanguage();
-  const styles = createStyles(colors, isDark);
+  const todayColor = useFeatureColor('todayHighlight', colors.primary).color;
+  /**
+   * Ayarlar ekranının vurgu rengi. Varsayılan bugünkü mordur; kullanıcı bir
+   * preset seçmezse ekran birebir aynı görünür. Tehlikeli `Sign out` bu renge
+   * BAĞLANMAZ, semantik kırmızı kalır.
+   */
+  const settingsAccent = useFeatureColor(
+    'settings',
+    isDark ? SETTINGS_ACCENT_DARK : SETTINGS_ACCENT_LIGHT,
+  ).color;
+  const onSettingsAccent = getOnAccentColor(settingsAccent);
+  const styles = createStyles(colors, isDark, todayColor, settingsAccent, onSettingsAccent);
 
   async function handleLanguageChange(nextLanguage: AppLanguage) {
     setLanguage(nextLanguage);
@@ -64,6 +96,28 @@ export default function SettingsScreen() {
     } catch {
       Alert.alert(t('profile.displayPreferenceFailed'), t('profile.displayPreferenceFailedBody'));
     }
+  }
+
+  async function handleColorSelect(feature: ColorFeature, presetId: ColorPresetId | undefined) {
+    try {
+      await setColorPreset(feature, presetId);
+    } catch {
+      Alert.alert(t('profile.colorSaveFailed'), t('common.networkError'));
+    }
+  }
+
+  function handleResetColors() {
+    Alert.alert(t('profile.colorResetDefaults'), t('profile.colorResetConfirm'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      {
+        text: t('profile.colorResetDefaults'),
+        onPress: () => {
+          void resetColorPresets().catch(() =>
+            Alert.alert(t('profile.colorSaveFailed'), t('common.networkError')),
+          );
+        },
+      },
+    ]);
   }
 
   function handleSignOut() {
@@ -126,6 +180,7 @@ export default function SettingsScreen() {
               colors={colors}
               icon="sunny-outline"
               label={t('profile.themeLight')}
+              onAccent={onSettingsAccent}
               onSelect={setPreference}
               selected={preference === 'light'}
               styles={styles}
@@ -135,6 +190,7 @@ export default function SettingsScreen() {
               colors={colors}
               icon="phone-portrait-outline"
               label={t('profile.themeSystem')}
+              onAccent={onSettingsAccent}
               onSelect={setPreference}
               selected={preference === 'system'}
               styles={styles}
@@ -144,6 +200,7 @@ export default function SettingsScreen() {
               colors={colors}
               icon="moon"
               label={t('profile.themeDark')}
+              onAccent={onSettingsAccent}
               onSelect={setPreference}
               selected={preference === 'dark'}
               styles={styles}
@@ -156,7 +213,7 @@ export default function SettingsScreen() {
 
         <View style={[styles.settingRow, styles.featureRow]}>
           <View style={styles.settingIcon}>
-            <Ionicons name="albums-outline" size={19} color={isDark ? '#CBB4F2' : '#60458A'} />
+            <Ionicons name="albums-outline" size={19} color={settingsAccent} />
           </View>
           <View style={styles.settingText}>
             <Text style={styles.settingTitle}>{t('profile.programListIcons')}</Text>
@@ -166,7 +223,7 @@ export default function SettingsScreen() {
             accessibilityLabel={t('profile.programListIconsLabel')}
             onValueChange={(enabled) => void handleDisplayPreferenceToggle(setShowProgramIcons, enabled)}
             thumbColor={Platform.OS === 'android' ? '#F6F5F7' : undefined}
-            trackColor={{ false: colors.surfaceMuted, true: '#60458A' }}
+            trackColor={{ false: colors.surfaceMuted, true: settingsAccent }}
             value={showProgramIcons}
           />
         </View>
@@ -175,7 +232,7 @@ export default function SettingsScreen() {
 
         <View style={[styles.settingRow, styles.featureRow]}>
           <View style={styles.settingIcon}>
-            <Ionicons name="barbell-outline" size={19} color={isDark ? '#CBB4F2' : '#60458A'} />
+            <Ionicons name="barbell-outline" size={19} color={settingsAccent} />
           </View>
           <View style={styles.settingText}>
             <Text style={styles.settingTitle}>{t('profile.workoutDayIcons')}</Text>
@@ -185,7 +242,7 @@ export default function SettingsScreen() {
             accessibilityLabel={t('profile.workoutDayIconsLabel')}
             onValueChange={(enabled) => void handleDisplayPreferenceToggle(setShowExerciseIcons, enabled)}
             thumbColor={Platform.OS === 'android' ? '#F6F5F7' : undefined}
-            trackColor={{ false: colors.surfaceMuted, true: '#60458A' }}
+            trackColor={{ false: colors.surfaceMuted, true: settingsAccent }}
             value={showExerciseIcons}
           />
         </View>
@@ -194,7 +251,7 @@ export default function SettingsScreen() {
 
         <View style={[styles.settingRow, styles.featureRow]}>
           <View style={styles.settingIcon}>
-            <Ionicons name="time-outline" size={19} color={isDark ? '#CBB4F2' : '#60458A'} />
+            <Ionicons name="time-outline" size={19} color={settingsAccent} />
           </View>
           <View style={styles.settingText}>
             <Text style={styles.settingTitle}>{t('profile.restTimer')}</Text>
@@ -204,7 +261,7 @@ export default function SettingsScreen() {
             accessibilityLabel={t('profile.restTimerLabel')}
             onValueChange={(enabled) => void handleRestTimerToggle(enabled)}
             thumbColor={Platform.OS === 'android' ? '#F6F5F7' : undefined}
-            trackColor={{ false: colors.surfaceMuted, true: '#60458A' }}
+            trackColor={{ false: colors.surfaceMuted, true: settingsAccent }}
             value={restTimerEnabled}
           />
         </View>
@@ -213,7 +270,7 @@ export default function SettingsScreen() {
 
         <View style={[styles.settingRow, styles.featureRow]}>
           <View style={styles.settingIcon}>
-            <Ionicons name="happy-outline" size={19} color={isDark ? '#CBB4F2' : '#60458A'} />
+            <Ionicons name="happy-outline" size={19} color={settingsAccent} />
           </View>
           <View style={styles.settingText}>
             {/* Etiket duruma göre değişir: görünürken "tatile gönder",
@@ -233,9 +290,46 @@ export default function SettingsScreen() {
             )}
             onValueChange={(enabled) => void setMascotEnabled(enabled)}
             thumbColor={Platform.OS === 'android' ? '#F6F5F7' : undefined}
-            trackColor={{ false: colors.surfaceMuted, true: '#60458A' }}
+            trackColor={{ false: colors.surfaceMuted, true: settingsAccent }}
             value={mascotEnabled}
           />
+        </View>
+
+        <View style={styles.divider} />
+
+        {/*
+          RENK ÖN AYARLARI — son ayar grubu, "Çıkış yap"ın hemen üzerinde.
+          Ayarların mevcut tasarım dili korunur: yüzey/metin renkleri global
+          temadan gelir, yalnızca örnek daireleri seçilen rengi gösterir.
+        */}
+        <View style={styles.colorSection}>
+          <Text style={styles.colorSectionTitle}>{t('profile.colorPresets')}</Text>
+          <Text style={styles.caption}>{t('profile.colorPresetsCaption')}</Text>
+
+          <View style={styles.colorRows}>
+            {COLOR_FEATURES.map((feature) => (
+              <ColorPresetRow
+                currentColor={
+                  colorPresets[feature]
+                    ? getColorPresetHex(colorPresets[feature] as ColorPresetId)
+                    : getFeatureFallbackColor(feature, colors, isDark)
+                }
+                defaultColor={getFeatureFallbackColor(feature, colors, isDark)}
+                feature={feature}
+                key={feature}
+                labelKey={FEATURE_LABEL_KEYS[feature]}
+                onSelect={(presetId) => void handleColorSelect(feature, presetId)}
+                selectedPresetId={colorPresets[feature]}
+              />
+            ))}
+          </View>
+
+          <Pressable
+            accessibilityRole="button"
+            onPress={handleResetColors}
+            style={({ pressed }) => [styles.colorResetButton, pressed && styles.pressed]}>
+            <Text style={styles.colorResetText}>{t('profile.colorResetDefaults')}</Text>
+          </Pressable>
         </View>
 
         <Pressable
@@ -254,6 +348,7 @@ function ThemeButton({
   colors,
   icon,
   label,
+  onAccent,
   onSelect,
   selected,
   styles,
@@ -263,6 +358,8 @@ function ThemeButton({
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   onSelect: (preference: ThemePreference) => void;
+  /** Seçili ikonun okunabilir ön plan rengi (Ayarlar presetinden hesaplanır). */
+  onAccent: string;
   selected: boolean;
   styles: ReturnType<typeof createStyles>;
   value: ThemePreference;
@@ -274,12 +371,18 @@ function ThemeButton({
       accessibilityState={{ checked: selected }}
       onPress={() => onSelect(value)}
       style={({ pressed }) => [styles.themeButton, selected && styles.themeButtonSelected, pressed && styles.pressed]}>
-      <Ionicons name={icon} size={15} color={selected ? colors.onPrimary : colors.textTertiary} />
+      <Ionicons name={icon} size={15} color={selected ? onAccent : colors.textTertiary} />
     </Pressable>
   );
 }
 
-function createStyles(colors: ThemeColors, isDark: boolean) {
+function createStyles(
+  colors: ThemeColors,
+  isDark: boolean,
+  todayColor: string,
+  settingsAccent: string,
+  onSettingsAccent: string,
+) {
   return StyleSheet.create({
     safeArea: { backgroundColor: colors.background, flex: 1 },
     settingsCard: {
@@ -302,7 +405,7 @@ function createStyles(colors: ThemeColors, isDark: boolean) {
     featureRow: { minHeight: 80 },
     settingIcon: {
       alignItems: 'center',
-      backgroundColor: isDark ? '#1E162B' : '#F0EAF8',
+      backgroundColor: withAlpha(settingsAccent, isDark ? 0.16 : 0.12),
       borderRadius: 12,
       height: 42,
       justifyContent: 'center',
@@ -315,6 +418,16 @@ function createStyles(colors: ThemeColors, isDark: boolean) {
      */
     settingTitle: { color: colors.text, ...Form.action, lineHeight: 20 },
     caption: { color: colors.textSecondary, ...Type.caption, lineHeight: 18 },
+    colorSection: { gap: 4 },
+    colorSectionTitle: { color: colors.text, ...Type.rowTitle },
+    colorRows: { marginTop: 8 },
+    colorResetButton: {
+      alignSelf: 'flex-start',
+      justifyContent: 'center',
+      marginTop: 4,
+      minHeight: Layout.minTouchSize,
+    },
+    colorResetText: { color: todayColor, ...Type.body },
     divider: {
       backgroundColor: colors.separator,
       height: StyleSheet.hairlineWidth,
@@ -336,9 +449,10 @@ function createStyles(colors: ThemeColors, isDark: boolean) {
       minWidth: 44,
       paddingHorizontal: 10,
     },
-    languageButtonSelected: { backgroundColor: '#60458A' },
+    languageButtonSelected: { backgroundColor: settingsAccent },
     languageText: { color: colors.textTertiary, ...Type.caption, fontWeight: '600' },
-    languageTextSelected: { color: '#F6F3FA' },
+    // Kontrast parlaklıktan hesaplanır; sabit açık ton varsayılmaz.
+    languageTextSelected: { color: onSettingsAccent },
     themeToggle: {
       borderColor: colors.separator,
       borderRadius: Layout.radiusPill,
@@ -348,7 +462,7 @@ function createStyles(colors: ThemeColors, isDark: boolean) {
       padding: 3,
     },
     themeButton: { alignItems: 'center', borderRadius: Layout.radiusPill, height: 34, justifyContent: 'center', width: 36 },
-    themeButtonSelected: { backgroundColor: '#60458A' },
+    themeButtonSelected: { backgroundColor: settingsAccent },
     signOutButton: {
       alignItems: 'center',
       alignSelf: 'flex-start',

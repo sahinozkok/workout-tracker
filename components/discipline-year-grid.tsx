@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ThemeColors } from '@/constants/theme';
+import { useFeatureColor } from '@/hooks/use-feature-colors';
 import { DisciplineStatus } from '@/types/workout';
 import { toDateKey } from '@/utils/discipline';
 
@@ -91,7 +92,12 @@ export function DisciplineYearGrid({
   today,
   weekdayLabels,
 }: DisciplineYearGridProps) {
-  const styles = useMemo(() => createStyles(colors, metrics), [colors, metrics]);
+  // Yalnızca bugün sınırı; hücre dolgusu durum renginde kalır.
+  const todayColor = useFeatureColor('todayHighlight', colors.primary).color;
+  const styles = useMemo(
+    () => createStyles(colors, metrics, todayColor),
+    [colors, metrics, todayColor],
+  );
   const weeks = groupIntoWeeks(dates);
   const scrollRef = useRef<ScrollView>(null);
   const didInitialScrollRef = useRef(false);
@@ -175,7 +181,7 @@ export function DisciplineYearGrid({
 }
 
 /** Değerler Ana Sayfa takviminden birebir taşındı; görünüm değişmez. */
-function createStyles(colors: ThemeColors, metrics: DisciplineYearMetrics) {
+function createStyles(colors: ThemeColors, metrics: DisciplineYearMetrics, todayColor: string) {
   const { cellGap, cellSize, labelWidth } = metrics;
 
   return StyleSheet.create({
@@ -198,7 +204,7 @@ function createStyles(colors: ThemeColors, metrics: DisciplineYearMetrics) {
     yearMonthLabelContainer: { height: 17, overflow: 'visible' },
     yearMonthLabel: { color: colors.textTertiary, fontSize: 9, overflow: 'visible', width: 34 },
     yearDayCell: { borderRadius: 3, height: cellSize, width: cellSize },
-    todayYearCell: { borderColor: colors.primary, borderWidth: 1.5 },
+    todayYearCell: { borderColor: todayColor, borderWidth: 1.5 },
     pressed: { opacity: 0.6 },
   });
 }

@@ -6,11 +6,19 @@ import { WorkoutVisual } from '@/types/workout';
 
 type WorkoutVisualDisplayProps = {
   color: string;
+  /**
+   * Yalnızca HAZIR (vector) ikonun rengi. Verilmezse `color` kullanılır.
+   *
+   * Ayrı tutulur çünkü emoji/sayı görsellerinin (`type: 'text'`) doğal
+   * görünümü DEĞİŞMEMELİDİR; onlar `color` ile çizilmeye devam eder.
+   * `type: 'image'` zaten hiç tint almaz (geriye dönük uyumluluk).
+   */
+  iconColor?: string;
   size?: number;
   visual: WorkoutVisual;
 };
 
-export function WorkoutVisualDisplay({ color, size = 24, visual }: WorkoutVisualDisplayProps) {
+export function WorkoutVisualDisplay({ color, iconColor, size = 24, visual }: WorkoutVisualDisplayProps) {
   if (visual.type === 'image') {
     return (
       <Image
@@ -32,7 +40,7 @@ export function WorkoutVisualDisplay({ color, size = 24, visual }: WorkoutVisual
     );
   }
 
-  return <Ionicons color={color} name={visual.icon} size={size} />;
+  return <Ionicons color={iconColor ?? color} name={visual.icon} size={size} />;
 }
 
 const styles = StyleSheet.create({

@@ -315,17 +315,20 @@ const IDLE_WIGGLE_RELEASE = 140;
  * Bırakıldıktan sonra hedefe yönelmeden önceki sakin bekleme. Bu süre boyunca
  * konum, görsel ve ritim tamamen sabittir — Rosea bırakıldığı yerde durur.
  */
-const SETTLE_WAIT_DURATION = 1200;
+const SETTLE_WAIT_DURATION = 500;
 /**
  * Yaw (dikey eksen) dönüş karelerinin her birinin ekranda kalma süresi. Son
  * kare de bu kadar tutulur, böylece yolculuk başlamadan önce yeni duruş okunur.
  *
  * Toplam dönüş = kare sayısı × bu süre:
- *   sol/sağ (2 kare: ¾ ön → yan)                        = 260 ms
- *   üst     (4 kare: ¾ ön → yan → ¾ sırt → sırt)        = 520 ms
+ *   sol/sağ (2 kare: ¾ ön → yan)                        = 174 ms
+ *   üst     (4 kare: ¾ ön → yan → ¾ sırt → sırt)        = 348 ms
  * Alt (pitch) dönüş kendi sürelerini kullanır: `PITCH_FRAME_MS`.
+ *
+ * Değer 130 ms iken dönüş 1/1.5 oranında hızlandırıldı (130 / 1.5 ≈ 87).
+ * Yolculuk hızı (`SETTLE_TRAVEL_SPEED`) ve diğer animasyonlar değişmedi.
  */
-const TURN_FRAME_MS = 130;
+const TURN_FRAME_MS = 87;
 /**
  * Yolculuk sırasında solungaç karesinin değişme aralığı. Dönüş karelerinden
  * bilinçli olarak daha yavaş: bu bir duruş değişimi değil, sakin bir nefes
@@ -339,17 +342,22 @@ const GILL_FRAME_MS = 180;
  * → `pitch-back-mid` → `back`. Hiçbir `scaleX`/`scaleY` ezmesi uygulanmaz;
  * Rosea'nın boyutu ve konumu dönüş boyunca değişmez.
  *
- * Toplam dönüş = 3 × `PITCH_FRAME_MS` + `PITCH_SETTLE_MS` = 420 ms. Son kare
+ * Toplam dönüş = 3 × `PITCH_FRAME_MS` + `PITCH_SETTLE_MS` = 281 ms. Son kare
  * biraz daha uzun tutulur, böylece yolculuk başlamadan önce yeni duruş okunur.
+ *
+ * Yaw dönüşüyle AYNI oranda hızlandırıldı (100 / 1.5 ≈ 67, 120 / 1.5 = 80).
  */
-const PITCH_FRAME_MS = 100;
-const PITCH_SETTLE_MS = 120;
+const PITCH_FRAME_MS = 67;
+const PITCH_SETTLE_MS = 80;
 /**
  * Pitch kareleri arasındaki crossfade. Normal ifade geçişinden bilinçli olarak
- * kısadır: 100 ms'lik karelerde daha uzun bir geçiş ara kareleri birbirine
+ * kısadır: 67 ms'lik karelerde daha uzun bir geçiş ara kareleri birbirine
  * bulandırır ve dönüşü yine yumuşak bir morph gibi gösterirdi.
+ *
+ * Kare süresiyle AYNI oranda kısaltıldı (60 / 1.5 = 40); aksi hâlde crossfade
+ * kare süresine yaklaşıp hızlanan dönüşü bulanıklaştırırdı.
  */
-const PITCH_CROSSFADE_MS = 60;
+const PITCH_CROSSFADE_MS = 40;
 
 /**
  * Sabit yürüyüş hızı (pt/sn). Süre mesafeden türetilir — böylece yakın da olsa

@@ -1,6 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Animated,
+  PanResponder,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ExerciseProgress } from '@/components/exercise-progress';
@@ -9,9 +19,25 @@ import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { useWorkout } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
+import { useFeatureColor } from '@/hooks/use-feature-colors';
 import { WorkoutProgram, WorkoutSession, WorkoutSetRecord } from '@/types/workout';
+import { getSetTotalVolume } from '@/utils/workout-analytics';
 import { dateFromKey } from '@/utils/workout-schedule';
 import { formatDuration } from '@/utils/workout-session';
+
+/**
+ * Sola kaydırarak silme ölçüleri.
+ *
+ *   * `SWIPE_ACTION_WIDTH` — açıkken görünen kırmızı alanın genişliği.
+ *   * `SWIPE_OPEN_THRESHOLD` — bu kadar kaydırılırsa satır AÇIK konuma oturur,
+ *     altında kalırsa kapanır. İlk kaydırma yalnızca alanı açar.
+ *   * `SWIPE_DELETE_THRESHOLD` — açık konumdan bu kadar DAHA sola kaydırılırsa
+ *     düğmeye dokunmadan silme gerçekleşir.
+ */
+const SWIPE_ACTION_WIDTH = 96;
+const SWIPE_OPEN_THRESHOLD = 44;
+const SWIPE_DELETE_THRESHOLD = SWIPE_ACTION_WIDTH + 64;
+const SWIPE_MAX_TRANSLATE = SWIPE_DELETE_THRESHOLD + 40;
 
 type ExerciseSetGroup = {
   key: string;
@@ -22,11 +48,27 @@ type ExerciseSetGroup = {
 export default function HistoryScreen() {
   const { colors } = useAppTheme();
   const { locale, t } = useTranslation();
-  const { isProgramsLoading, programs, workoutSessions, workoutSets } = useWorkout();
-  const styles = createStyles(colors);
+  const { deleteWorkoutSession, isProgramsLoading, programs, workoutSessions, workoutSets } = useWorkout();
+  // Sağ üstteki görünüm geçişi Geçmiş ve Gelişim rengini kullanır.
+  const historyAccent = useFeatureColor('historyProgress', colors.primary).color;
+  /**
+   * Üç istatistik çemberi BİRBİRİNDEN BAĞIMSIZ. Seçim yapılmazsa fallback'ler
+   * bugünkü renklerdir; ekran bu görevden önceki görünümle birebir aynı kalır.
+   * `historyProgress` ayrı kalır ve Progress alt görünümünü yönetmeye devam eder.
+   */
+  const workoutsRing = useFeatureColor('historyWorkoutsRing', colors.primary).color;
+  const exercisesRing = useFeatureColor('historyExercisesRing', colors.disciplineCompleted).color;
+  const durationRing = useFeatureColor('historyDurationRing', colors.accent).color;
+  const styles = createStyles(colors, historyAccent);
   const [expandedSessionId, setExpandedSessionId] = useState<string>();
+  /** Aynı anda yalnızca bir satırın silme alanı açık kalır. */
+  const [swipedSessionId, setSwipedSessionId] = useState<string>();
   const [activeView, setActiveView] = useState<'workouts' | 'progress'>('workouts');
-  const [durationMode, setDurationMode] = useState<'average' | 'total'>('total');
+  /**
+   * Ekran her açılışta ORTALAMA süreyle başlar. Çembere dokunma Average ↔ Total
+   * geçişini aynen sürdürür; tercih bilinçli olarak kalıcı saklanmaz.
+   */
+  const [durationMode, setDurationMode] = useState<'average' | 'total'>('average');
   const completedSessions = [...workoutSessions]
     .filter((session) => session.status === 'completed')
     .sort(
@@ -45,6 +87,19 @@ export default function HistoryScreen() {
   const uniqueExerciseCount = new Set(
     completedWorkoutSets.map((workoutSet) => workoutSet.exerciseName.trim().toLocaleLowerCase(locale)),
   ).size;
+
+  async function handleDeleteSession(sessionId: string) {
+    setSwipedSessionId(undefined);
+    try {
+      await deleteWorkoutSession(sessionId);
+    } catch (error) {
+      // `deleteWorkoutSession` hata durumunda satırı geri koymuş olur.
+      Alert.alert(
+        t('history.deleteFailed'),
+        error instanceof Error ? error.message : t('common.networkError'),
+      );
+    }
+  }
 
   if (isProgramsLoading) {
     return (
@@ -95,14 +150,14 @@ export default function HistoryScreen() {
           <>
             <View style={styles.ringRow}>
               <StatRing
-                color={colors.primary}
+                color={workoutsRing}
                 colors={colors}
                 label={t('history.workouts')}
                 styles={styles}
                 valueLabel={String(completedSessions.length)}
               />
               <StatRing
-                color={colors.disciplineCompleted}
+                color={exercisesRing}
                 colors={colors}
                 label={t('history.exercises')}
                 styles={styles}
@@ -110,7 +165,7 @@ export default function HistoryScreen() {
               />
               <StatRing
                 accessibilityHint={t('history.durationToggleHint')}
-                color={colors.accent}
+                color={durationRing}
                 colors={colors}
                 label={
                   durationMode === 'total' ? t('history.totalDuration') : t('history.averageDuration')
@@ -130,7 +185,13 @@ export default function HistoryScreen() {
                 <SessionHistoryRow
                   colors={colors}
                   expanded={expandedSessionId === session.id}
+                  isSwipeOpen={swipedSessionId === session.id}
                   key={session.id}
+                  onDelete={() => void handleDeleteSession(session.id)}
+                  onSwipeClosed={() =>
+                    setSwipedSessionId((currentId) => (currentId === session.id ? undefined : currentId))
+                  }
+                  onSwipeStart={() => setSwipedSessionId(session.id)}
                   onToggle={() =>
                     setExpandedSessionId((currentId) => (currentId === session.id ? undefined : session.id))
                   }
@@ -205,10 +266,121 @@ function StatRing({
   );
 }
 
+/**
+ * Satırı sola kaydırınca sağda kırmızı silme alanını açan sarmalayıcı.
+ *
+ * Dikey liste kaydırması korunur: yatay hareket dikeyden belirgin biçimde
+ * baskın olmadan pan yakalanmaz (`onMoveShouldSetPanResponder`).
+ *
+ * Aynı anda tek satır açık kalır: satır kaydırılmaya başlayınca üst bileşene
+ * haber verilir, açık olan diğer satır kendini kapatır.
+ *
+ * `react-native-gesture-handler` yerine çekirdek `PanResponder` kullanılır;
+ * böylece web'de de ek bir uyarlama gerekmez.
+ */
+function SwipeableSessionRow({
+  accessibilityLabel,
+  children,
+  deleteLabel,
+  isOpen,
+  onDelete,
+  onSwipeStart,
+  onClosed,
+  styles,
+}: {
+  accessibilityLabel: string;
+  children: React.ReactNode;
+  deleteLabel: string;
+  isOpen: boolean;
+  onDelete: () => void;
+  onSwipeStart: () => void;
+  onClosed: () => void;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const translateX = useRef(new Animated.Value(0)).current;
+  /** Satırın dinlenme konumu: 0 (kapalı) veya -SWIPE_ACTION_WIDTH (açık). */
+  const restingOffset = useRef(0);
+
+  const settle = useMemo(
+    () => (toValue: number) => {
+      restingOffset.current = toValue;
+      Animated.spring(translateX, {
+        bounciness: 0,
+        toValue,
+        useNativeDriver: true,
+      }).start();
+    },
+    [translateX],
+  );
+
+  // Başka bir satır açılınca bu satır kapanır.
+  useEffect(() => {
+    if (!isOpen && restingOffset.current !== 0) settle(0);
+  }, [isOpen, settle]);
+
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        // Yatay hareket dikeyin 1.5 katından fazla olmadıkça liste kaydırması
+        // sahipliği bırakmaz.
+        onMoveShouldSetPanResponder: (_event, gesture) =>
+          Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5,
+        onPanResponderGrant: () => onSwipeStart(),
+        onPanResponderMove: (_event, gesture) => {
+          const next = Math.min(0, Math.max(-SWIPE_MAX_TRANSLATE, restingOffset.current + gesture.dx));
+          translateX.setValue(next);
+        },
+        onPanResponderRelease: (_event, gesture) => {
+          const next = restingOffset.current + gesture.dx;
+
+          if (next <= -SWIPE_DELETE_THRESHOLD) {
+            onDelete();
+            settle(0);
+            onClosed();
+            return;
+          }
+
+          settle(next <= -SWIPE_OPEN_THRESHOLD ? -SWIPE_ACTION_WIDTH : 0);
+          if (next > -SWIPE_OPEN_THRESHOLD) onClosed();
+        },
+        onPanResponderTerminate: () => settle(restingOffset.current),
+      }),
+    [onClosed, onDelete, onSwipeStart, settle, translateX],
+  );
+
+  return (
+    <View style={styles.swipeContainer}>
+      <View style={styles.swipeActionLayer}>
+        <Pressable
+          accessibilityLabel={accessibilityLabel}
+          accessibilityRole="button"
+          onPress={() => {
+            onDelete();
+            settle(0);
+            onClosed();
+          }}
+          style={({ pressed }) => [styles.swipeDeleteButton, pressed && styles.pressed]}>
+          <Text numberOfLines={1} style={styles.swipeDeleteText}>
+            {deleteLabel}
+          </Text>
+        </Pressable>
+      </View>
+
+      <Animated.View style={[styles.swipeSurface, { transform: [{ translateX }] }]} {...panResponder.panHandlers}>
+        {children}
+      </Animated.View>
+    </View>
+  );
+}
+
 function SessionHistoryRow({
   colors,
   expanded,
+  isSwipeOpen,
   locale,
+  onDelete,
+  onSwipeClosed,
+  onSwipeStart,
   onToggle,
   program,
   session,
@@ -218,7 +390,11 @@ function SessionHistoryRow({
 }: {
   colors: ThemeColors;
   expanded: boolean;
+  isSwipeOpen: boolean;
   locale: string;
+  onDelete: () => void;
+  onSwipeClosed: () => void;
+  onSwipeStart: () => void;
   onToggle: () => void;
   program?: WorkoutProgram;
   session: WorkoutSession;
@@ -229,37 +405,46 @@ function SessionHistoryRow({
   const day = program?.days.find((item) => item.id === session.dayId);
   const sessionDate = dateFromKey(session.dateKey);
   const exerciseGroups = groupSetsByExercise(sets);
-  const totalVolume = sets.reduce(
-    (total, workoutSet) => total + (workoutSet.weightKg ?? 0) * (workoutSet.repetitions ?? 0),
-    0,
-  );
+  // Drop setler ana satırın içinde saklanır; toplam hacme onlar da dahildir.
+  const totalVolume = sets.reduce((total, workoutSet) => total + getSetTotalVolume(workoutSet), 0);
+
+  const workoutName = day?.name ?? t('history.completedWorkout');
 
   return (
     <View style={styles.sessionRowWrapper}>
-      <Pressable
-        accessibilityHint={t('history.toggleHint')}
-        accessibilityRole="button"
-        accessibilityState={{ expanded }}
-        onPress={onToggle}
-        style={({ pressed }) => [styles.sessionRow, pressed && styles.pressed]}>
-        <View style={styles.sessionText}>
-          <Text numberOfLines={1} style={styles.sessionTitle}>
-            {day?.name ?? t('history.completedWorkout')}
-          </Text>
-          <Text numberOfLines={1} style={styles.sessionDate}>
-            {sessionDate.toLocaleDateString(locale, {
-              day: 'numeric',
-              month: 'long',
-              weekday: 'long',
-              year: 'numeric',
-            })}
-          </Text>
-        </View>
-        <View style={styles.sessionSummary}>
-          <Text style={styles.sessionDuration}>{formatDuration(session.accumulatedDurationSeconds)}</Text>
-          <Text style={styles.sessionSetCount}>{t('history.setCount', { count: sets.length })}</Text>
-        </View>
-      </Pressable>
+      <SwipeableSessionRow
+        accessibilityLabel={t('history.deleteWorkoutLabel', { name: workoutName })}
+        deleteLabel={t('common.delete')}
+        isOpen={isSwipeOpen}
+        onClosed={onSwipeClosed}
+        onDelete={onDelete}
+        onSwipeStart={onSwipeStart}
+        styles={styles}>
+        <Pressable
+          accessibilityHint={t('history.toggleHint')}
+          accessibilityRole="button"
+          accessibilityState={{ expanded }}
+          onPress={onToggle}
+          style={({ pressed }) => [styles.sessionRow, pressed && styles.pressed]}>
+          <View style={styles.sessionText}>
+            <Text numberOfLines={1} style={styles.sessionTitle}>
+              {workoutName}
+            </Text>
+            <Text numberOfLines={1} style={styles.sessionDate}>
+              {sessionDate.toLocaleDateString(locale, {
+                day: 'numeric',
+                month: 'long',
+                weekday: 'long',
+                year: 'numeric',
+              })}
+            </Text>
+          </View>
+          <View style={styles.sessionSummary}>
+            <Text style={styles.sessionDuration}>{formatDuration(session.accumulatedDurationSeconds)}</Text>
+            <Text style={styles.sessionSetCount}>{t('history.setCount', { count: sets.length })}</Text>
+          </View>
+        </Pressable>
+      </SwipeableSessionRow>
 
       {expanded && (
         <View style={styles.sessionDetails}>
@@ -288,17 +473,34 @@ function SessionHistoryRow({
                 </View>
 
                 {group.sets.map((workoutSet) => (
-                  <View key={workoutSet.id} style={styles.setRow}>
-                    <Text style={[styles.setValue, styles.setColumn, styles.setNumberText]}>
-                      {workoutSet.setNumber}
-                    </Text>
-                    <Text style={styles.setValue}>
-                      {workoutSet.weightKg === undefined ? '—' : formatDecimal(workoutSet.weightKg, locale)}
-                    </Text>
-                    <Text style={styles.setValue}>{workoutSet.repetitions ?? '—'}</Text>
-                    <Text style={styles.setValue}>
-                      {workoutSet.rpe === undefined ? '—' : formatDecimal(workoutSet.rpe, locale)}
-                    </Text>
+                  <View key={workoutSet.id}>
+                    <View style={styles.setRow}>
+                      <Text style={[styles.setValue, styles.setColumn, styles.setNumberText]}>
+                        {workoutSet.setNumber}
+                      </Text>
+                      <Text style={styles.setValue}>
+                        {workoutSet.weightKg === undefined ? '—' : formatDecimal(workoutSet.weightKg, locale)}
+                      </Text>
+                      <Text style={styles.setValue}>{workoutSet.repetitions ?? '—'}</Text>
+                      <Text style={styles.setValue}>
+                        {workoutSet.rpe === undefined ? '—' : formatDecimal(workoutSet.rpe, locale)}
+                      </Text>
+                    </View>
+
+                    {workoutSet.dropSets.map((dropSet, index) => (
+                      <View key={`${workoutSet.id}-drop-${index}`} style={styles.dropSetHistoryRow}>
+                        <Text style={styles.dropSetHistoryLabel}>
+                          ↳ {t('history.dropSet', { number: index + 1 })}
+                        </Text>
+                        <Text style={styles.dropSetHistoryValue}>
+                          {dropSet.weightKg === undefined
+                            ? '—'
+                            : `${formatDecimal(dropSet.weightKg, locale)} ${t('history.kg').toLocaleLowerCase(locale)}`}
+                          {' × '}
+                          {dropSet.repetitions} {t('history.reps').toLocaleLowerCase(locale)}
+                        </Text>
+                      </View>
+                    ))}
                   </View>
                 ))}
               </View>
@@ -352,7 +554,7 @@ function formatCompactDuration(totalSeconds: number) {
   return minutes > 0 ? `${hours}sa ${minutes}dk` : `${hours}sa`;
 }
 
-function createStyles(colors: ThemeColors) {
+function createStyles(colors: ThemeColors, historyAccent: string) {
   return StyleSheet.create({
     safeArea: { backgroundColor: colors.background, flex: 1 },
     content: { paddingBottom: 40, paddingHorizontal: Layout.screenPadding, paddingTop: 16 },
@@ -363,7 +565,7 @@ function createStyles(colors: ThemeColors) {
     headerTopRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
     eyebrow: { color: colors.textSecondary, ...Type.eyebrow },
     viewSwitch: { justifyContent: 'center', minHeight: 28 },
-    viewSwitchText: { color: colors.primary, fontSize: 13, fontWeight: '500' },
+    viewSwitchText: { color: historyAccent, fontSize: 13, fontWeight: '500' },
     title: { color: colors.text, ...Type.pageTitle },
     description: { color: colors.textSecondary, ...Type.caption },
     ringRow: { flexDirection: 'row', gap: 12, marginBottom: 26 },
@@ -377,6 +579,27 @@ function createStyles(colors: ThemeColors) {
       borderBottomColor: colors.separator,
       borderBottomWidth: StyleSheet.hairlineWidth,
     },
+    /** Kırmızı alan satırın ARKASINDA durur; yüzey kaydıkça ortaya çıkar. */
+    swipeContainer: { overflow: 'hidden', position: 'relative' },
+    swipeActionLayer: {
+      bottom: 0,
+      justifyContent: 'center',
+      position: 'absolute',
+      right: 0,
+      top: 0,
+      width: SWIPE_ACTION_WIDTH,
+    },
+    swipeDeleteButton: {
+      alignItems: 'center',
+      backgroundColor: colors.danger,
+      flex: 1,
+      justifyContent: 'center',
+      paddingHorizontal: 8,
+      width: '100%',
+    },
+    swipeDeleteText: { color: colors.onPrimary, ...Type.body, fontWeight: '600' },
+    /** Opak zemin: kaydırılmadığında kırmızı alan görünmez. */
+    swipeSurface: { backgroundColor: colors.background },
     sessionRow: { alignItems: 'center', flexDirection: 'row', gap: 12, minHeight: 64, paddingVertical: 14 },
     sessionText: { flex: 1, gap: 4 },
     sessionTitle: { color: colors.text, ...Type.rowTitle },
@@ -411,6 +634,25 @@ function createStyles(colors: ThemeColors) {
     },
     setNumberText: { color: colors.textTertiary },
     setValue: { color: colors.textSecondary, flex: 1, fontSize: 12, textAlign: 'center' },
+    dropSetHistoryRow: {
+      alignItems: 'center',
+      backgroundColor: colors.surfaceMuted,
+      borderRadius: 8,
+      flexDirection: 'row',
+      gap: 8,
+      marginBottom: 4,
+      marginLeft: 16,
+      minHeight: 30,
+      paddingHorizontal: 10,
+    },
+    dropSetHistoryLabel: { color: colors.accent, ...Type.footnote, fontWeight: '600' },
+    dropSetHistoryValue: {
+      color: colors.textSecondary,
+      flex: 1,
+      ...Type.footnote,
+      fontVariant: ['tabular-nums'],
+      textAlign: 'right',
+    },
     noSetDetails: { alignItems: 'center', flexDirection: 'row', gap: 8 },
     noSetDetailsText: { color: colors.textSecondary, flex: 1, ...Type.footnote, lineHeight: 15 },
     pressed: { opacity: 0.6 },

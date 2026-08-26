@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { withAlpha } from '@/constants/color-presets';
+import { resolveProfileColor } from '@/hooks/use-feature-colors';
 import { LevelProgressRing } from '@/components/rewards/level-progress-ring';
 import { ProfileDisciplineCard } from '@/components/profile-discipline-card';
 import { Fonts, Layout, ThemeColors } from '@/constants/theme';
@@ -26,12 +28,14 @@ const GOAL_LABEL_KEYS: Record<string, string> = {
   strength: 'profile.goalStrength',
 };
 
+/** Arkadaş profilinin bugünkü vurgu tonu. */
+const FRIEND_PROFILE_ACCENT_DEFAULT = '#D5755B';
+
 export default function FriendProfileScreen() {
   const { userId } = useLocalSearchParams<{ userId: string }>();
   const { user } = useAuth();
   const { colors } = useAppTheme();
   const { t } = useTranslation();
-  const styles = createStyles(colors);
   const isOwnProfile = Boolean(userId) && userId === user?.id;
 
   // Kendi kimliğiyle açılırsa "erişim yok" göstermek yerine Profil sekmesine
@@ -40,7 +44,13 @@ export default function FriendProfileScreen() {
     if (isOwnProfile) router.replace('/profile');
   }, [isOwnProfile]);
 
-  const [profile, setProfile] = useState<FriendProfile>();
+  const [profile, setProfile] = useState<FriendProfile>();  /**
+   * Profil rengi SAHİBİNDEN gelir; görüntüleyenin kendi tercihi kullanılmaz.
+   * Alan yoksa (migration uygulanmadıysa) bugünkü ton uygulanır.
+   */
+  const ownerAccent = resolveProfileColor(profile?.colorPresetId, FRIEND_PROFILE_ACCENT_DEFAULT);
+  const styles = createStyles(colors, ownerAccent.color);
+
   const [statuses, setStatuses] = useState<Record<string, DisciplineStatus>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
@@ -141,7 +151,6 @@ export default function FriendProfileScreen() {
             {profile.username ? `@${profile.username}` : t('friends.noUsername')}
           </Text>
           <Text style={styles.name}>{profile.displayName}</Text>
-          {profile.bio.trim().length > 0 && <Text style={styles.bio}>{profile.bio}</Text>}
 
           <View style={styles.levelIdentityRow}>
             <View style={styles.levelPill}>
@@ -167,7 +176,10 @@ export default function FriendProfileScreen() {
             kontrolü RPC içinde `public.are_friends` ile yapılır. */}
         <View style={styles.levelSection}>
           <LevelProgressRing
+            accentColor={ownerAccent.color}
+            fillColor={ownerAccent.color}
             level={profile.level}
+            message={profile.bio.trim() || undefined}
             xpForNextLevel={profile.xpForNextLevel}
             xpIntoLevel={profile.xpIntoLevel}
           />
@@ -180,7 +192,7 @@ export default function FriendProfileScreen() {
             dolayısıyla RLS/friendship kontrolleri ve Supabase sorguları
             değişmez. */}
         <View style={styles.calendarSection}>
-          <ProfileDisciplineCard readOnly statuses={statuses} />
+          <ProfileDisciplineCard accentColor={ownerAccent.color} readOnly statuses={statuses} />
         </View>
         <Text style={styles.readOnlyNote}>{t('friends.calendarReadOnly')}</Text>
       </ScrollView>
@@ -188,7 +200,7 @@ export default function FriendProfileScreen() {
   );
 }
 
-function createStyles(colors: ThemeColors) {
+function createStyles(colors: ThemeColors, ownerAccent: string) {
   return StyleSheet.create({
     safeArea: { backgroundColor: colors.background, flex: 1 },
     content: { paddingBottom: 40 },
@@ -220,14 +232,13 @@ function createStyles(colors: ThemeColors) {
       lineHeight: 40,
     },
     username: {
-      color: colors.textTertiary,
+      color: ownerAccent,
       fontSize: 11,
       fontWeight: '700',
       letterSpacing: 1.8,
       marginTop: 6,
       textTransform: 'uppercase',
     },
-    bio: { color: colors.textSecondary, fontSize: 15, lineHeight: 21, marginTop: 6, maxWidth: '88%', textAlign: 'center' },
     levelIdentityRow: {
       alignItems: 'center',
       flexDirection: 'row',
@@ -237,15 +248,18 @@ function createStyles(colors: ThemeColors) {
     },
     levelPill: {
       alignItems: 'center',
-      backgroundColor: colors.surfaceMuted,
+      // Arkadaşın KENDİ rengi; görüntüleyenin tercihi kullanılmaz.
+      backgroundColor: withAlpha(ownerAccent, 0.14),
+      borderColor: withAlpha(ownerAccent, 0.26),
+      borderWidth: StyleSheet.hairlineWidth,
       borderRadius: Layout.radiusPill,
       flexDirection: 'row',
       gap: 5,
       minHeight: 28,
       paddingHorizontal: 11,
     },
-    levelPillIcon: { color: '#D5755B', fontSize: 11 },
-    levelPillText: { color: colors.textSecondary, fontSize: 11, fontWeight: '600' },
+    levelPillIcon: { color: ownerAccent, fontSize: 11 },
+    levelPillText: { color: ownerAccent, fontSize: 11, fontWeight: '600' },
     levelSection: { marginTop: 20, paddingHorizontal: Layout.screenPadding },
     calendarSection: { marginTop: 18, paddingHorizontal: Layout.screenPadding },
     readOnlyNote: {

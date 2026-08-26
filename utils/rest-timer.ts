@@ -92,10 +92,20 @@ export function parseStoredRestTimer(rawValue: string | null, fallbackPlannedSec
   }
 }
 
-/** `03:00` veya fazla süre için `+00:12` biçimi. */
+/**
+ * Görünen saat.
+ *
+ *   * Hedef dolana kadar: kalan süre geri sayar (`03:00` → `00:00`).
+ *   * Hedef dolduktan sonra: yalnızca aşan süre değil, TOPLAM geçen mola
+ *     gösterilir. 180 sn'lik molada bir saniye sonra `03:01`, sonra `03:02`.
+ *     `+00:01` biçimi KULLANILMAZ.
+ *
+ * `overtimeSeconds` alanı kaldırılmadı: erişilebilirlik ve açıklama metinleri
+ * hedefin ne kadar aşıldığını ayrıca kullanabilir.
+ */
 export function formatRestTimerValue(progress: RestTimerProgress) {
-  const seconds = progress.isOvertime ? progress.overtimeSeconds : progress.remainingSeconds;
+  const seconds = progress.isOvertime ? progress.totalRestSeconds : progress.remainingSeconds;
   const minutePart = String(Math.floor(seconds / 60)).padStart(2, '0');
   const secondPart = String(seconds % 60).padStart(2, '0');
-  return `${progress.isOvertime ? '+' : ''}${minutePart}:${secondPart}`;
+  return `${minutePart}:${secondPart}`;
 }

@@ -179,12 +179,15 @@ async function buildWeeklyMetrics(supabase: any) {
       .from('workout_sessions')
       .select('id, workout_date, accumulated_duration_seconds')
       .eq('status', 'completed')
+      // Kullanıcının sildiği antrenmanlar AI bağlamına girmez.
+      .is('deleted_at', null)
       .gte('workout_date', currentStartKey)
       .lte('workout_date', currentEndKey),
     supabase
       .from('workout_sessions')
       .select('id, workout_date, accumulated_duration_seconds')
       .eq('status', 'completed')
+      .is('deleted_at', null)
       .gte('workout_date', previousStartKey)
       .lte('workout_date', previousEndKey),
     supabase.from('programs').select('name').eq('is_active', true).maybeSingle(),
@@ -224,6 +227,7 @@ async function buildExerciseMetrics(supabase: any, exerciseName: string) {
     .from('workout_sessions')
     .select('id, workout_date, accumulated_duration_seconds')
     .eq('status', 'completed')
+    .is('deleted_at', null)
     .order('workout_date', { ascending: false })
     .limit(100);
   if (sessionError) throw sessionError;
@@ -508,6 +512,7 @@ async function buildChatWorkoutContext(supabase: any) {
     .from('workout_sessions')
     .select('id, workout_date, accumulated_duration_seconds')
     .eq('status', 'completed')
+    .is('deleted_at', null)
     .order('workout_date', { ascending: false })
     .limit(5);
   if (recentError) throw recentError;

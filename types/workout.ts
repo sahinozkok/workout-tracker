@@ -80,10 +80,24 @@ export type WorkoutSession = {
   completedAt?: string;
 };
 
+/**
+ * Ana setin hemen ardından, dinlenmeden yapılan düşük ağırlıklı devam parçası.
+ *
+ * Drop setler AYRI `workout_sets` satırı DEĞİLDİR: ana satırın `drop_sets`
+ * JSONB alanında saklanır. Böylece plan/disiplin/ödül hesapları için bir ana
+ * set + drop setleri tek "tamamlanan set" olarak kalır.
+ */
+export type WorkoutDropSetPerformance = {
+  weightKg?: number;
+  repetitions: number;
+};
+
 export type WorkoutSetPerformance = {
   weightKg?: number;
   repetitions: number;
   rpe?: number;
+  /** Sıra korunur; boş dizi "drop set yapılmadı" demektir. */
+  dropSets?: WorkoutDropSetPerformance[];
 };
 
 export type WorkoutSetRecord = {
@@ -96,6 +110,8 @@ export type WorkoutSetRecord = {
   weightKg?: number;
   repetitions?: number;
   rpe?: number;
+  /** Eski kayıtlarda ve geçersiz JSON'da her zaman `[]`. */
+  dropSets: WorkoutDropSetPerformance[];
   completedAt: string;
 };
 

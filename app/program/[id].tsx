@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { MotionPressable } from '@/components/motion-pressable';
 import { WorkoutVisualDisplay } from '@/components/workout-visual-display';
 import { WorkoutVisualPicker } from '@/components/workout-visual-picker';
 import { Form, Layout, ThemeColors, Type } from '@/constants/theme';
@@ -25,10 +26,11 @@ import { useTranslation } from '@/context/language-context';
 import { useProfile } from '@/context/profile-context';
 import { useWorkout } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
+import { useFeatureColor } from '@/hooks/use-feature-colors';
 import { DisciplineStatus, WorkoutVisual } from '@/types/workout';
 import { toDateKey } from '@/utils/discipline';
 import { getWeekdayDateInCurrentWeek } from '@/utils/workout-schedule';
-import { DEFAULT_PROGRAM_VISUAL, getProgramVisual } from '@/utils/workout-visual';
+import { DEFAULT_PROGRAM_VISUAL, getProgramIconBackground, getProgramVisual } from '@/utils/workout-visual';
 
 export default function ProgramDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -36,7 +38,11 @@ export default function ProgramDetailScreen() {
   const { colors, isDark } = useAppTheme();
   const { showProgramIcons } = useProfile();
   const { locale, t } = useTranslation();
-  const styles = createStyles(colors);
+  // Yalnızca "bugün" göstergeleri.
+  const todayColor = useFeatureColor('todayHighlight', colors.primary).color;
+  // Hazır program/gün ikonlarının vurgusu Workout Days presetinden gelir.
+  const workoutDaysIconColor = useFeatureColor('workoutDays', colors.primary).color;
+  const styles = createStyles(colors, todayColor);
   const [isProgramEditorOpen, setIsProgramEditorOpen] = useState(false);
   const [programNameDraft, setProgramNameDraft] = useState('');
   const [programVisualDraft, setProgramVisualDraft] = useState<WorkoutVisual>(DEFAULT_PROGRAM_VISUAL);
@@ -117,9 +123,18 @@ export default function ProgramDetailScreen() {
         showsVerticalScrollIndicator={false}>
         <View style={styles.summaryRow}>
           {showProgramIcons && (
-            <View style={styles.summaryIcon}>
+            <View
+              style={[
+                styles.summaryIcon,
+                getProgramIconBackground(
+                  getProgramVisual(program.visual, program.icon),
+                  workoutDaysIconColor,
+                  isDark,
+                ),
+              ]}>
               <WorkoutVisualDisplay
                 color={colors.primary}
+                iconColor={workoutDaysIconColor}
                 size={24}
                 visual={getProgramVisual(program.visual, program.icon)}
               />
@@ -255,12 +270,12 @@ export default function ProgramDetailScreen() {
                 />
               </View>
 
-              <Pressable
+              <MotionPressable
                 accessibilityRole="button"
                 onPress={() => void saveProgramChanges()}
-                style={({ pressed }) => [styles.editorSaveButton, pressed && styles.pressed]}>
+                style={styles.editorSaveButton}>
                 <Text style={styles.editorSaveButtonText}>{t('common.save')}</Text>
-              </Pressable>
+              </MotionPressable>
 
               <Pressable
                 accessibilityRole="button"
@@ -295,7 +310,7 @@ function getDayStatusColor(colors: ThemeColors, status: DisciplineStatus | undef
   return colors.separator;
 }
 
-function createStyles(colors: ThemeColors) {
+function createStyles(colors: ThemeColors, todayColor: string) {
   return StyleSheet.create({
     safeArea: { backgroundColor: colors.background, flex: 1 },
     content: { paddingBottom: 40, paddingHorizontal: Layout.screenPadding, paddingTop: 8 },
@@ -420,14 +435,14 @@ function createStyles(colors: ThemeColors) {
       justifyContent: 'center',
       width: 34,
     },
-    dayNumberToday: { borderColor: colors.primary },
+    dayNumberToday: { borderColor: todayColor },
     dayNumberText: { fontSize: 14, fontWeight: '600' },
-    dayNumberTextToday: { color: colors.primary },
+    dayNumberTextToday: { color: todayColor },
     dayText: { flex: 1, gap: 2 },
     dayName: { color: colors.text, fontSize: 15, fontWeight: '500' },
     dayNameOff: { color: colors.textTertiary },
     dayWeekday: { color: colors.textSecondary, ...Type.caption },
-    dayWeekdayToday: { color: colors.primary },
+    dayWeekdayToday: { color: todayColor },
     dayCount: { color: colors.textSecondary, ...Type.caption },
     pressed: { opacity: 0.6 },
   });

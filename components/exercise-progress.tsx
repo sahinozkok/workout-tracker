@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
+import { useFeatureColor } from '@/hooks/use-feature-colors';
 import { WorkoutSetRecord } from '@/types/workout';
 import {
   buildExerciseAnalytics,
@@ -33,7 +34,9 @@ const METRICS: { key: ProgressMetric; labelKey: string }[] = [
 export function ExerciseProgress({ workoutSets }: ExerciseProgressProps) {
   const { colors } = useAppTheme();
   const { locale, t } = useTranslation();
-  const styles = createStyles(colors);
+  // Geçmiş ve Gelişim vurgusu; seçilmediyse bugünkü yeşil.
+  const progressAccent = useFeatureColor('historyProgress', colors.disciplineCompleted).color;
+  const styles = createStyles(colors, progressAccent);
   const analytics = useMemo(() => buildExerciseAnalytics(workoutSets), [workoutSets]);
   const [selectedExerciseKey, setSelectedExerciseKey] = useState(analytics[0]?.exerciseKey);
   const [selectedMetric, setSelectedMetric] = useState<ProgressMetric>('weight');
@@ -275,7 +278,8 @@ function ExercisePickerModal({
   t: (key: string, params?: Record<string, number | string>) => string;
   visible: boolean;
 }) {
-  const styles = createStyles(colors);
+  const accentColor = useFeatureColor('historyProgress', colors.disciplineCompleted).color;
+  const styles = createStyles(colors, accentColor);
   const [query, setQuery] = useState('');
   const normalizedQuery = query.trim().toLocaleLowerCase(locale);
   const filteredExercises = analytics.filter((exercise) =>
@@ -363,7 +367,8 @@ function ExercisePickerModal({
 }
 
 function ChangeIndicator({ change, colors }: { change: PerformanceChange; colors: ThemeColors }) {
-  const styles = createStyles(colors);
+  const accentColor = useFeatureColor('historyProgress', colors.disciplineCompleted).color;
+  const styles = createStyles(colors, accentColor);
 
   return (
     <View style={styles.changeIndicator}>
@@ -397,7 +402,8 @@ function ProgressSummary({
   label: string;
   value: string;
 }) {
-  const styles = createStyles(colors);
+  const accentColor = useFeatureColor('historyProgress', colors.disciplineCompleted).color;
+  const styles = createStyles(colors, accentColor);
 
   return (
     <View style={styles.summaryItem}>
@@ -423,7 +429,8 @@ function ProgressChart({
   metric: ProgressMetric;
   points: { point: ExerciseProgressPoint; value: number }[];
 }) {
-  const styles = createStyles(colors);
+  const accentColor = useFeatureColor('historyProgress', colors.disciplineCompleted).color;
+  const styles = createStyles(colors, accentColor);
   const maxValue = Math.max(...points.map((item) => item.value));
 
   return (
@@ -467,7 +474,8 @@ function RecordRow({
   label: string;
   value: string;
 }) {
-  const styles = createStyles(colors);
+  const accentColor = useFeatureColor('historyProgress', colors.disciplineCompleted).color;
+  const styles = createStyles(colors, accentColor);
 
   return (
     <View style={[styles.recordRow, divided && styles.rowDivided]}>
@@ -569,7 +577,7 @@ function formatLongDate(dateKey: string, locale: string) {
   return dateFromKey(dateKey).toLocaleDateString(locale, { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-function createStyles(colors: ThemeColors) {
+function createStyles(colors: ThemeColors, accentColor: string) {
   /** Kayıt satırlarını ve modal satırlarını ayıran saç teli çizgi. */
   const rowDivider = {
     borderTopColor: colors.separator,
@@ -614,7 +622,7 @@ function createStyles(colors: ThemeColors) {
       fontVariant: ['tabular-nums'],
     },
     summaryLabel: { color: colors.textSecondary, ...Type.caption },
-    summaryLabelHighlighted: { color: colors.disciplineCompleted },
+    summaryLabelHighlighted: { color: accentColor },
 
     comparisonHeader: { alignItems: 'center', flexDirection: 'row', gap: 10, justifyContent: 'space-between' },
     comparisonRow: { alignItems: 'flex-end', flexDirection: 'row', gap: 12, marginTop: 14 },
@@ -624,7 +632,7 @@ function createStyles(colors: ThemeColors) {
     comparisonValuePrevious: { color: colors.text, ...Type.rowTitle },
     comparisonValueLatest: { color: colors.text, ...Type.rowTitle, fontWeight: '600' },
     changeIndicator: { alignItems: 'center', flexDirection: 'row', gap: 3 },
-    changeText: { color: colors.disciplineCompleted, ...Type.caption, fontWeight: '500' },
+    changeText: { color: accentColor, ...Type.caption, fontWeight: '500' },
     changeTextNegative: { color: colors.accent },
     changeTextNeutral: { color: colors.textSecondary },
 
@@ -637,9 +645,9 @@ function createStyles(colors: ThemeColors) {
       minHeight: 30,
       paddingBottom: 5,
     },
-    metricTabSelected: { borderBottomColor: colors.disciplineCompleted },
+    metricTabSelected: { borderBottomColor: accentColor },
     metricText: { color: colors.textSecondary, ...Type.body },
-    metricTextSelected: { color: colors.disciplineCompleted, fontWeight: '600' },
+    metricTextSelected: { color: accentColor, fontWeight: '600' },
 
     chart: { alignItems: 'flex-end', flexDirection: 'row', gap: 4, marginTop: 22, minHeight: 150 },
     barColumn: { alignItems: 'center', flex: 1, gap: 6 },
@@ -652,7 +660,7 @@ function createStyles(colors: ThemeColors) {
     },
     barTrack: { alignItems: 'center', height: 104, justifyContent: 'flex-end', width: '100%' },
     bar: { backgroundColor: colors.separator, borderRadius: 3, maxWidth: 20, width: '64%' },
-    barLatest: { backgroundColor: colors.disciplineCompleted },
+    barLatest: { backgroundColor: accentColor },
     barDate: { color: colors.textTertiary, ...Type.footnote, textAlign: 'center', width: '100%' },
     barDateLatest: { color: colors.text },
     chartEmpty: {
@@ -672,7 +680,7 @@ function createStyles(colors: ThemeColors) {
     recordLabel: { color: colors.text, ...Type.rowTitle },
     recordDate: { color: colors.textSecondary, ...Type.caption },
     recordValue: {
-      color: colors.disciplineCompleted,
+      color: accentColor,
       ...Type.rowTitle,
       fontVariant: ['tabular-nums'],
       maxWidth: '40%',
@@ -725,7 +733,7 @@ function createStyles(colors: ThemeColors) {
     exerciseRow: { alignItems: 'center', flexDirection: 'row', gap: 12, minHeight: 56, paddingVertical: 12 },
     exerciseRowText: { flex: 1, gap: 3 },
     exerciseRowName: { color: colors.text, ...Type.rowTitle },
-    exerciseRowNameSelected: { color: colors.disciplineCompleted },
+    exerciseRowNameSelected: { color: accentColor },
     exerciseRowMeta: { color: colors.textSecondary, ...Type.caption },
     modalEmpty: { alignItems: 'center', paddingHorizontal: 20, paddingVertical: 48 },
     modalEmptyText: { color: colors.textSecondary, ...Type.caption, textAlign: 'center' },

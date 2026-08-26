@@ -34,8 +34,23 @@ function normalizeExerciseName(exerciseName: string) {
   return exerciseName.trim().toLocaleLowerCase('tr-TR');
 }
 
+/** Yalnızca ANA setin hacmi. Set bazlı rekor karşılaştırmaları bunu kullanır. */
 function getSetVolume(workoutSet: WorkoutSetRecord) {
   return (workoutSet.weightKg ?? 0) * (workoutSet.repetitions ?? 0);
+}
+
+/**
+ * Ana set + drop setlerin toplam hacmi.
+ *
+ * Yalnızca TOPLAM hacim toplamlarında kullanılır. `bestVolumeSet` bilinçli
+ * olarak `getSetVolume` ile hesaplanmaya devam eder: drop parçaları set bazlı
+ * kişisel rekoru şişirmemelidir.
+ */
+export function getSetTotalVolume(workoutSet: WorkoutSetRecord) {
+  return (
+    getSetVolume(workoutSet) +
+    workoutSet.dropSets.reduce((total, dropSet) => total + (dropSet.weightKg ?? 0) * dropSet.repetitions, 0)
+  );
 }
 
 export function estimateOneRepMax(workoutSet: WorkoutSetRecord | undefined) {
@@ -124,7 +139,7 @@ export function buildExerciseAnalytics(workoutSets: WorkoutSetRecord[]) {
             maxRepetitions: repetitions.length > 0 ? Math.max(...repetitions) : undefined,
             maxWeightKg: weights.length > 0 ? Math.max(...weights) : undefined,
             topSet,
-            totalVolumeKg: dateSets.reduce((total, workoutSet) => total + getSetVolume(workoutSet), 0),
+            totalVolumeKg: dateSets.reduce((total, workoutSet) => total + getSetTotalVolume(workoutSet), 0),
           };
         })
         .sort((first, second) => first.dateKey.localeCompare(second.dateKey));
@@ -168,7 +183,7 @@ export function buildExerciseAnalytics(workoutSets: WorkoutSetRecord[]) {
         points,
         recordHistory: recordHistory.sort((first, second) => second.dateKey.localeCompare(first.dateKey)),
         totalSets: sets.length,
-        totalVolumeKg: sets.reduce((total, workoutSet) => total + getSetVolume(workoutSet), 0),
+        totalVolumeKg: sets.reduce((total, workoutSet) => total + getSetTotalVolume(workoutSet), 0),
       };
     })
     .sort((first, second) => {

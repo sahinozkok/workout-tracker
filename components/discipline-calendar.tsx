@@ -15,6 +15,7 @@ import { ThemeColors, Type } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { useWorkout } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
+import { useFeatureColor } from '@/hooks/use-feature-colors';
 import { DisciplineStatus } from '@/types/workout';
 import { getWeekdayShortLabel, WEEKDAY_VALUES } from '@/constants/weekdays';
 import { toDateKey } from '@/utils/discipline';
@@ -145,7 +146,12 @@ export function DisciplineCalendarView({
     () => getCalendarMetrics(density, availableWidth),
     [availableWidth, density],
   );
-  const styles = useMemo(() => createStyles(colors, metrics), [colors, metrics]);
+  // "Bugünün rengi" yalnızca bugün göstergelerini besler.
+  const todayColor = useFeatureColor('todayHighlight', colors.primary).color;
+  const styles = useMemo(
+    () => createStyles(colors, metrics, todayColor),
+    [colors, metrics, todayColor],
+  );
 
   const handleLayout = useCallback((event: LayoutChangeEvent) => {
     const nextWidth = Math.round(event.nativeEvent.layout.width);
@@ -648,7 +654,7 @@ export function getStatusColor(colors: ThemeColors, status: DisciplineStatus | u
 
 
 
-function createStyles(colors: ThemeColors, metrics: CalendarMetrics) {
+function createStyles(colors: ThemeColors, metrics: CalendarMetrics, todayColor: string) {
   const {
     dayCircleSize,
     dayFontSize,
@@ -689,13 +695,14 @@ function createStyles(colors: ThemeColors, metrics: CalendarMetrics) {
       width: dayCircleSize,
     },
     dayCircleOutlined: { borderColor: colors.separator, borderWidth: StyleSheet.hairlineWidth },
-    dayCircleToday: { borderColor: colors.primary, borderWidth: 1.5 },
+    // Yalnızca dış çember. Durum dolgusu (yeşil/turuncu/gri) değişmez.
+    dayCircleToday: { borderColor: todayColor, borderWidth: 1.5 },
     dayNumber: { color: colors.textSecondary, fontSize: dayFontSize, fontWeight: '500' },
     dayNumberFilled: { color: colors.background, fontWeight: '600' },
-    dayNumberToday: { color: colors.primary, fontWeight: '600' },
+    dayNumberToday: { color: todayColor, fontWeight: '600' },
     dayNumberFuture: { color: colors.textTertiary },
     weekdayLabel: { color: colors.textTertiary, fontSize: weekdayFontSize, fontWeight: '400' },
-    weekdayLabelToday: { color: colors.primary, fontWeight: '600' },
+    weekdayLabelToday: { color: todayColor, fontWeight: '600' },
     monthGrid: { gap: monthRowGap },
     monthRow: { flexDirection: 'row' },
     monthCell: { alignItems: 'center', flex: 1, paddingVertical: monthCellPaddingVertical },
