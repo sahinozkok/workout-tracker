@@ -13,6 +13,7 @@ import {
   RankEvent,
   RankSeasonArchive,
   RankSeasonSummary,
+  RankWeekFocus,
 } from '@/types/ranks';
 
 /**
@@ -76,6 +77,15 @@ type RankEventRow = {
   awarded_for_date: string | null;
   created_at: string;
   day_state: string | null;
+};
+
+type RankWeekFocusRow = {
+  week_starts_on: string;
+  week_ends_on: string;
+  day_date: string;
+  state: string | null;
+  is_scheduled_workout: boolean;
+  is_verifiable: boolean;
 };
 
 /** `timestamptz` → `YYYY-MM-DD`. Ekran tarihi cihazın yerel gününde gösterir. */
@@ -227,6 +237,38 @@ export async function fetchMyRankEvents(): Promise<RankEvent[]> {
   }
 
   return events;
+}
+
+/**
+ * Güncel yerel haftanın sunucu tarafından doğrulanmış rank odağı.
+ *
+ * Kullanıcı kimliği veya program bilgisi gönderilmez. RPC aktif kullanıcıyı
+ * `auth.uid()` ile belirler ve yalnızca `rank_day_state` kanıtını döndürür.
+ */
+export async function fetchMyRankWeekFocus(clientToday: string): Promise<RankWeekFocus> {
+  const { data, error } = await supabase.rpc('get_my_rank_week_focus', {
+    client_today: clientToday,
+  });
+  if (error) throw error;
+
+  const rows = (data ?? []) as RankWeekFocusRow[];
+  if (rows.length !== 7) throw new Error('invalid_rank_week_focus');
+
+  const startsOn = rows[0]?.week_starts_on;
+  const endsOn = rows[0]?.week_ends_on;
+  if (!startsOn || !endsOn) throw new Error('invalid_rank_week_focus');
+
+  return {
+    days: rows.map((row) => ({
+      dateKey: row.day_date,
+      isScheduledWorkout: row.is_scheduled_workout === true,
+      isVerifiable: row.is_verifiable === true,
+      state:
+        row.state === 'completed' || row.state === 'partial' ? row.state : undefined,
+    })),
+    endsOn,
+    startsOn,
+  };
 }
 
 /**

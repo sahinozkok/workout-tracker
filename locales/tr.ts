@@ -760,6 +760,14 @@ export const tr = {
     planCompletion: 'Plan uyumu',
     planCompletionValue: '%{percent} ({done}/{total})',
     longestStreak: 'En uzun seri',
+    weekFocus: {
+      title: 'BU HAFTAKİ ODAK',
+      remaining: 'Kusursuz hafta bonusuna {count} gün kaldı.',
+      ready: 'Kusursuz hafta hazır. Hafta kapandığında +{rp} RP.',
+      noPlanned: 'Bu hafta planlı antrenman günü yok; haftalık bonus oluşmaz.',
+      unavailable: 'Haftalık odak şu an alınamadı.',
+      retry: 'Tekrar dene',
+    },
     recentActivity: 'SON RP HAREKETLERİ',
     noRecentActivity: 'Henüz RP hareketi yok. Planlı gününü tamamladığında burada görünecek.',
     /** Etkinlik adları — ham `event_type` veya metadata KULLANICIYA GÖSTERİLMEZ. */

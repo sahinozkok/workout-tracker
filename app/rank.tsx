@@ -13,14 +13,17 @@ import {
   nextRank,
   rankFillRatio,
   RankId,
+  RANK_RP,
   rpToNextRank,
 } from '@/constants/ranks';
+import { getOnAccentColor } from '@/constants/color-presets';
 import { Layout, ThemeColors } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { useRanks } from '@/context/rank-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
+import { useFeatureColor } from '@/hooks/use-feature-colors';
 import { useLocalDateKey } from '@/hooks/use-shared-discipline-sync';
-import { RankEvent, RankSeasonArchive } from '@/types/ranks';
+import { RankEvent, RankSeasonArchive, RankWeekFocus } from '@/types/ranks';
 import { dateFromKey } from '@/utils/workout-schedule';
 
 /**
@@ -44,12 +47,17 @@ export default function RankScreen() {
     isEventsLoading,
     isHistoryLoading,
     isRankLoading,
+    isWeekFocusLoading,
+    hasWeekFocusError,
     loadEvents,
     loadHistory,
+    loadWeekFocus,
     season,
+    weekFocus,
   } = useRanks();
   const rankName = useRankName();
   const todayKey = useLocalDateKey();
+  const todayColor = useFeatureColor('todayHighlight', colors.primary).color;
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   // Arşiv ve RP geçmişi yalnızca bu ekran açıldığında yüklenir; arka planda
@@ -61,6 +69,10 @@ export default function RankScreen() {
   useEffect(() => {
     void loadEvents();
   }, [loadEvents]);
+
+  useEffect(() => {
+    void loadWeekFocus();
+  }, [loadWeekFocus]);
 
   if (!season) {
     return (
@@ -153,7 +165,22 @@ export default function RankScreen() {
           </View>
         </MotionSection>
 
-        <MotionSection delay={80} style={styles.statList}>
+        <MotionSection delay={80}>
+          <WeekFocusCard
+            colors={colors}
+            focus={weekFocus}
+            hasError={hasWeekFocusError}
+            isLoading={isWeekFocusLoading}
+            locale={locale}
+            onRetry={() => void loadWeekFocus()}
+            styles={styles}
+            t={t}
+            todayColor={todayColor}
+            todayKey={todayKey}
+          />
+        </MotionSection>
+
+        <MotionSection delay={120} style={styles.statList}>
           <StatRow label={t('ranks.seasonEndsIn')} styles={styles} value={t('ranks.dayCount', { count: daysLeft })} />
           <StatRow label={t('ranks.peakRank')} styles={styles} value={rankName(season.peakRank)} />
           <StatRow label={t('ranks.workouts')} styles={styles} value={String(season.workoutsCompleted)} />
@@ -174,7 +201,7 @@ export default function RankScreen() {
           />
         </MotionSection>
 
-        <MotionSection delay={120} style={styles.historyBlock}>
+        <MotionSection delay={160} style={styles.historyBlock}>
           <Text style={styles.sectionLabel}>{t('ranks.recentActivity')}</Text>
 
           {isEventsLoading && events.length === 0 ? (
@@ -199,7 +226,7 @@ export default function RankScreen() {
           )}
         </MotionSection>
 
-        <MotionSection delay={160} style={styles.historyBlock}>
+        <MotionSection delay={200} style={styles.historyBlock}>
           <Text style={styles.sectionLabel}>{t('ranks.pastSeasons')}</Text>
 
           {isHistoryLoading && history.length === 0 ? (
@@ -224,6 +251,122 @@ export default function RankScreen() {
         </MotionSection>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function WeekFocusCard({
+  colors,
+  focus,
+  hasError,
+  isLoading,
+  locale,
+  onRetry,
+  styles,
+  t,
+  todayColor,
+  todayKey,
+}: {
+  colors: ThemeColors;
+  focus?: RankWeekFocus;
+  hasError: boolean;
+  isLoading: boolean;
+  locale: string;
+  onRetry: () => void;
+  styles: ReturnType<typeof createStyles>;
+  t: (key: string, params?: Record<string, string | number>) => string;
+  todayColor: string;
+  todayKey: string;
+}) {
+  if (!focus) {
+    return (
+      <View style={styles.weekCard}>
+        <Text style={styles.weekEyebrow}>{t('ranks.weekFocus.title')}</Text>
+        <View style={styles.weekState}>
+          {isLoading ? (
+            <ActivityIndicator color={colors.textSecondary} size="small" />
+          ) : (
+            <>
+              <Text style={styles.weekStateText}>{t('ranks.weekFocus.unavailable')}</Text>
+              <MotionPressable
+                accessibilityRole="button"
+                onPress={onRetry}
+                style={styles.weekRetry}>
+                <Text style={[styles.weekRetryText, { color: todayColor }]}>
+                  {t('ranks.weekFocus.retry')}
+                </Text>
+              </MotionPressable>
+            </>
+          )}
+        </View>
+      </View>
+    );
+  }
+
+  const planned = focus.days.filter((day) => day.isScheduledWorkout);
+  const completed = planned.filter((day) => day.state === 'completed').length;
+  const remaining = Math.max(0, planned.length - completed);
+  const message =
+    planned.length === 0
+      ? t('ranks.weekFocus.noPlanned')
+      : remaining === 0
+        ? t('ranks.weekFocus.ready', { rp: RANK_RP.weeklyPerfect })
+        : t('ranks.weekFocus.remaining', { count: remaining });
+
+  return (
+    <View style={styles.weekCard}>
+      <View style={styles.weekHeader}>
+        <View style={styles.weekHeaderText}>
+          <Text style={styles.weekEyebrow}>{t('ranks.weekFocus.title')}</Text>
+          <Text style={styles.weekRange}>{formatRange(focus.startsOn, focus.endsOn, locale)}</Text>
+        </View>
+        {isLoading ? <ActivityIndicator color={colors.textTertiary} size="small" /> : null}
+      </View>
+
+      <View style={styles.weekDays}>
+        {focus.days.map((day) => {
+          const fillColor =
+            day.isScheduledWorkout && day.isVerifiable
+              ? day.state === 'completed'
+                ? colors.disciplineCompleted
+                : day.state === 'partial'
+                  ? colors.disciplinePartial
+                  : undefined
+              : undefined;
+          const isToday = day.dateKey === todayKey;
+          const isMuted = !day.isScheduledWorkout || !day.isVerifiable;
+
+          return (
+            <View key={day.dateKey} style={styles.weekDay}>
+              <Text style={styles.weekDayLabel}>{formatWeekday(day.dateKey, locale)}</Text>
+              <View
+                style={[
+                  styles.weekDayCircle,
+                  day.isScheduledWorkout && !fillColor && styles.weekDayPlanned,
+                  isMuted && styles.weekDayMuted,
+                  fillColor ? { backgroundColor: fillColor, borderColor: fillColor } : undefined,
+                  isToday ? { borderColor: todayColor, borderWidth: 2 } : undefined,
+                ]}>
+                <Text
+                  style={[
+                    styles.weekDayNumber,
+                    isMuted && styles.weekDayNumberMuted,
+                    fillColor ? { color: getOnAccentColor(fillColor) } : undefined,
+                  ]}>
+                  {dateFromKey(day.dateKey).getDate()}
+                </Text>
+              </View>
+            </View>
+          );
+        })}
+      </View>
+
+      <Text style={styles.weekMessage}>{message}</Text>
+      {hasError ? (
+        <MotionPressable accessibilityRole="button" onPress={onRetry} style={styles.weekRetryInline}>
+          <Text style={[styles.weekRetryText, { color: todayColor }]}>{t('ranks.weekFocus.retry')}</Text>
+        </MotionPressable>
+      ) : null}
+    </View>
   );
 }
 
@@ -356,6 +499,10 @@ function formatEventDate(dateKey: string, locale: string) {
   return dateFromKey(dateKey).toLocaleDateString(locale, { day: 'numeric', month: 'short' });
 }
 
+function formatWeekday(dateKey: string, locale: string) {
+  return dateFromKey(dateKey).toLocaleDateString(locale, { weekday: 'short' }).replace('.', '');
+}
+
 function createStyles(colors: ThemeColors) {
   return StyleSheet.create({
     safeArea: { backgroundColor: colors.background, flex: 1 },
@@ -390,6 +537,44 @@ function createStyles(colors: ThemeColors) {
     track: { borderRadius: 3, height: 6, overflow: 'hidden', width: '100%' },
     fill: { height: '100%' },
     cardFootnote: { color: colors.textSecondary, fontSize: 13, fontWeight: '400' },
+
+    weekCard: {
+      backgroundColor: colors.card,
+      borderRadius: Layout.radiusMedium,
+      gap: 12,
+      marginTop: 12,
+      padding: 16,
+    },
+    weekHeader: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+    },
+    weekHeaderText: { gap: 2 },
+    weekEyebrow: { color: colors.text, fontSize: 15, fontWeight: '600' },
+    weekRange: { color: colors.textSecondary, fontSize: 11, fontWeight: '400' },
+    weekDays: { flexDirection: 'row', justifyContent: 'space-between' },
+    weekDay: { alignItems: 'center', gap: 6 },
+    weekDayLabel: { color: colors.textSecondary, fontSize: 11, fontWeight: '400' },
+    weekDayCircle: {
+      alignItems: 'center',
+      borderColor: colors.separator,
+      borderRadius: 16,
+      borderWidth: 1,
+      height: 32,
+      justifyContent: 'center',
+      width: 32,
+    },
+    weekDayPlanned: { backgroundColor: colors.surfaceMuted },
+    weekDayMuted: { backgroundColor: 'transparent', borderColor: colors.separator },
+    weekDayNumber: { color: colors.text, fontSize: 13, fontWeight: '600' },
+    weekDayNumberMuted: { color: colors.textTertiary },
+    weekMessage: { color: colors.textSecondary, fontSize: 13, fontWeight: '400' },
+    weekState: { alignItems: 'center', gap: 8, minHeight: 64, justifyContent: 'center' },
+    weekStateText: { color: colors.textSecondary, fontSize: 13, textAlign: 'center' },
+    weekRetry: { minHeight: Layout.minTouchSize, justifyContent: 'center' },
+    weekRetryInline: { alignSelf: 'flex-start', minHeight: Layout.minTouchSize, justifyContent: 'center' },
+    weekRetryText: { fontSize: 13, fontWeight: '600' },
 
     statList: { marginTop: 24 },
     statRow: {

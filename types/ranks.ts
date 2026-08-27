@@ -85,6 +85,25 @@ export type RankEvent = {
   dateKey: string;
 };
 
+/** Rank ekranındaki salt okunur haftalık odak kartı. */
+export type RankWeekFocus = {
+  /** Haftanın Pazartesi başlangıcı (`YYYY-MM-DD`). */
+  startsOn: string;
+  /** Haftanın Pazar bitişi (`YYYY-MM-DD`). */
+  endsOn: string;
+  days: RankWeekFocusDay[];
+};
+
+export type RankWeekFocusDay = {
+  dateKey: string;
+  /** Rank kanıtından gelen gerçek ilerleme; ilerleme yoksa `undefined`. */
+  state?: 'completed' | 'partial';
+  /** Off day ve programsız günlerde false. */
+  isScheduledWorkout: boolean;
+  /** Otorite programı çözülemediyse false; istemci tahminde bulunmaz. */
+  isVerifiable: boolean;
+};
+
 /**
  * Aynı sezon içinde gerçekleşmiş, henüz gösterilmemiş rank yükselmesi.
  *

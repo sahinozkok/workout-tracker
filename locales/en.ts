@@ -759,6 +759,14 @@ export const en: TranslationSchema = {
     planCompletion: 'Plan completion',
     planCompletionValue: '{percent}% ({done}/{total})',
     longestStreak: 'Longest streak',
+    weekFocus: {
+      title: 'THIS WEEK’S FOCUS',
+      remaining: '{count} days left for the perfect week bonus.',
+      ready: 'Perfect week ready. +{rp} RP when the week closes.',
+      noPlanned: 'There are no scheduled workout days this week, so no weekly bonus is available.',
+      unavailable: 'Weekly focus is unavailable right now.',
+      retry: 'Try again',
+    },
     recentActivity: 'RECENT RP ACTIVITY',
     noRecentActivity: 'No RP activity yet. It will show up here once you complete a scheduled day.',
     events: {

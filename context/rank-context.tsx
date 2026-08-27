@@ -20,12 +20,18 @@ import {
 import { RankId, RANK_IDS } from '@/constants/ranks';
 import { useAuth } from '@/context/auth-context';
 import { useLocalDateKey } from '@/hooks/use-shared-discipline-sync';
-import { fetchMyRankEvents, fetchMyRankHistory, syncMyRank } from '@/services/ranks';
+import {
+  fetchMyRankEvents,
+  fetchMyRankHistory,
+  fetchMyRankWeekFocus,
+  syncMyRank,
+} from '@/services/ranks';
 import {
   RankEvent,
   RankSeasonArchive,
   RankSeasonSummary,
   RankUpCelebration,
+  RankWeekFocus,
   SeasonRecap,
 } from '@/types/ranks';
 
@@ -58,12 +64,17 @@ type RankContextValue = {
   /** Son RP hareketleri; yalnızca rank ekranı istediğinde yüklenir. */
   events: RankEvent[];
   isEventsLoading: boolean;
+  /** Güncel haftanın sunucu tarafından doğrulanmış odak görünümü. */
+  weekFocus?: RankWeekFocus;
+  isWeekFocusLoading: boolean;
+  hasWeekFocusError: boolean;
   /** Gösterilmeyi bekleyen rank yükselmesi. Gösterilince temizlenir. */
   rankUp?: RankUpCelebration;
   /** Güvenli sync. Tekrar çağrılması zararsızdır. */
   syncRank: () => Promise<void>;
   loadHistory: () => Promise<void>;
   loadEvents: () => Promise<void>;
+  loadWeekFocus: () => Promise<void>;
   /**
    * Kutlama ekranda GERÇEKTEN gösterilmeye başladı. Onay kaydı yalnızca
    * burada yazılır; kapanışı yönetmez.
@@ -121,6 +132,9 @@ export function RankProvider({ children }: PropsWithChildren) {
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [events, setEvents] = useState<RankEvent[]>([]);
   const [isEventsLoading, setIsEventsLoading] = useState(false);
+  const [weekFocus, setWeekFocus] = useState<RankWeekFocus>();
+  const [isWeekFocusLoading, setIsWeekFocusLoading] = useState(false);
+  const [hasWeekFocusError, setHasWeekFocusError] = useState(false);
   const [rankUp, setRankUp] = useState<RankUpCelebration>();
   const [seasonRecap, setSeasonRecap] = useState<SeasonRecap>();
 
@@ -141,6 +155,12 @@ export function RankProvider({ children }: PropsWithChildren) {
   const hasQueuedEventsRef = useRef(false);
   /** `runSync` içinden çağrılabilmesi için kimliği sabit olmayan referans. */
   const loadEventsRef = useRef<() => void>(() => undefined);
+
+  /** Haftalık odak yalnızca Rank ekranı istediğinde yüklenir ve tazelenir. */
+  const hasRequestedWeekFocusRef = useRef(false);
+  const isWeekFocusFetchingRef = useRef(false);
+  const hasQueuedWeekFocusRef = useRef(false);
+  const loadWeekFocusRef = useRef<() => void>(() => undefined);
 
   /** Kutlama onay kaydının bellek içi kopyası; her seferinde depo okunmaz. */
   const baselineRef = useRef<CelebrationBaseline>(undefined);
@@ -216,6 +236,7 @@ export function RankProvider({ children }: PropsWithChildren) {
        * ekranını hiç açmadıysa arka planda tek bir ek istek bile atılmaz.
        */
       if (hasRequestedEventsRef.current) loadEventsRef.current();
+      if (hasRequestedWeekFocusRef.current) loadWeekFocusRef.current();
     } catch {
       // Sessiz: rank okunamazsa ekran mevcut değerle çalışmaya devam eder ve
       // sonraki güvenli sync aynı olayları idempotent biçimde tamamlar.
@@ -301,6 +322,55 @@ export function RankProvider({ children }: PropsWithChildren) {
       void loadEvents();
     };
   }, [loadEvents]);
+
+  /**
+   * Güncel haftanın odak görünümü.
+   *
+   * Events ile aynı tek-uçuş/latest-wins ve hesap sahipliği kurallarını
+   * uygular. Hata yalnızca kartta gösterilir; rank ve antrenman akışlarını
+   * hiçbir koşulda engellemez.
+   */
+  const loadWeekFocus = useCallback(async () => {
+    if (!userId) return;
+    hasRequestedWeekFocusRef.current = true;
+
+    if (isWeekFocusFetchingRef.current) {
+      hasQueuedWeekFocusRef.current = true;
+      return;
+    }
+
+    isWeekFocusFetchingRef.current = true;
+    const owner = ownerRef.current;
+    if (isMountedRef.current) {
+      setIsWeekFocusLoading(true);
+      setHasWeekFocusError(false);
+    }
+
+    try {
+      const next = await fetchMyRankWeekFocus(todayKeyRef.current);
+      if (!isMountedRef.current || owner !== ownerRef.current) return;
+      setWeekFocus(next);
+    } catch {
+      if (!isMountedRef.current || owner !== ownerRef.current) return;
+      setHasWeekFocusError(true);
+    } finally {
+      if (owner === ownerRef.current) {
+        isWeekFocusFetchingRef.current = false;
+        if (isMountedRef.current) setIsWeekFocusLoading(false);
+
+        if (hasQueuedWeekFocusRef.current) {
+          hasQueuedWeekFocusRef.current = false;
+          void loadWeekFocus();
+        }
+      }
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    loadWeekFocusRef.current = () => {
+      void loadWeekFocus();
+    };
+  }, [loadWeekFocus]);
 
   /**
    * Kutlamanın GÖSTERİM ONAYI.
@@ -633,6 +703,9 @@ export function RankProvider({ children }: PropsWithChildren) {
     isEventsFetchingRef.current = false;
     hasQueuedEventsRef.current = false;
     hasRequestedEventsRef.current = false;
+    isWeekFocusFetchingRef.current = false;
+    hasQueuedWeekFocusRef.current = false;
+    hasRequestedWeekFocusRef.current = false;
     baselineRef.current = undefined;
     rankUpRef.current = undefined;
     seasonRef.current = undefined;
@@ -648,6 +721,9 @@ export function RankProvider({ children }: PropsWithChildren) {
     setSeason(undefined);
     setHistory([]);
     setEvents([]);
+    setWeekFocus(undefined);
+    setHasWeekFocusError(false);
+    setIsWeekFocusLoading(false);
     setRankUp(undefined);
     setSeasonRecap(undefined);
     setIsRankLoading(Boolean(userId));
@@ -681,15 +757,19 @@ export function RankProvider({ children }: PropsWithChildren) {
       dismissSeasonRecap,
       events,
       history,
+      hasWeekFocusError,
       isEventsLoading,
       isHistoryLoading,
       isRankLoading,
+      isWeekFocusLoading,
       loadEvents,
       loadHistory,
+      loadWeekFocus,
       rankUp,
       season,
       seasonRecap,
       syncRank,
+      weekFocus,
     }),
     [
       acknowledgeRankUpShown,
@@ -698,15 +778,19 @@ export function RankProvider({ children }: PropsWithChildren) {
       dismissSeasonRecap,
       events,
       history,
+      hasWeekFocusError,
       isEventsLoading,
       isHistoryLoading,
       isRankLoading,
+      isWeekFocusLoading,
       loadEvents,
       loadHistory,
+      loadWeekFocus,
       rankUp,
       season,
       seasonRecap,
       syncRank,
+      weekFocus,
     ],
   );
 
