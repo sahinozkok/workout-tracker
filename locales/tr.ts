@@ -768,6 +768,43 @@ export const tr = {
       unavailable: 'Haftalık odak şu an alınamadı.',
       retry: 'Tekrar dene',
     },
+    /** Sezon başarıları — yalnızca görsel rozet; RP/XP/gül üretmez. */
+    achievements: {
+      title: 'SEZON BAŞARILARI',
+      progress: '{current} / {target}',
+      unlocked: 'Açıldı',
+      empty: 'Bu sezon için henüz başarı bilgisi yok.',
+      unavailable: 'Sezon başarıları şu an alınamadı.',
+      retry: 'Tekrar dene',
+      unlockedA11y: '{name}: açıldı.',
+      lockedA11y: '{name}: kilitli. İlerleme {current} / {target}.',
+      items: {
+        first_workout: {
+          name: 'İlk Adım',
+          description: 'Sezonun ilk antrenmanını tamamla.',
+        },
+        workout_5: {
+          name: 'Ritim Kazanıyor',
+          description: 'Sezon içinde 5 antrenman tamamla.',
+        },
+        workout_15: {
+          name: 'İstikrarlı',
+          description: 'Sezon içinde 15 antrenman tamamla.',
+        },
+        streak_3: {
+          name: '3 Günlük Seri',
+          description: 'Sezon içinde 3 günlük disiplin serisi yakala.',
+        },
+        streak_7: {
+          name: '7 Günlük Seri',
+          description: 'Sezon içinde 7 günlük disiplin serisi yakala.',
+        },
+        perfect_week: {
+          name: 'Kusursuz Hafta',
+          description: 'Bir haftanın bütün planlı günlerini tamamla.',
+        },
+      },
+    },
     recentActivity: 'SON RP HAREKETLERİ',
     noRecentActivity: 'Henüz RP hareketi yok. Planlı gününü tamamladığında burada görünecek.',
     /** Etkinlik adları — ham `event_type` veya metadata KULLANICIYA GÖSTERİLMEZ. */

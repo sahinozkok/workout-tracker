@@ -1,6 +1,7 @@
 /**
  * RANK DENEYİMİ — SAF KARARLAR
- * (RP geçmişi + rank yükselme + sezon özeti + arkadaş sıralaması)
+ * (RP geçmişi + rank yükselme + sezon özeti + arkadaş sıralaması +
+ *  sezon başarıları)
  *
  * Bu dosya `constants/ranks.ts` ile AYNI duruşu izler: **hiçbir `import`u
  * YOKTUR**. Harness (`.mjs`) modülü tek başına `tsc` ile derleyip
@@ -480,4 +481,97 @@ export function parseFriendRankLeaderboard<Rank extends string>(
     participantCount: total,
     seasonIndex,
   };
+}
+
+// ---------------------------------------------------------------------------
+// 5) Sezon başarıları — anahtar sözlüğü ve satır eşlemesi
+// ---------------------------------------------------------------------------
+
+/**
+ * Sezon başarılarının TEK ve SABİT anahtar kaynağı.
+ *
+ * Sıra, SQL'deki `season_achievement_catalog()` içindeki `sort_order` ile
+ * BİREBİR aynıdır; harness ikisini karşılaştırır. Eşik (hedef) değerleri
+ * BİLİNÇLİ OLARAK burada tutulmaz: onların tek otoritesi sunucudur ve
+ * `target_progress` olarak yanıtla birlikte gelir.
+ */
+export const SEASON_ACHIEVEMENT_KEYS = [
+  'first_workout',
+  'workout_5',
+  'workout_15',
+  'streak_3',
+  'streak_7',
+  'perfect_week',
+] as const;
+
+export type SeasonAchievementKey = (typeof SEASON_ACHIEVEMENT_KEYS)[number];
+
+/** Sunucudan gelen HAM satır; sözleşmeye uyduğu VARSAYILMAZ. */
+export type SeasonAchievementRow = {
+  achievement_key?: unknown;
+  is_unlocked?: unknown;
+  unlocked_at?: unknown;
+  current_progress?: unknown;
+  target_progress?: unknown;
+};
+
+/** Ekranın kullandığı, güvenle daraltılmış başarı satırı. */
+export type SeasonAchievementParsed = {
+  key: SeasonAchievementKey;
+  isUnlocked: boolean;
+  /** Yalnızca açılmışsa dolu gelir. */
+  unlockedAt?: string;
+  currentProgress: number;
+  targetProgress: number;
+};
+
+/** Bilinen bir başarı anahtarı mı? */
+export function parseSeasonAchievementKey(value: unknown): SeasonAchievementKey | undefined {
+  return SEASON_ACHIEVEMENT_KEYS.includes(value as SeasonAchievementKey)
+    ? (value as SeasonAchievementKey)
+    : undefined;
+}
+
+/**
+ * Başarı yanıtını eşler.
+ *
+ * DEĞİŞMEZLER
+ *  - İstemci hiçbir ilerleme HESAPLAMAZ: `currentProgress` ve `targetProgress`
+ *    sunucudan geldiği gibi taşınır.
+ *  - Tanınmayan anahtar, kimliksiz veya bozuk satır sessizce DÜŞER; ekran
+ *    çökmez.
+ *  - Aynı anahtar iki kez gelirse İLK satır kalır — rozet listede iki kez
+ *    görünmez.
+ *  - Sıralama her zaman `SEASON_ACHIEVEMENT_KEYS` sırasıdır; sunucu sırası
+ *    bozulsa bile ekran kararlı kalır.
+ *  - Eksik satır için sahte bir hedef ÜRETİLMEZ: o rozet hiç çizilmez.
+ */
+export function parseSeasonAchievements(
+  rows: readonly SeasonAchievementRow[] | null | undefined,
+): SeasonAchievementParsed[] {
+  const byKey = new Map<SeasonAchievementKey, SeasonAchievementParsed>();
+
+  for (const row of rows ?? []) {
+    const key = parseSeasonAchievementKey(row.achievement_key);
+    if (!key || byKey.has(key)) continue;
+
+    const targetProgress = asCount(row.target_progress);
+    // Hedef okunamıyorsa satır gösterilemez: uydurma eşik üretilmez.
+    if (targetProgress === undefined || targetProgress <= 0) continue;
+
+    const isUnlocked = row.is_unlocked === true;
+    const rawProgress = asCount(row.current_progress) ?? 0;
+
+    byKey.set(key, {
+      currentProgress: Math.min(rawProgress, targetProgress),
+      isUnlocked,
+      key,
+      targetProgress,
+      unlockedAt: isUnlocked ? asText(row.unlocked_at) : undefined,
+    });
+  }
+
+  return SEASON_ACHIEVEMENT_KEYS.map((key) => byKey.get(key)).filter(
+    (entry): entry is SeasonAchievementParsed => entry !== undefined,
+  );
 }

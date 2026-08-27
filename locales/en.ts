@@ -767,6 +767,42 @@ export const en: TranslationSchema = {
       unavailable: 'Weekly focus is unavailable right now.',
       retry: 'Try again',
     },
+    achievements: {
+      title: 'SEASON ACHIEVEMENTS',
+      progress: '{current} / {target}',
+      unlocked: 'Unlocked',
+      empty: 'No achievement data for this season yet.',
+      unavailable: 'Season achievements are unavailable right now.',
+      retry: 'Try again',
+      unlockedA11y: '{name}: unlocked.',
+      lockedA11y: '{name}: locked. Progress {current} of {target}.',
+      items: {
+        first_workout: {
+          name: 'First Step',
+          description: 'Complete your first workout of the season.',
+        },
+        workout_5: {
+          name: 'Finding Rhythm',
+          description: 'Complete 5 workouts in the season.',
+        },
+        workout_15: {
+          name: 'Consistent',
+          description: 'Complete 15 workouts in the season.',
+        },
+        streak_3: {
+          name: '3-Day Streak',
+          description: 'Reach a 3-day discipline streak in the season.',
+        },
+        streak_7: {
+          name: '7-Day Streak',
+          description: 'Reach a 7-day discipline streak in the season.',
+        },
+        perfect_week: {
+          name: 'Perfect Week',
+          description: 'Complete every scheduled day of a week.',
+        },
+      },
+    },
     recentActivity: 'RECENT RP ACTIVITY',
     noRecentActivity: 'No RP activity yet. It will show up here once you complete a scheduled day.',
     events: {

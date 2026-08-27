@@ -1,4 +1,8 @@
-import { RankEventKind, RankEventLabelKey } from '@/constants/rank-experience';
+import {
+  RankEventKind,
+  RankEventLabelKey,
+  SeasonAchievementKey,
+} from '@/constants/rank-experience';
 import { RankId } from '@/constants/ranks';
 
 /**
@@ -175,4 +179,22 @@ export type FriendRankLeaderboard = {
   participantCount: number;
   /** Sınır nedeniyle bazı katılımcılar listede yoksa `true`. */
   isTruncated: boolean;
+};
+
+/**
+ * Sezon başarısı — YALNIZCA görsel rozet.
+ *
+ * RP, XP veya gül üretmez. Bütün değerler `sync_my_season_achievements`
+ * RPC'sinden gelir; istemci ilerleme HESAPLAMAZ ve sunucuya sezon, kullanıcı
+ * kimliği veya ilerleme GÖNDERMEZ.
+ */
+export type SeasonAchievement = {
+  key: SeasonAchievementKey;
+  isUnlocked: boolean;
+  /** Yalnızca açılmışsa dolu; ilk kazanım anıdır ve değişmez. */
+  unlockedAt?: string;
+  /** Sunucudan gelen güncel ilerleme. */
+  currentProgress: number;
+  /** Sunucudan gelen hedef. İstemci eşik saklamaz. */
+  targetProgress: number;
 };

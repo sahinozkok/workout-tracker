@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotionPressable } from '@/components/motion-pressable';
 import { MotionSection } from '@/components/motion-section';
 import { getRankColor, getRankSoftBackground, useRankName } from '@/components/ranks/rank-badge';
-import { toRankRpDisplay } from '@/constants/rank-experience';
+import { SeasonAchievementKey, toRankRpDisplay } from '@/constants/rank-experience';
 import {
   daysRemainingInSeason,
   nextRank,
@@ -23,7 +23,7 @@ import { useRanks } from '@/context/rank-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import { useFeatureColor } from '@/hooks/use-feature-colors';
 import { useLocalDateKey } from '@/hooks/use-shared-discipline-sync';
-import { RankEvent, RankSeasonArchive, RankWeekFocus } from '@/types/ranks';
+import { RankEvent, RankSeasonArchive, RankWeekFocus, SeasonAchievement } from '@/types/ranks';
 import { dateFromKey } from '@/utils/workout-schedule';
 
 /**
@@ -42,13 +42,17 @@ export default function RankScreen() {
   const { colors, isDark } = useAppTheme();
   const { locale, t } = useTranslation();
   const {
+    achievements,
     events,
+    hasAchievementsError,
     history,
+    isAchievementsLoading,
     isEventsLoading,
     isHistoryLoading,
     isRankLoading,
     isWeekFocusLoading,
     hasWeekFocusError,
+    loadAchievements,
     loadEvents,
     loadHistory,
     loadWeekFocus,
@@ -73,6 +77,10 @@ export default function RankScreen() {
   useEffect(() => {
     void loadWeekFocus();
   }, [loadWeekFocus]);
+
+  useEffect(() => {
+    void loadAchievements();
+  }, [loadAchievements]);
 
   if (!season) {
     return (
@@ -180,7 +188,22 @@ export default function RankScreen() {
           />
         </MotionSection>
 
-        <MotionSection delay={120} style={styles.statList}>
+        <MotionSection delay={120} style={styles.achievementsBlock}>
+          <Text style={styles.sectionLabel}>{t('ranks.achievements.title')}</Text>
+          <AchievementsGrid
+            accent={accent}
+            achievements={achievements}
+            colors={colors}
+            hasError={hasAchievementsError}
+            isLoading={isAchievementsLoading}
+            locale={locale}
+            onRetry={() => void loadAchievements()}
+            styles={styles}
+            t={t}
+          />
+        </MotionSection>
+
+        <MotionSection delay={160} style={styles.statList}>
           <StatRow label={t('ranks.seasonEndsIn')} styles={styles} value={t('ranks.dayCount', { count: daysLeft })} />
           <StatRow label={t('ranks.peakRank')} styles={styles} value={rankName(season.peakRank)} />
           <StatRow label={t('ranks.workouts')} styles={styles} value={String(season.workoutsCompleted)} />
@@ -201,7 +224,7 @@ export default function RankScreen() {
           />
         </MotionSection>
 
-        <MotionSection delay={160} style={styles.historyBlock}>
+        <MotionSection delay={200} style={styles.historyBlock}>
           <Text style={styles.sectionLabel}>{t('ranks.recentActivity')}</Text>
 
           {isEventsLoading && events.length === 0 ? (
@@ -226,7 +249,7 @@ export default function RankScreen() {
           )}
         </MotionSection>
 
-        <MotionSection delay={200} style={styles.historyBlock}>
+        <MotionSection delay={240} style={styles.historyBlock}>
           <Text style={styles.sectionLabel}>{t('ranks.pastSeasons')}</Text>
 
           {isHistoryLoading && history.length === 0 ? (
@@ -370,6 +393,157 @@ function WeekFocusCard({
   );
 }
 
+/**
+ * Sezon başarıları — iki sütunlu kompakt rozet ızgarası.
+ *
+ * Bu bölüm hiçbir ilerleme HESAPLAMAZ: `currentProgress` / `targetProgress`
+ * sunucudan geldiği gibi gösterilir. Rozetler yalnızca görseldir; RP, XP veya
+ * gül üretmez. Hata bu bölümle sınırlıdır — ekranın geri kalanı çalışmaya
+ * devam eder.
+ */
+const ACHIEVEMENT_ICONS: Record<SeasonAchievementKey, keyof typeof Ionicons.glyphMap> = {
+  first_workout: 'footsteps-outline',
+  workout_5: 'barbell-outline',
+  workout_15: 'trophy-outline',
+  streak_3: 'flame-outline',
+  streak_7: 'flame',
+  perfect_week: 'checkmark-done-outline',
+};
+
+function AchievementsGrid({
+  accent,
+  achievements,
+  colors,
+  hasError,
+  isLoading,
+  locale,
+  onRetry,
+  styles,
+  t,
+}: {
+  accent: string;
+  achievements: SeasonAchievement[];
+  colors: ThemeColors;
+  hasError: boolean;
+  isLoading: boolean;
+  locale: string;
+  onRetry: () => void;
+  styles: ReturnType<typeof createStyles>;
+  t: (key: string, params?: Record<string, string | number>) => string;
+}) {
+  if (achievements.length === 0) {
+    return (
+      <View style={styles.achievementsState}>
+        {isLoading ? (
+          <ActivityIndicator color={colors.textSecondary} size="small" />
+        ) : (
+          <>
+            <Text style={styles.achievementsStateText}>
+              {hasError ? t('ranks.achievements.unavailable') : t('ranks.achievements.empty')}
+            </Text>
+            {hasError ? (
+              <MotionPressable
+                accessibilityRole="button"
+                onPress={onRetry}
+                style={styles.achievementsRetry}>
+                <Text style={[styles.achievementsRetryText, { color: accent }]}>
+                  {t('ranks.achievements.retry')}
+                </Text>
+              </MotionPressable>
+            ) : null}
+          </>
+        )}
+      </View>
+    );
+  }
+
+  return (
+    <>
+      <View style={styles.achievementsGrid}>
+        {achievements.map((achievement) => (
+          <AchievementBadge
+            accent={accent}
+            achievement={achievement}
+            colors={colors}
+            key={achievement.key}
+            locale={locale}
+            styles={styles}
+            t={t}
+          />
+        ))}
+      </View>
+      {hasError ? (
+        <MotionPressable
+          accessibilityRole="button"
+          onPress={onRetry}
+          style={styles.achievementsRetryInline}>
+          <Text style={[styles.achievementsRetryText, { color: accent }]}>
+            {t('ranks.achievements.retry')}
+          </Text>
+        </MotionPressable>
+      ) : null}
+    </>
+  );
+}
+
+function AchievementBadge({
+  accent,
+  achievement,
+  colors,
+  locale,
+  styles,
+  t,
+}: {
+  accent: string;
+  achievement: SeasonAchievement;
+  colors: ThemeColors;
+  locale: string;
+  styles: ReturnType<typeof createStyles>;
+  t: (key: string, params?: Record<string, string | number>) => string;
+}) {
+  const { currentProgress, isUnlocked, key, targetProgress, unlockedAt } = achievement;
+  const name = t(`ranks.achievements.items.${key}.name`);
+  const progressLabel = t('ranks.achievements.progress', {
+    current: currentProgress,
+    target: targetProgress,
+  });
+  const unlockedLabel = unlockedAt ? formatUnlockedAt(unlockedAt, locale) : undefined;
+
+  // Alt satır: açılmışsa tarih (yoksa "açıldı"), kilitliyse ilerleme.
+  const detail = isUnlocked
+    ? (unlockedLabel ?? t('ranks.achievements.unlocked'))
+    : progressLabel;
+
+  return (
+    <View
+      accessibilityLabel={
+        isUnlocked
+          ? t('ranks.achievements.unlockedA11y', { name })
+          : t('ranks.achievements.lockedA11y', {
+              current: currentProgress,
+              name,
+              target: targetProgress,
+            })
+      }
+      accessible
+      style={[styles.achievementCard, !isUnlocked && styles.achievementCardLocked]}>
+      <Ionicons
+        color={isUnlocked ? accent : colors.textTertiary}
+        name={ACHIEVEMENT_ICONS[key]}
+        size={20}
+      />
+      <View style={styles.achievementText}>
+        <Text numberOfLines={2} style={[styles.achievementName, !isUnlocked && styles.achievementNameLocked]}>
+          {name}
+        </Text>
+        <Text numberOfLines={1} style={styles.achievementDetail}>
+          {detail}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 function StatRow({
   isLast = false,
   label,
@@ -499,6 +673,13 @@ function formatEventDate(dateKey: string, locale: string) {
   return dateFromKey(dateKey).toLocaleDateString(locale, { day: 'numeric', month: 'short' });
 }
 
+/** `timestamptz` → kısa yerelleştirilmiş gün. Okunamazsa `undefined`. */
+function formatUnlockedAt(timestamp: string, locale: string) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return date.toLocaleDateString(locale, { day: 'numeric', month: 'short' });
+}
+
 function formatWeekday(dateKey: string, locale: string) {
   return dateFromKey(dateKey).toLocaleDateString(locale, { weekday: 'short' }).replace('.', '');
 }
@@ -575,6 +756,38 @@ function createStyles(colors: ThemeColors) {
     weekRetry: { minHeight: Layout.minTouchSize, justifyContent: 'center' },
     weekRetryInline: { alignSelf: 'flex-start', minHeight: Layout.minTouchSize, justifyContent: 'center' },
     weekRetryText: { fontSize: 13, fontWeight: '600' },
+
+    achievementsBlock: { marginTop: 24 },
+    achievementsGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    /** İki sütun: küçük ekranlarda da taşmaz, metinler sarar. */
+    achievementCard: {
+      alignItems: 'center',
+      backgroundColor: colors.card,
+      borderRadius: Layout.radiusMedium,
+      flexDirection: 'row',
+      gap: 10,
+      minHeight: 64,
+      padding: 12,
+      width: '48%',
+    },
+    achievementCardLocked: { opacity: 0.72 },
+    achievementText: { flexShrink: 1, gap: 2 },
+    achievementName: { color: colors.text, fontSize: 13, fontWeight: '600' },
+    achievementNameLocked: { color: colors.textSecondary },
+    achievementDetail: { color: colors.textTertiary, fontSize: 11, fontWeight: '400' },
+    achievementsState: { alignItems: 'center', gap: 8, justifyContent: 'center', minHeight: 64 },
+    achievementsStateText: { color: colors.textSecondary, fontSize: 13, textAlign: 'center' },
+    achievementsRetry: { justifyContent: 'center', minHeight: Layout.minTouchSize },
+    achievementsRetryInline: {
+      alignSelf: 'flex-start',
+      justifyContent: 'center',
+      minHeight: Layout.minTouchSize,
+    },
+    achievementsRetryText: { fontSize: 13, fontWeight: '600' },
 
     statList: { marginTop: 24 },
     statRow: {

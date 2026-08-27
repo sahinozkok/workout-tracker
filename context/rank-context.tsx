@@ -25,6 +25,7 @@ import {
   fetchMyRankHistory,
   fetchMyRankWeekFocus,
   syncMyRank,
+  syncMySeasonAchievements,
 } from '@/services/ranks';
 import {
   RankEvent,
@@ -32,6 +33,7 @@ import {
   RankSeasonSummary,
   RankUpCelebration,
   RankWeekFocus,
+  SeasonAchievement,
   SeasonRecap,
 } from '@/types/ranks';
 
@@ -68,6 +70,13 @@ type RankContextValue = {
   weekFocus?: RankWeekFocus;
   isWeekFocusLoading: boolean;
   hasWeekFocusError: boolean;
+  /**
+   * Güncel sezonun görsel başarıları. Yalnızca Rank ekranı istediğinde
+   * yüklenir; RP/XP/gül tarafına HİÇ dokunmaz.
+   */
+  achievements: SeasonAchievement[];
+  isAchievementsLoading: boolean;
+  hasAchievementsError: boolean;
   /** Gösterilmeyi bekleyen rank yükselmesi. Gösterilince temizlenir. */
   rankUp?: RankUpCelebration;
   /** Güvenli sync. Tekrar çağrılması zararsızdır. */
@@ -75,6 +84,7 @@ type RankContextValue = {
   loadHistory: () => Promise<void>;
   loadEvents: () => Promise<void>;
   loadWeekFocus: () => Promise<void>;
+  loadAchievements: () => Promise<void>;
   /**
    * Kutlama ekranda GERÇEKTEN gösterilmeye başladı. Onay kaydı yalnızca
    * burada yazılır; kapanışı yönetmez.
@@ -135,6 +145,9 @@ export function RankProvider({ children }: PropsWithChildren) {
   const [weekFocus, setWeekFocus] = useState<RankWeekFocus>();
   const [isWeekFocusLoading, setIsWeekFocusLoading] = useState(false);
   const [hasWeekFocusError, setHasWeekFocusError] = useState(false);
+  const [achievements, setAchievements] = useState<SeasonAchievement[]>([]);
+  const [isAchievementsLoading, setIsAchievementsLoading] = useState(false);
+  const [hasAchievementsError, setHasAchievementsError] = useState(false);
   const [rankUp, setRankUp] = useState<RankUpCelebration>();
   const [seasonRecap, setSeasonRecap] = useState<SeasonRecap>();
 
@@ -161,6 +174,12 @@ export function RankProvider({ children }: PropsWithChildren) {
   const isWeekFocusFetchingRef = useRef(false);
   const hasQueuedWeekFocusRef = useRef(false);
   const loadWeekFocusRef = useRef<() => void>(() => undefined);
+
+  /** Sezon başarıları da yalnızca Rank ekranı istediğinde yüklenir. */
+  const hasRequestedAchievementsRef = useRef(false);
+  const isAchievementsFetchingRef = useRef(false);
+  const hasQueuedAchievementsRef = useRef(false);
+  const loadAchievementsRef = useRef<() => void>(() => undefined);
 
   /** Kutlama onay kaydının bellek içi kopyası; her seferinde depo okunmaz. */
   const baselineRef = useRef<CelebrationBaseline>(undefined);
@@ -237,6 +256,12 @@ export function RankProvider({ children }: PropsWithChildren) {
        */
       if (hasRequestedEventsRef.current) loadEventsRef.current();
       if (hasRequestedWeekFocusRef.current) loadWeekFocusRef.current();
+      /**
+       * Sezon değiştiyse başarılar da yeni sezona göre yeniden okunur — ama
+       * YALNIZCA ekran daha önce istediyse. İstemediyse tek bir ek istek bile
+       * atılmaz ve polling KURULMAZ.
+       */
+      if (hasRequestedAchievementsRef.current) loadAchievementsRef.current();
     } catch {
       // Sessiz: rank okunamazsa ekran mevcut değerle çalışmaya devam eder ve
       // sonraki güvenli sync aynı olayları idempotent biçimde tamamlar.
@@ -371,6 +396,57 @@ export function RankProvider({ children }: PropsWithChildren) {
       void loadWeekFocus();
     };
   }, [loadWeekFocus]);
+
+  /**
+   * Sezon başarıları.
+   *
+   * Haftalık odakla AYNI tek-uçuş / latest-wins / hesap sahipliği kurallarını
+   * uygular: A hesabının geç gelen cevabı B'nin state'ine yazamaz, uçuş
+   * sürerken ikinci istek başlamaz ama not düşülür. Hata YALNIZCA bu bölümde
+   * gösterilir; rank ekranının geri kalanını ve antrenman akışlarını hiçbir
+   * koşulda engellemez.
+   */
+  const loadAchievements = useCallback(async () => {
+    if (!userId) return;
+    hasRequestedAchievementsRef.current = true;
+
+    if (isAchievementsFetchingRef.current) {
+      hasQueuedAchievementsRef.current = true;
+      return;
+    }
+
+    isAchievementsFetchingRef.current = true;
+    const owner = ownerRef.current;
+    if (isMountedRef.current) {
+      setIsAchievementsLoading(true);
+      setHasAchievementsError(false);
+    }
+
+    try {
+      const next = await syncMySeasonAchievements(todayKeyRef.current);
+      if (!isMountedRef.current || owner !== ownerRef.current) return;
+      setAchievements(next);
+    } catch {
+      if (!isMountedRef.current || owner !== ownerRef.current) return;
+      setHasAchievementsError(true);
+    } finally {
+      if (owner === ownerRef.current) {
+        isAchievementsFetchingRef.current = false;
+        if (isMountedRef.current) setIsAchievementsLoading(false);
+
+        if (hasQueuedAchievementsRef.current) {
+          hasQueuedAchievementsRef.current = false;
+          void loadAchievements();
+        }
+      }
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    loadAchievementsRef.current = () => {
+      void loadAchievements();
+    };
+  }, [loadAchievements]);
 
   /**
    * Kutlamanın GÖSTERİM ONAYI.
@@ -706,6 +782,9 @@ export function RankProvider({ children }: PropsWithChildren) {
     isWeekFocusFetchingRef.current = false;
     hasQueuedWeekFocusRef.current = false;
     hasRequestedWeekFocusRef.current = false;
+    isAchievementsFetchingRef.current = false;
+    hasQueuedAchievementsRef.current = false;
+    hasRequestedAchievementsRef.current = false;
     baselineRef.current = undefined;
     rankUpRef.current = undefined;
     seasonRef.current = undefined;
@@ -724,6 +803,9 @@ export function RankProvider({ children }: PropsWithChildren) {
     setWeekFocus(undefined);
     setHasWeekFocusError(false);
     setIsWeekFocusLoading(false);
+    setAchievements([]);
+    setHasAchievementsError(false);
+    setIsAchievementsLoading(false);
     setRankUp(undefined);
     setSeasonRecap(undefined);
     setIsRankLoading(Boolean(userId));
@@ -752,16 +834,20 @@ export function RankProvider({ children }: PropsWithChildren) {
   const value = useMemo<RankContextValue>(
     () => ({
       acknowledgeRankUpShown,
+      achievements,
       acknowledgeSeasonRecapShown,
       dismissRankUp,
       dismissSeasonRecap,
       events,
       history,
+      hasAchievementsError,
       hasWeekFocusError,
+      isAchievementsLoading,
       isEventsLoading,
       isHistoryLoading,
       isRankLoading,
       isWeekFocusLoading,
+      loadAchievements,
       loadEvents,
       loadHistory,
       loadWeekFocus,
@@ -773,16 +859,20 @@ export function RankProvider({ children }: PropsWithChildren) {
     }),
     [
       acknowledgeRankUpShown,
+      achievements,
       acknowledgeSeasonRecapShown,
       dismissRankUp,
       dismissSeasonRecap,
       events,
       history,
+      hasAchievementsError,
       hasWeekFocusError,
+      isAchievementsLoading,
       isEventsLoading,
       isHistoryLoading,
       isRankLoading,
       isWeekFocusLoading,
+      loadAchievements,
       loadEvents,
       loadHistory,
       loadWeekFocus,

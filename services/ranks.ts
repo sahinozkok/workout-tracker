@@ -2,8 +2,10 @@ import {
   FriendRankLeaderboardRow,
   parseFriendRankLeaderboard,
   parseRankEventKind,
+  parseSeasonAchievements,
   RANK_EVENT_LIMIT,
   resolveRankEventLabel,
+  SeasonAchievementRow,
 } from '@/constants/rank-experience';
 import { RankId, RANK_IDS } from '@/constants/ranks';
 import { supabase } from '@/lib/supabase';
@@ -14,6 +16,7 @@ import {
   RankSeasonArchive,
   RankSeasonSummary,
   RankWeekFocus,
+  SeasonAchievement,
 } from '@/types/ranks';
 
 /**
@@ -293,4 +296,24 @@ export async function fetchFriendsRankLeaderboard(): Promise<FriendRankLeaderboa
     fallbackRank: 'bronze',
     order: RANK_IDS,
   });
+}
+
+/**
+ * Güncel sezonun görsel başarıları.
+ *
+ * İstemci YALNIZCA yerel gününü gönderir; kullanıcı kimliği, sezon numarası,
+ * ilerleme veya tamamlanma bilgisi GÖNDERİLMEZ. Sunucu sezonu kendisi
+ * belirler, kanıtı kendi tablolarından okur ve altı satırın tamamını sabit
+ * sırada döndürür.
+ *
+ * Çağrı idempotenttir: ikinci kez çağrılması yeni rozet yazmaz ve mevcut
+ * `unlocked_at` değerini değiştirmez.
+ */
+export async function syncMySeasonAchievements(clientToday: string): Promise<SeasonAchievement[]> {
+  const { data, error } = await supabase.rpc('sync_my_season_achievements', {
+    client_today: clientToday,
+  });
+  if (error) throw error;
+
+  return parseSeasonAchievements(data as SeasonAchievementRow[] | null);
 }
