@@ -2789,7 +2789,10 @@ export function FloatingMascot() {
       const next: ActiveReaction = { runId: reactionRunRef.current, type };
       activeReactionRef.current = next;
       setActiveReaction(next);
-      setState(type === 'workout-complete' ? 'celebrating' : 'happy');
+      // `rank-up` de bir kutlamadır: aynı kutlama duruşunu ve hareket dizisini
+      // kullanır, ama kendi balonunu AÇMAZ (metni kutlama katmanı gösterir).
+      const isCelebration = type === 'workout-complete' || type === 'rank-up';
+      setState(isCelebration ? 'celebrating' : 'happy');
 
       if (type === 'workout-complete') {
         // Kutlama açık normal balonu devralır.
@@ -2806,7 +2809,7 @@ export function FloatingMascot() {
 
       if (reduceMotion) {
         // Reduce Motion: yoğun zıplama/dönüş yerine kısa opacity + scale nabzı.
-        const peak = type === 'workout-complete' ? 1.08 : 1.04;
+        const peak = isCelebration ? 1.08 : 1.04;
         reactionScale.value = withSequence(
           withTiming(peak, { duration: REDUCED_REACTION_DURATION / 2 }),
           withTiming(1, { duration: REDUCED_REACTION_DURATION / 2 }),
@@ -2989,7 +2992,7 @@ export function FloatingMascot() {
         ? LOVE_REACTION_DURATION
         : reduceMotion
           ? REDUCED_REACTION_DURATION
-          : activeReaction.type === 'workout-complete'
+          : activeReaction.type === 'workout-complete' || activeReaction.type === 'rank-up'
             ? WORKOUT_REACTION_DURATION
             : SET_REACTION_DURATION;
 

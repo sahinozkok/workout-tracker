@@ -1,3 +1,4 @@
+import { RankEventKind, RankEventLabelKey } from '@/constants/rank-experience';
 import { RankId } from '@/constants/ranks';
 
 /**
@@ -57,4 +58,44 @@ export type FriendRankSummary = {
   currentRp: number;
   currentRank: RankId;
   peakRank: RankId;
+};
+
+/**
+ * Kullanıcının kendi RP hareketi — `public.rank_events` satırının EKRANDA
+ * gereken parçası.
+ *
+ * Ham `event_type`, `source_key`, satır kimliği veya JSON metadata kullanıcıya
+ * GÖSTERİLMEZ; bu tip zaten yalnızca gösterime dönüştürülmüş alanları taşır.
+ * `id` sadece React listesi için kullanılır.
+ *
+ * Satırlar sunucuda üretilir ve append-only'dir: `rpDelta` bir kanıt
+ * geçersizleştiğinde (ör. antrenman silindiğinde) negatif olabilir.
+ */
+export type RankEvent = {
+  id: string;
+  kind: RankEventKind;
+  /** Sunucudan gelen RP değişimi. Negatif değer bir telafi satırıdır. */
+  rpDelta: number;
+  /** Kullanıcı metnine dönüşmüş etkinlik adının çeviri anahtarı. */
+  labelKey: RankEventLabelKey;
+  /**
+   * Ekranda gösterilecek tarih (`YYYY-MM-DD`). Sunucuda `awarded_for_date`
+   * boş kalabildiği için o durumda kaydın oluşturulma günü kullanılır.
+   */
+  dateKey: string;
+};
+
+/**
+ * Aynı sezon içinde gerçekleşmiş, henüz gösterilmemiş rank yükselmesi.
+ *
+ * `id` artan bir sayaçtır: React yeniden render olduğunda, tekrar sync'te veya
+ * AppState dönüşünde aynı yükseliş ikinci kez oynatılmaz.
+ */
+export type RankUpCelebration = {
+  id: number;
+  fromRank: RankId;
+  toRank: RankId;
+  /** Sunucudan gelen güncel RP. İstemci bu değeri hesaplamaz. */
+  rp: number;
+  seasonIndex: number;
 };

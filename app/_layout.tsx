@@ -7,6 +7,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { FloatingMascot } from '@/components/mascot/floating-mascot';
+import { RankUpCelebrationLayer } from '@/components/ranks/rank-up-celebration';
 import { AuthProvider, useAuth } from '@/context/auth-context';
 import { LanguageProvider, useLanguage, useTranslation } from '@/context/language-context';
 import { MascotProvider } from '@/context/mascot-context';
@@ -215,6 +216,15 @@ function AppNavigation() {
         kontrolü olmasaydı Rosea şifre sıfırlama ekranında görünür ve
         `MascotProvider` mount edilmediği için `useMascot()` hata fırlatırdı.
       */}
+      {/*
+        Rank yükselme kutlaması Rosea'dan ÖNCE çizilir: perde alttaki ekranı
+        kapatır ama Rosea üstte kalır, böylece kutlama tepkisi gerçekten
+        görünür. Maskot gibi yalnızca gerçek oturumda mount edilir — giriş,
+        kayıt ve şifre kurtarma ekranlarında hiç render edilmez ve o ekranlarda
+        `RankProvider`/`MascotProvider` de mount olmadığı için context okuması
+        güvenlidir.
+      */}
+      {Boolean(session) && !isPasswordRecovery && <RankUpCelebrationLayer />}
       {Boolean(session) && !isPasswordRecovery && <FloatingMascot />}
       <StatusBar style={isDark ? 'light' : 'dark'} />
     </ThemeProvider>

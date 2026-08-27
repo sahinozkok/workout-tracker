@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { MotionSection } from '@/components/motion-section';
 import { getRankColor, getRankSoftBackground, useRankName } from '@/components/ranks/rank-badge';
+import { toRankRpDisplay } from '@/constants/rank-experience';
 import {
   daysRemainingInSeason,
   nextRank,
@@ -17,7 +18,7 @@ import { useTranslation } from '@/context/language-context';
 import { useRanks } from '@/context/rank-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import { useLocalDateKey } from '@/hooks/use-shared-discipline-sync';
-import { RankSeasonArchive } from '@/types/ranks';
+import { RankEvent, RankSeasonArchive } from '@/types/ranks';
 import { dateFromKey } from '@/utils/workout-schedule';
 
 /**
@@ -35,15 +36,29 @@ import { dateFromKey } from '@/utils/workout-schedule';
 export default function RankScreen() {
   const { colors, isDark } = useAppTheme();
   const { locale, t } = useTranslation();
-  const { history, isHistoryLoading, isRankLoading, loadHistory, season } = useRanks();
+  const {
+    events,
+    history,
+    isEventsLoading,
+    isHistoryLoading,
+    isRankLoading,
+    loadEvents,
+    loadHistory,
+    season,
+  } = useRanks();
   const rankName = useRankName();
   const todayKey = useLocalDateKey();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
-  // Arşiv yalnızca bu ekran açıldığında yüklenir; arka planda polling yoktur.
+  // Arşiv ve RP geçmişi yalnızca bu ekran açıldığında yüklenir; arka planda
+  // polling YOKTUR.
   useEffect(() => {
     void loadHistory();
   }, [loadHistory]);
+
+  useEffect(() => {
+    void loadEvents();
+  }, [loadEvents]);
 
   if (!season) {
     return (
@@ -146,6 +161,31 @@ export default function RankScreen() {
         </MotionSection>
 
         <MotionSection delay={120} style={styles.historyBlock}>
+          <Text style={styles.sectionLabel}>{t('ranks.recentActivity')}</Text>
+
+          {isEventsLoading && events.length === 0 ? (
+            <View style={styles.historyLoading}>
+              <ActivityIndicator color={colors.textSecondary} size="small" />
+            </View>
+          ) : events.length === 0 ? (
+            <Text style={styles.emptyText}>{t('ranks.noRecentActivity')}</Text>
+          ) : (
+            events.map((event, index) => (
+              <EventRow
+                accent={accent}
+                dangerColor={colors.danger}
+                event={event}
+                isLast={index === events.length - 1}
+                key={event.id}
+                locale={locale}
+                styles={styles}
+                t={t}
+              />
+            ))
+          )}
+        </MotionSection>
+
+        <MotionSection delay={160} style={styles.historyBlock}>
           <Text style={styles.sectionLabel}>{t('ranks.pastSeasons')}</Text>
 
           {isHistoryLoading && history.length === 0 ? (
@@ -189,6 +229,55 @@ function StatRow({
       <Text style={styles.statLabel}>{label}</Text>
       <Text numberOfLines={1} style={styles.statValue}>
         {value}
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * Tek RP hareketi.
+ *
+ * Dokunma hedefi YOKTUR: sade, salt okunur bir satırdır. Ham `event_type`,
+ * `source_key`, satır kimliği veya JSON metadata GÖSTERİLMEZ — ad zaten
+ * serviste güvenli bir çeviri anahtarına dönüştürülmüştür.
+ *
+ * Güçlü renk yalnızca RP değerindedir: pozitif kazanım rank vurgusu, negatif
+ * telafi mevcut `danger` rengiyle çizilir. Ad ve tarih tema renklerinde kalır.
+ */
+function EventRow({
+  accent,
+  dangerColor,
+  event,
+  isLast,
+  locale,
+  styles,
+  t,
+}: {
+  accent: string;
+  dangerColor: string;
+  event: RankEvent;
+  isLast: boolean;
+  locale: string;
+  styles: ReturnType<typeof createStyles>;
+  t: (key: string, params?: Record<string, string | number>) => string;
+}) {
+  const { amount, isPositive } = toRankRpDisplay(event.rpDelta);
+
+  return (
+    <View style={[styles.eventRow, isLast && styles.eventRowLast]}>
+      <View style={styles.eventTextGroup}>
+        <Text numberOfLines={1} style={styles.eventTitle}>
+          {t(`ranks.events.${event.labelKey}`)}
+        </Text>
+        <Text numberOfLines={2} style={styles.eventMeta}>
+          {formatEventDate(event.dateKey, locale)}
+          {isPositive ? '' : ` · ${t('ranks.events.correctionNote')}`}
+        </Text>
+      </View>
+      <Text
+        numberOfLines={1}
+        style={[styles.eventRp, { color: isPositive ? accent : dangerColor }]}>
+        {t(isPositive ? 'ranks.events.rpGain' : 'ranks.events.rpLoss', { rp: amount })}
       </Text>
     </View>
   );
@@ -248,6 +337,11 @@ function formatRange(startsOn: string, endsOn: string, locale: string) {
   return `${start} – ${end}`;
 }
 
+/** `YYYY-MM-DD` → kısa yerelleştirilmiş gün. */
+function formatEventDate(dateKey: string, locale: string) {
+  return dateFromKey(dateKey).toLocaleDateString(locale, { day: 'numeric', month: 'short' });
+}
+
 function createStyles(colors: ThemeColors) {
   return StyleSheet.create({
     safeArea: { backgroundColor: colors.background, flex: 1 },
@@ -288,6 +382,21 @@ function createStyles(colors: ThemeColors) {
     sectionLabel: { color: colors.textSecondary, fontSize: 11, fontWeight: '600', marginBottom: 8 },
     historyLoading: { alignItems: 'center', paddingVertical: 24 },
     emptyText: { color: colors.textTertiary, fontSize: 13, fontWeight: '400', paddingVertical: 16 },
+
+    eventRow: {
+      alignItems: 'center',
+      borderBottomColor: colors.separator,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row',
+      gap: 12,
+      justifyContent: 'space-between',
+      paddingVertical: 12,
+    },
+    eventRowLast: { borderBottomWidth: 0 },
+    eventTextGroup: { flexShrink: 1, gap: 4 },
+    eventTitle: { color: colors.text, fontSize: 15, fontWeight: '600' },
+    eventMeta: { color: colors.textSecondary, fontSize: 11, fontWeight: '400' },
+    eventRp: { fontSize: 15, fontWeight: '600' },
 
     archiveRow: {
       borderBottomColor: colors.separator,

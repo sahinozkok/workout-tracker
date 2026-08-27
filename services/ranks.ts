@@ -1,6 +1,16 @@
+import {
+  parseRankEventKind,
+  RANK_EVENT_LIMIT,
+  resolveRankEventLabel,
+} from '@/constants/rank-experience';
 import { RankId, RANK_IDS } from '@/constants/ranks';
 import { supabase } from '@/lib/supabase';
-import { FriendRankSummary, RankSeasonArchive, RankSeasonSummary } from '@/types/ranks';
+import {
+  FriendRankSummary,
+  RankEvent,
+  RankSeasonArchive,
+  RankSeasonSummary,
+} from '@/types/ranks';
 
 /**
  * Sezonluk rank servis katmanı. Bütün Supabase çağrıları burada toplanır;
@@ -48,6 +58,31 @@ type FriendRankRow = {
   current_rank: string;
   peak_rank: string;
 };
+
+/**
+ * `rank_events` satırının SEÇİLEN alanları.
+ *
+ * `day_state`, PostgREST'in `metadata->>state` yansımasıdır: JSON'un tamamı
+ * çekilmez, yalnızca planlı günün kısmi/tam bilgisi gelir. Diğer türlerde bu
+ * alan `null` döner ve genel etiket kullanılır.
+ */
+type RankEventRow = {
+  id: string;
+  event_type: string;
+  rp_delta: number;
+  awarded_for_date: string | null;
+  created_at: string;
+  day_state: string | null;
+};
+
+/** `timestamptz` → `YYYY-MM-DD`. Ekran tarihi cihazın yerel gününde gösterir. */
+function toDateKey(timestamp: string): string {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return timestamp.slice(0, 10);
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
 
 /**
  * Sunucudan gelen rank kimliğini güvenle daraltır.
@@ -142,4 +177,51 @@ export async function fetchFriendRank(targetUserId: string): Promise<FriendRankS
     peakRank: parseRankId(row.peak_rank),
     seasonIndex: row.season_index,
   };
+}
+
+/**
+ * Kullanıcının KENDİ son RP hareketleri.
+ *
+ * GÜVENLİK — sorgu `public.rank_events` tablosuna DOĞRUDAN gider ve hiçbir
+ * kullanıcı kimliği GÖNDERMEZ. Satır izolasyonunun tek otoritesi
+ * `rank_events_select_own` RLS politikasıdır (`auth.uid() = user_id`); istemci
+ * tarafında `eq('user_id', …)` gibi ikinci bir filtre YOKTUR, çünkü öyle bir
+ * filtre güvenlik sağlamaz ama "istemci kimlik gönderiyor" izlenimi yaratır.
+ * Tabloda istemci için insert/update/delete policy'si bulunmadığından bu yol
+ * salt okunurdur.
+ *
+ * Yalnızca ekranda kullanılan alanlar seçilir: `season_index` ve `source_key`
+ * hiç çekilmez, metadata'dan da yalnızca planlı günün durumu (`state`) okunur
+ * — `desired_rp` / `written_rp` gibi denetim alanları istemciye HİÇ gelmez.
+ *
+ * Sıralama en yeni kayıt önce (`created_at desc`), en fazla
+ * `RANK_EVENT_LIMIT` satır. Polling YOKTUR; çağıran ekran istediğinde çalışır.
+ */
+export async function fetchMyRankEvents(): Promise<RankEvent[]> {
+  const { data, error } = await supabase
+    .from('rank_events')
+    .select('id, event_type, rp_delta, awarded_for_date, created_at, day_state:metadata->>state')
+    .order('created_at', { ascending: false })
+    .limit(RANK_EVENT_LIMIT);
+
+  if (error) throw error;
+
+  const events: RankEvent[] = [];
+
+  for (const row of (data ?? []) as RankEventRow[]) {
+    const kind = parseRankEventKind(row.event_type);
+    // Sunucu ileride yeni bir tür eklerse eski istemci ham anahtar göstermez:
+    // satır sessizce atlanır ve liste çalışmaya devam eder.
+    if (!kind) continue;
+
+    events.push({
+      dateKey: row.awarded_for_date ?? toDateKey(row.created_at),
+      id: row.id,
+      kind,
+      labelKey: resolveRankEventLabel(kind, row.day_state),
+      rpDelta: row.rp_delta,
+    });
+  }
+
+  return events;
 }

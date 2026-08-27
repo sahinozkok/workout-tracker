@@ -293,6 +293,8 @@ const REACTION_EXPRESSION: Record<MascotReactionType, MascotExpression> = {
   loved: 'happy',
   'set-complete': 'mischievous',
   'workout-complete': 'celebrating',
+  // Rank yükselmesi de bir kutlamadır; mevcut kutlama karesi yeniden kullanılır.
+  'rank-up': 'celebrating',
 };
 
 /**

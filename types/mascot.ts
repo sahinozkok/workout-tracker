@@ -4,8 +4,9 @@ export type MascotState = 'idle' | 'dragging' | 'happy' | 'thinking' | 'celebrat
 /**
  * Tek seferlik maskot olayları. `set-complete` ve `workout-complete` ekranlardan
  * gelir; `loved` yalnızca maskota çift dokunulduğunda yerel olarak tetiklenir.
+ * `rank-up`, sezon rankı yükseldiğinde kutlama katmanından **bir kez** gelir.
  */
-export type MascotReactionType = 'set-complete' | 'workout-complete' | 'loved';
+export type MascotReactionType = 'set-complete' | 'workout-complete' | 'loved' | 'rank-up';
 
 /**
  * Tek seferlik tepki. `id` artan olduğu için React yeniden render olduğunda
@@ -18,13 +19,18 @@ export type MascotReaction = {
 
 /**
  * Çakışma önceliği (büyükten küçüğe):
- * dragging > workout-complete > set-complete > loved > thinking > idle
+ * dragging > workout-complete = rank-up > set-complete > loved > thinking > idle
  *
  * `loved` en düşük tepki önceliğidir: süren bir kutlamayı veya set sevinmesini
  * asla bölemez, buna karşılık antrenman olayları sevme tepkisini devralabilir.
+ *
+ * `rank-up` bilinçli olarak `workout-complete` ile EŞİT önceliktedir: eşit
+ * öncelik devralmadığı için antrenman kutlaması sürerken ikinci bir kutlama
+ * animasyonu/partikülü oluşmaz ve tersi de doğrudur.
  */
 export const MASCOT_REACTION_PRIORITY: Record<MascotReactionType, number> = {
   'workout-complete': 2,
+  'rank-up': 2,
   'set-complete': 1,
   loved: 0,
 };
