@@ -49,7 +49,15 @@ export function SeasonRecapLayer() {
   const { colors, isDark } = useAppTheme();
   const { locale, t } = useTranslation();
   const rankName = useRankName();
-  const { acknowledgeSeasonRecapShown, dismissSeasonRecap, rankUp, seasonRecap } = useRanks();
+  const {
+    acknowledgeSeasonRecapShown,
+    activeRankOverlay,
+    claimRankOverlay,
+    dismissSeasonRecap,
+    rankUp,
+    releaseRankOverlay,
+    seasonRecap,
+  } = useRanks();
   const pathname = usePathname();
   const reduceMotion = useReducedMotion();
   const insets = useSafeAreaInsets();
@@ -78,6 +86,17 @@ export function SeasonRecapLayer() {
     // ÖNCELİK: bekleyen rank yükselmesi varsa önce o gösterilir. Kutlama
     // kapandığında `rankUp` temizlenir ve özet sırası gelir.
     if (rankUp) return;
+    /**
+     * Senkron katman sahipliği: başarı kutlaması görünürken özet açılmaz ve
+     * üst üste binmez. Süren katman bölünmez; özet sırasını bekler.
+     */
+    /**
+     * `activeRankOverlay` bilinçli bir bağımlılıktır: claim başarısız olup
+     * effect çıktığında, kilit serbest kaldığı anda bu effect yeniden çalışır
+     * ve bekleyen katman kendiliğinden açılır. Başka bir state değişikliği
+     * BEKLENMEZ. Öncelik korunur ve süren kutlama YARIDA KESİLMEZ.
+     */
+    if (!claimRankOverlay('season-recap')) return;
 
     /**
      * Bu effect YALNIZCA kapıları geçip `shown` state'ini ayarlar.
@@ -89,7 +108,10 @@ export function SeasonRecapLayer() {
      */
     setShown(seasonRecap);
     isClosingRef.current = false;
-  }, [isSafeScreen, rankUp, seasonRecap, shown]);
+  }, [activeRankOverlay, claimRankOverlay, isSafeScreen, rankUp, seasonRecap, shown]);
+
+  // Katman unmount olursa sahiplik KESİN olarak bırakılır; kilit asılı kalmaz.
+  useEffect(() => () => releaseRankOverlay('season-recap'), [releaseRankOverlay]);
 
   useEffect(() => {
     if (!shown) return;
@@ -131,9 +153,11 @@ export function SeasonRecapLayer() {
       isClosingRef.current = false;
       layoutAcknowledgedRef.current = undefined;
       setShown(undefined);
+      // Sahiplik bırakılır: sıradaki katman açılabilir.
+      releaseRankOverlay('season-recap');
       dismissSeasonRecap(closedSeasonIndex);
     },
-    [dismissSeasonRecap],
+    [dismissSeasonRecap, releaseRankOverlay],
   );
 
   const handleStart = useCallback(() => {

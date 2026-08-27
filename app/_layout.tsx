@@ -7,6 +7,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { FloatingMascot } from '@/components/mascot/floating-mascot';
+import { AchievementUnlockCelebrationLayer } from '@/components/ranks/achievement-unlock-celebration';
 import { RankUpCelebrationLayer } from '@/components/ranks/rank-up-celebration';
 import { SeasonRecapLayer } from '@/components/ranks/season-recap';
 import { AuthProvider, useAuth } from '@/context/auth-context';
@@ -242,6 +243,13 @@ function AppNavigation() {
         rank yükselmesi varken kendini hiç göstermez ve sırasını bekler.
       */}
       {Boolean(session) && !isPasswordRecovery && <SeasonRecapLayer />}
+      {/*
+        Başarı kutlaması ÖNCELİK SIRASINDA en sondadır: bekleyen bir rank
+        yükselmesi veya sezon özeti varken kendini hiç göstermez. Üçü de
+        `RankContext` üzerinden senkron katman sahipliği alır, bu yüzden
+        hiçbir koşulda üst üste binmezler.
+      */}
+      {Boolean(session) && !isPasswordRecovery && <AchievementUnlockCelebrationLayer />}
       {Boolean(session) && !isPasswordRecovery && <FloatingMascot />}
       <StatusBar style={isDark ? 'light' : 'dark'} />
     </ThemeProvider>

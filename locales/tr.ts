@@ -778,6 +778,12 @@ export const tr = {
       retry: 'Tekrar dene',
       unlockedA11y: '{name}: açıldı.',
       lockedA11y: '{name}: kilitli. İlerleme {current} / {target}.',
+      /** Yeni rozet açıldığında gösterilen kısa kutlama. */
+      celebration: {
+        title: 'BAŞARI KAZANILDI',
+        continue: 'Devam',
+        a11y: 'Başarı kazanıldı: {name}.',
+      },
       items: {
         first_workout: {
           name: 'İlk Adım',

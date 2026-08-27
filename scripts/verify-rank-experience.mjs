@@ -2027,7 +2027,12 @@ check('66. (I) Rank-up önceliği ve unsafe route bekletmesi KORUNUR', () => {
 check('67. Kaynak: onay YALNIZCA layout yolundan çağrılıyor', () => {
   // Gösterim kapısını geçen effect artık onay ÇAĞIRMAZ.
   const gateStart = recapSource.indexOf('if (shown || !seasonRecap || !isSafeScreen) return;');
-  const gateEnd = recapSource.indexOf('}, [isSafeScreen, rankUp, seasonRecap, shown]);');
+  /**
+   * Bitiş işaretçisi effect'in DEPS DİZİSİNE bağlanmaz: dizi meşru nedenlerle
+   * genişleyebilir (ör. katman sahipliği eklenmesi). Kalıcı olan sınır,
+   * effect'in hemen ardından gelen unmount temizliğidir.
+   */
+  const gateEnd = recapSource.indexOf('// Katman unmount olursa');
   assert(gateStart > 0 && gateEnd > gateStart, 'gösterim effect’i beklenen biçimde değil');
   assert(
     !recapSource.slice(gateStart, gateEnd).includes('acknowledgeSeasonRecapShown'),

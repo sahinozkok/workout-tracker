@@ -6,8 +6,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { MotionPressable } from '@/components/motion-pressable';
 import { MotionSection } from '@/components/motion-section';
+import { ACHIEVEMENT_ICONS } from '@/components/ranks/achievement-icons';
 import { getRankColor, getRankSoftBackground, useRankName } from '@/components/ranks/rank-badge';
-import { SeasonAchievementKey, toRankRpDisplay } from '@/constants/rank-experience';
+import { toRankRpDisplay } from '@/constants/rank-experience';
 import {
   daysRemainingInSeason,
   nextRank,
@@ -400,16 +401,10 @@ function WeekFocusCard({
  * sunucudan geldiği gibi gösterilir. Rozetler yalnızca görseldir; RP, XP veya
  * gül üretmez. Hata bu bölümle sınırlıdır — ekranın geri kalanı çalışmaya
  * devam eder.
+ *
+ * İkon eşlemesi `components/ranks/achievement-icons.ts` içindedir; açılma
+ * kutlaması da aynı kaynağı kullanır.
  */
-const ACHIEVEMENT_ICONS: Record<SeasonAchievementKey, keyof typeof Ionicons.glyphMap> = {
-  first_workout: 'footsteps-outline',
-  workout_5: 'barbell-outline',
-  workout_15: 'trophy-outline',
-  streak_3: 'flame-outline',
-  streak_7: 'flame',
-  perfect_week: 'checkmark-done-outline',
-};
-
 function AchievementsGrid({
   accent,
   achievements,

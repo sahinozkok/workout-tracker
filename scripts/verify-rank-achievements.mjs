@@ -672,10 +672,30 @@ check('16. Hata durumunda mevcut rank ekranı ÇALIŞMAYA DEVAM EDİYOR', () => 
     ),
     'başarılar için polling kurulmuş',
   );
-  // Yalnızca ekran istediğinde yüklenir; sync sonrası tazeleme koşullu.
+  /**
+   * Tazeleme MEVCUT rank sync'ine bağlıdır — kendi tetikleyicisini kurmaz.
+   *
+   * Faz 7A'da bu çağrı `hasRequestedAchievementsRef` ile koşulluydu; başarı
+   * açılma kutlaması eklendiğinde koşul KALDIRILDI, çünkü
+   * `sync_my_season_achievements` rozetleri YAZAN RPC'dir ve yalnızca Rank
+   * ekranı açıldığında çağrılsaydı kullanıcı antrenmandan hemen sonraki
+   * kutlamayı kaçırırdı. Kalıcı güvence "koşullu olması" değil, tazelemenin
+   * yalnızca zaten var olan rank sync'inden gelmesi ve tek-uçuş kilidinin
+   * eşzamanlı ikinci RPC'yi engellemesidir.
+   */
+  const syncBody = contextSource.slice(
+    contextSource.indexOf('const runSync = useCallback('),
+    contextSource.indexOf('const syncRank = useCallback('),
+  );
+  assert(syncBody.length > 0, 'runSync bulunamadı');
   assert(
-    contextSource.includes('if (hasRequestedAchievementsRef.current) loadAchievementsRef.current();'),
-    'sezon değişiminde koşullu tazeleme yok',
+    syncBody.includes('loadAchievementsRef.current();'),
+    'rank sync sonrası başarı tazelemesi yok',
+  );
+  assert(
+    contextSource.includes('if (isAchievementsFetchingRef.current) {') &&
+      contextSource.includes('hasQueuedAchievementsRef.current = true;'),
+    'tek-uçuş/latest-wins kaybolmuş — eşzamanlı ikinci RPC riski',
   );
 });
 

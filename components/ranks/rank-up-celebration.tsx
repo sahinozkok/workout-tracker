@@ -51,7 +51,14 @@ export function RankUpCelebrationLayer() {
   const { colors, isDark } = useAppTheme();
   const { t } = useTranslation();
   const rankName = useRankName();
-  const { acknowledgeRankUpShown, dismissRankUp, rankUp } = useRanks();
+  const {
+    acknowledgeRankUpShown,
+    activeRankOverlay,
+    claimRankOverlay,
+    dismissRankUp,
+    rankUp,
+    releaseRankOverlay,
+  } = useRanks();
   const { triggerReaction } = useMascot();
   const pathname = usePathname();
   const reduceMotion = useReducedMotion();
@@ -67,6 +74,19 @@ export function RankUpCelebrationLayer() {
   useEffect(() => {
     // Süren kutlama varken yenisi başlamaz; güvenli olmayan ekranda beklenir.
     if (shown || !rankUp || !isSafeScreen) return;
+    /**
+     * Senkron katman sahipliği: başka bir rank overlay'i (sezon özeti veya
+     * başarı kutlaması) GÖRÜNÜRKEN bu kutlama açılmaz ve üst üste binmez.
+     * Öncelik önceleme DEĞİLDİR — süren katman bölünmez, bu kutlama sırasını
+     * bekler ve o katman kapanınca açılır.
+     */
+    /**
+     * `activeRankOverlay` bilinçli bir bağımlılıktır: claim başarısız olup
+     * effect çıktığında, kilit serbest kaldığı anda bu effect yeniden çalışır
+     * ve bekleyen katman kendiliğinden açılır. Başka bir state değişikliği
+     * BEKLENMEZ. Öncelik korunur ve süren kutlama YARIDA KESİLMEZ.
+     */
+    if (!claimRankOverlay('rank-up')) return;
 
     setShown(rankUp);
     isClosingRef.current = false;
@@ -90,7 +110,18 @@ export function RankUpCelebrationLayer() {
      * AI sohbeti ve antrenman tepkisi mantığına dokunulmaz.
      */
     triggerReaction('rank-up');
-  }, [acknowledgeRankUpShown, isSafeScreen, rankUp, shown, triggerReaction]);
+  }, [
+    acknowledgeRankUpShown,
+    activeRankOverlay,
+    claimRankOverlay,
+    isSafeScreen,
+    rankUp,
+    shown,
+    triggerReaction,
+  ]);
+
+  // Katman unmount olursa sahiplik KESİN olarak bırakılır; kilit asılı kalmaz.
+  useEffect(() => () => releaseRankOverlay('rank-up'), [releaseRankOverlay]);
 
   useEffect(() => {
     if (!shown) return;
@@ -110,11 +141,13 @@ export function RankUpCelebrationLayer() {
     (celebrationId: number) => {
       isClosingRef.current = false;
       setShown(undefined);
+      // Sahiplik bırakılır: sıradaki katman açılabilir.
+      releaseRankOverlay('rank-up');
       // Yalnızca gösterilen kutlamayı temizler: bu sırada daha yüksek bir rank
       // gelmişse o kutlama korunur ve sırayla gösterilir.
       dismissRankUp(celebrationId);
     },
-    [dismissRankUp],
+    [dismissRankUp, releaseRankOverlay],
   );
 
   const handleContinue = useCallback(() => {

@@ -12,10 +12,17 @@ import {
 import { AppState } from 'react-native';
 
 import {
+  canClaimRankOverlay,
+  decideAchievementCelebrations,
   decideRankCelebration,
   decideSeasonRecap,
+  parseCelebratedAchievementKeys,
   rankCelebrationStorageKey,
+  RankOverlayOwner,
+  seasonAchievementCelebrationStorageKey,
+  SeasonAchievementKey,
   seasonRecapStorageKey,
+  serializeCelebratedAchievementKeys,
 } from '@/constants/rank-experience';
 import { RankId, RANK_IDS } from '@/constants/ranks';
 import { useAuth } from '@/context/auth-context';
@@ -77,6 +84,29 @@ type RankContextValue = {
   achievements: SeasonAchievement[];
   isAchievementsLoading: boolean;
   hasAchievementsError: boolean;
+  /** Gösterilmeyi bekleyen başarı kutlaması (kuyruğun başı). */
+  achievementCelebration?: SeasonAchievementKey;
+  /**
+   * Kutlama ekranda GERÇEKTEN render/layout oldu. Kalıcı kayıt yalnızca burada
+   * ilerler; kapanışı yönetmez.
+   */
+  acknowledgeAchievementCelebrationShown: (key: SeasonAchievementKey) => Promise<void>;
+  /** Kutlama kapandı. Kuyruktan yalnızca bu rozeti düşürür. */
+  dismissAchievementCelebration: (key: SeasonAchievementKey) => void;
+  /**
+   * KATMAN SAHİPLİĞİ — aynı anda yalnızca bir rank overlay'i görünebilir.
+   *
+   * Senkron ve ref tabanlıdır: iki katman aynı karede birden claim edemez.
+   * `false` dönerse çağıran katman gösterime BAŞLAMAZ ve sırasını bekler.
+   */
+  claimRankOverlay: (owner: RankOverlayOwner) => boolean;
+  /**
+   * Şu an görünen katman. Katmanların açılma effect'leri bunu DİNLER; kilit
+   * serbest kaldığında bekleyen uygun katman kendiliğinden yeniden dener.
+   */
+  activeRankOverlay?: RankOverlayOwner;
+  /** Sahipliği bırakır. Yalnızca sahibi olan katman bırakabilir. */
+  releaseRankOverlay: (owner: RankOverlayOwner) => void;
   /** Gösterilmeyi bekleyen rank yükselmesi. Gösterilince temizlenir. */
   rankUp?: RankUpCelebration;
   /** Güvenli sync. Tekrar çağrılması zararsızdır. */
@@ -148,6 +178,18 @@ export function RankProvider({ children }: PropsWithChildren) {
   const [achievements, setAchievements] = useState<SeasonAchievement[]>([]);
   const [isAchievementsLoading, setIsAchievementsLoading] = useState(false);
   const [hasAchievementsError, setHasAchievementsError] = useState(false);
+  const [achievementQueue, setAchievementQueue] = useState<SeasonAchievementKey[]>([]);
+  /**
+   * Aktif katman — REAKTİF.
+   *
+   * Değer bilinçli olarak context'e AÇILIR: bir katmanın `claimRankOverlay`
+   * çağrısı başarısız olduğunda effect'i çıkar, ve kilit serbest kaldığında
+   * yeniden denemesi için bir bağımlılık değişimi gerekir. Bu state olmasaydı
+   * bekleyen katman, alakasız başka bir state değişikliği olana kadar hiç
+   * açılmazdı. Senkron OTORİTE hâlâ `activeOverlayRef`tir; bu state yalnızca
+   * bekleyen katmanları uyandırır.
+   */
+  const [activeRankOverlay, setActiveOverlay] = useState<RankOverlayOwner>();
   const [rankUp, setRankUp] = useState<RankUpCelebration>();
   const [seasonRecap, setSeasonRecap] = useState<SeasonRecap>();
 
@@ -180,6 +222,23 @@ export function RankProvider({ children }: PropsWithChildren) {
   const isAchievementsFetchingRef = useRef(false);
   const hasQueuedAchievementsRef = useRef(false);
   const loadAchievementsRef = useRef<() => void>(() => undefined);
+
+  /** Depodaki "gösterildi" kaydının bellek içi kopyası. */
+  const celebratedAchievementsRef = useRef<{
+    keys: SeasonAchievementKey[];
+    seasonIndex: number;
+    userId: string;
+  }>(undefined);
+  /** Kutlama kararları ve depo yazmaları sıraya alınır: iki cevap yarışamaz. */
+  const achievementCelebrationChainRef = useRef<Promise<void>>(Promise.resolve());
+  /** Bekleyen kuyruğun senkron kopyası. */
+  const achievementQueueRef = useRef<SeasonAchievementKey[]>([]);
+
+  /**
+   * Aktif rank katmanı. Senkron OTORİTE budur; state yalnızca yeniden render
+   * içindir. Böylece iki katman aynı karede claim edemez.
+   */
+  const activeOverlayRef = useRef<RankOverlayOwner>(undefined);
 
   /** Kutlama onay kaydının bellek içi kopyası; her seferinde depo okunmaz. */
   const baselineRef = useRef<CelebrationBaseline>(undefined);
@@ -257,11 +316,19 @@ export function RankProvider({ children }: PropsWithChildren) {
       if (hasRequestedEventsRef.current) loadEventsRef.current();
       if (hasRequestedWeekFocusRef.current) loadWeekFocusRef.current();
       /**
-       * Sezon değiştiyse başarılar da yeni sezona göre yeniden okunur — ama
-       * YALNIZCA ekran daha önce istediyse. İstemediyse tek bir ek istek bile
-       * atılmaz ve polling KURULMAZ.
+       * BAŞARILAR HER BAŞARILI RANK SYNC'İNDEN SONRA UZLAŞTIRILIR.
+       *
+       * Bilinçli olarak `hasRequestedAchievementsRef` koşuluna BAĞLI DEĞİLDİR:
+       * `sync_my_season_achievements` rozetleri yazan RPC'dir, dolayısıyla
+       * yalnızca Rank ekranı açıldığında çağrılsaydı kullanıcı antrenmandan
+       * hemen sonraki kutlamayı kaçırırdı.
+       *
+       * Ek yük sınırlıdır ve yeni bir istek DÖNGÜSÜ kurulmaz: `loadAchievements`
+       * kendi tek-uçuş kilidini uygular (eşzamanlı ikinci RPC başlamaz), RPC
+       * idempotenttir ve POLLING/interval YOKTUR — tetikleyici yalnızca zaten
+       * var olan rank sync'idir.
        */
-      if (hasRequestedAchievementsRef.current) loadAchievementsRef.current();
+      loadAchievementsRef.current();
     } catch {
       // Sessiz: rank okunamazsa ekran mevcut değerle çalışmaya devam eder ve
       // sonraki güvenli sync aynı olayları idempotent biçimde tamamlar.
@@ -398,6 +465,75 @@ export function RankProvider({ children }: PropsWithChildren) {
   }, [loadWeekFocus]);
 
   /**
+   * Depodaki "gösterildi" kaydını okur ve bellek içi kopyayı tazeler.
+   *
+   * Bozuk JSON `undefined` döner; çağıran bunu "baseline yok" olarak yorumlar
+   * ve mevcut açılmış rozetleri güvenli baseline yazar. Depo hatası yutulur.
+   */
+  const readCelebratedAchievements = useCallback(
+    async (ownerId: string, seasonIndex: number) => {
+      const cached = celebratedAchievementsRef.current;
+      if (cached && cached.userId === ownerId && cached.seasonIndex === seasonIndex) {
+        return cached.keys;
+      }
+
+      const raw = await AsyncStorage.getItem(
+        seasonAchievementCelebrationStorageKey(ownerId, seasonIndex),
+      ).catch(() => null);
+
+      return parseCelebratedAchievementKeys(raw);
+    },
+    [],
+  );
+
+  /**
+   * Yeni açılan rozetleri kutlama kuyruğuna alır.
+   *
+   * DEĞİŞMEZLER
+   *  - İlk çalıştırmada kutlama ÜRETİLMEZ: mevcut rozetler baseline yazılır.
+   *  - Kuyruk katalog sırasındadır; birden fazla rozet tek tek gösterilir.
+   *  - Karar "gösterildi" DEĞİLDİR: kalıcı kayıt yalnızca overlay gerçekten
+   *    render/layout olduğunda ilerler (`acknowledgeAchievementCelebrationShown`).
+   *  - Hesap veya sezon arada değişirse geç gelen cevap YENİ duruma yazamaz.
+   */
+  const reconcileAchievementCelebrations = useCallback(
+    async (ownerId: string, seasonIndex: number, unlockedKeys: string[], owner: number) => {
+      if (owner !== ownerRef.current) return;
+
+      const stored = await readCelebratedAchievements(ownerId, seasonIndex);
+      if (!isMountedRef.current || owner !== ownerRef.current) return;
+
+      const decision = decideAchievementCelebrations({ celebrated: stored, unlockedKeys });
+
+      // Baseline henüz yoksa sessizce yazılır; eski rozetler kutlanmaz.
+      if (decision.type === 'seed') {
+        await AsyncStorage.setItem(
+          seasonAchievementCelebrationStorageKey(ownerId, seasonIndex),
+          serializeCelebratedAchievementKeys(decision.celebrated),
+        ).catch(() => undefined);
+      }
+
+      if (!isMountedRef.current || owner !== ownerRef.current) return;
+      celebratedAchievementsRef.current = {
+        keys: decision.celebrated,
+        seasonIndex,
+        userId: ownerId,
+      };
+
+      // Aynı kuyruk tekrar yazılmaz: gereksiz render ve sıfırlama olmaz.
+      const next = decision.queue;
+      const current = achievementQueueRef.current;
+      const isSame =
+        current.length === next.length && current.every((key, index) => key === next[index]);
+      if (isSame) return;
+
+      achievementQueueRef.current = next;
+      setAchievementQueue(next);
+    },
+    [readCelebratedAchievements],
+  );
+
+  /**
    * Sezon başarıları.
    *
    * Haftalık odakla AYNI tek-uçuş / latest-wins / hesap sahipliği kurallarını
@@ -426,6 +562,36 @@ export function RankProvider({ children }: PropsWithChildren) {
       const next = await syncMySeasonAchievements(todayKeyRef.current);
       if (!isMountedRef.current || owner !== ownerRef.current) return;
       setAchievements(next);
+
+      /**
+       * KUTLAMA UZLAŞTIRMASI YALNIZCA BURADAN — BAŞARILI RPC SONUCUNDAN —
+       * TETİKLENİR.
+       *
+       * Daha önce bu iş `achievements` state'ini dinleyen bir effect'teydi ve
+       * o state BAŞLANGIÇTA `[]` olduğu için sezon önce hazır olduğunda henüz
+       * yüklenmemiş boş dizi baseline yazılabiliyordu. Sonraki gerçek cevap
+       * geldiğinde saklanan baseline boş olduğu için GEÇMİŞ ROZETLERİN TAMAMI
+       * yeni kazanılmış sanılıp kutlanıyordu.
+       *
+       * Artık gate açık: uzlaştırma yalnızca `next` — yani bu kullanıcı ve bu
+       * sezon için gerçekten dönmüş bir RPC sonucu — ile çalışır. Başlangıç
+       * `[]`'i, hata sonrası `[]` ve cevap öncesi `[]` baseline ÜRETEMEZ.
+       *
+       * Sezon kimliği cevabın geldiği ANDA okunur; henüz bilinmiyorsa
+       * uzlaştırma atlanır ve bir sonraki başarılı rank sync'i (o da
+       * `loadAchievements`i tetikler) işi tamamlar.
+       */
+      const seasonIndex = seasonRef.current?.seasonIndex;
+      if (seasonIndex === undefined) return;
+
+      const unlockedKeys = next
+        .filter((achievement) => achievement.isUnlocked)
+        .map((achievement) => achievement.key);
+
+      // Zincir: iki cevap aynı anda depo okuyup yazamaz.
+      achievementCelebrationChainRef.current = achievementCelebrationChainRef.current
+        .then(() => reconcileAchievementCelebrations(userId, seasonIndex, unlockedKeys, owner))
+        .catch(() => undefined);
     } catch {
       if (!isMountedRef.current || owner !== ownerRef.current) return;
       setHasAchievementsError(true);
@@ -440,13 +606,93 @@ export function RankProvider({ children }: PropsWithChildren) {
         }
       }
     }
-  }, [userId]);
+  }, [reconcileAchievementCelebrations, userId]);
 
   useEffect(() => {
     loadAchievementsRef.current = () => {
       void loadAchievements();
     };
   }, [loadAchievements]);
+
+  // -------------------------------------------------------------------------
+  // Başarı açılma kutlaması — baseline, kuyruk, gösterim onayı
+  // -------------------------------------------------------------------------
+
+
+  /**
+   * Kutlamanın GÖSTERİM ONAYI.
+   *
+   * Kalıcı kaydı ilerleten TEK yol budur ve yalnızca kart gerçekten
+   * render/layout olduğunda çağrılır — "Devam" düğmesi BEKLENMEZ. Böylece
+   * kullanıcı kutlamayı görmeden uygulamayı kapatırsa rozet sonraki açılışta
+   * tekrar çıkar; bir kez görünmeye başladıysa tekrar oynatılmaz.
+   *
+   * State'i KAPATMAZ; kapatma `dismissAchievementCelebration` işidir.
+   * Aynı kutlamanın ikinci onayı yeni yazma üretmez.
+   */
+  const acknowledgeAchievementCelebrationShown = useCallback(
+    async (key: SeasonAchievementKey) => {
+      const ownerId = userId;
+      const seasonIndex = seasonRef.current?.seasonIndex;
+      if (!ownerId || seasonIndex === undefined) return;
+      // Kimlik kontrolü: yalnızca kuyruğun başındaki kutlama onaylanabilir.
+      if (achievementQueueRef.current[0] !== key) return;
+
+      const owner = ownerRef.current;
+      achievementCelebrationChainRef.current = achievementCelebrationChainRef.current
+        .then(async () => {
+          const cached = celebratedAchievementsRef.current;
+          const existing =
+            cached && cached.userId === ownerId && cached.seasonIndex === seasonIndex
+              ? cached.keys
+              : ((await readCelebratedAchievements(ownerId, seasonIndex)) ?? []);
+
+          // Zaten yazılmışsa ikinci yazma yapılmaz.
+          if (existing.includes(key)) return;
+
+          const nextKeys = [...existing, key];
+          await AsyncStorage.setItem(
+            seasonAchievementCelebrationStorageKey(ownerId, seasonIndex),
+            serializeCelebratedAchievementKeys(nextKeys),
+          ).catch(() => undefined);
+
+          // Bellek içi kopya YALNIZCA hâlâ güncel hesap için tazelenir.
+          if (owner !== ownerRef.current) return;
+          celebratedAchievementsRef.current = { keys: nextKeys, seasonIndex, userId: ownerId };
+        })
+        .catch(() => undefined);
+
+      await achievementCelebrationChainRef.current;
+    },
+    [readCelebratedAchievements, userId],
+  );
+
+  /** Kutlama kapandı: kuyruktan düşer, sıradaki rozet yüzeye çıkar. */
+  const dismissAchievementCelebration = useCallback((key: SeasonAchievementKey) => {
+    const next = achievementQueueRef.current.filter((queued) => queued !== key);
+    if (next.length === achievementQueueRef.current.length) return;
+    achievementQueueRef.current = next;
+    setAchievementQueue(next);
+  }, []);
+
+  // -------------------------------------------------------------------------
+  // Katman sahipliği — aynı anda tek overlay
+  // -------------------------------------------------------------------------
+
+  const claimRankOverlay = useCallback((owner: RankOverlayOwner) => {
+    if (!canClaimRankOverlay(activeOverlayRef.current, owner)) return false;
+    // Senkron yazma: aynı karede ikinci bir katman claim edemez.
+    activeOverlayRef.current = owner;
+    setActiveOverlay(owner);
+    return true;
+  }, []);
+
+  const releaseRankOverlay = useCallback((owner: RankOverlayOwner) => {
+    // Yalnızca sahibi bırakabilir; başka katmanın kilidi düşürülemez.
+    if (activeOverlayRef.current !== owner) return;
+    activeOverlayRef.current = undefined;
+    setActiveOverlay(undefined);
+  }, []);
 
   /**
    * Kutlamanın GÖSTERİM ONAYI.
@@ -785,6 +1031,11 @@ export function RankProvider({ children }: PropsWithChildren) {
     isAchievementsFetchingRef.current = false;
     hasQueuedAchievementsRef.current = false;
     hasRequestedAchievementsRef.current = false;
+    celebratedAchievementsRef.current = undefined;
+    achievementQueueRef.current = [];
+    achievementCelebrationChainRef.current = Promise.resolve();
+    // Kilit hiçbir koşulda hesap değişiminde asılı kalmaz.
+    activeOverlayRef.current = undefined;
     baselineRef.current = undefined;
     rankUpRef.current = undefined;
     seasonRef.current = undefined;
@@ -806,6 +1057,8 @@ export function RankProvider({ children }: PropsWithChildren) {
     setAchievements([]);
     setHasAchievementsError(false);
     setIsAchievementsLoading(false);
+    setAchievementQueue([]);
+    setActiveOverlay(undefined);
     setRankUp(undefined);
     setSeasonRecap(undefined);
     setIsRankLoading(Boolean(userId));
@@ -834,8 +1087,13 @@ export function RankProvider({ children }: PropsWithChildren) {
   const value = useMemo<RankContextValue>(
     () => ({
       acknowledgeRankUpShown,
+      achievementCelebration: achievementQueue[0],
       achievements,
+      acknowledgeAchievementCelebrationShown,
+      activeRankOverlay,
       acknowledgeSeasonRecapShown,
+      claimRankOverlay,
+      dismissAchievementCelebration,
       dismissRankUp,
       dismissSeasonRecap,
       events,
@@ -851,6 +1109,7 @@ export function RankProvider({ children }: PropsWithChildren) {
       loadEvents,
       loadHistory,
       loadWeekFocus,
+      releaseRankOverlay,
       rankUp,
       season,
       seasonRecap,
@@ -859,8 +1118,13 @@ export function RankProvider({ children }: PropsWithChildren) {
     }),
     [
       acknowledgeRankUpShown,
+      achievementQueue,
       achievements,
+      acknowledgeAchievementCelebrationShown,
+      activeRankOverlay,
       acknowledgeSeasonRecapShown,
+      claimRankOverlay,
+      dismissAchievementCelebration,
       dismissRankUp,
       dismissSeasonRecap,
       events,
@@ -876,6 +1140,7 @@ export function RankProvider({ children }: PropsWithChildren) {
       loadEvents,
       loadHistory,
       loadWeekFocus,
+      releaseRankOverlay,
       rankUp,
       season,
       seasonRecap,

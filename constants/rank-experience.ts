@@ -1,7 +1,7 @@
 /**
  * RANK DENEYİMİ — SAF KARARLAR
  * (RP geçmişi + rank yükselme + sezon özeti + arkadaş sıralaması +
- *  sezon başarıları)
+ *  sezon başarıları + başarı kutlaması + katman sahipliği)
  *
  * Bu dosya `constants/ranks.ts` ile AYNI duruşu izler: **hiçbir `import`u
  * YOKTUR**. Harness (`.mjs`) modülü tek başına `tsc` ile derleyip
@@ -574,4 +574,141 @@ export function parseSeasonAchievements(
   return SEASON_ACHIEVEMENT_KEYS.map((key) => byKey.get(key)).filter(
     (entry): entry is SeasonAchievementParsed => entry !== undefined,
   );
+}
+
+// ---------------------------------------------------------------------------
+// 6) Başarı açılma kutlaması — baseline, kuyruk ve depo anahtarı
+// ---------------------------------------------------------------------------
+
+/**
+ * Gösterilmiş başarı kutlamalarının AsyncStorage anahtarı.
+ *
+ * Rank yükselme (`rankCelebrationStorageKey`) ve sezon özeti
+ * (`seasonRecapStorageKey`) anahtarlarından BİLİNÇLİ olarak ayrıdır: üç
+ * deneyim birbirinin kaydını okuyamaz veya bozamaz. Anahtar hem kullanıcı
+ * kimliğini hem sezon numarasını taşır, bu yüzden A hesabının kaydı B'yi ve
+ * eski sezonun kaydı yeni sezonu etkileyemez.
+ */
+export function seasonAchievementCelebrationStorageKey(
+  userId: string,
+  seasonIndex: number,
+): string {
+  return `rank:achievements-celebrated:${userId}:${seasonIndex}`;
+}
+
+/**
+ * Depodaki "gösterildi" kaydını güvenle çözer.
+ *
+ * `undefined` = KAYIT YOK (veya okunamıyor). Çağıran taraf bunu "henüz
+ * baseline oluşmadı" olarak yorumlar ve mevcut açılmış rozetleri sessizce
+ * baseline yazar — eski rozetler topluca kutlanmaz.
+ *
+ * Bozuk JSON, dizi olmayan içerik veya tanınmayan anahtarlar uygulamayı
+ * ÇÖKERTMEZ: bozuk kayıt "kayıt yok" gibi ele alınır, tanınmayan anahtarlar
+ * ise sessizce düşer.
+ */
+export function parseCelebratedAchievementKeys(
+  raw: string | null | undefined,
+): SeasonAchievementKey[] | undefined {
+  if (typeof raw !== 'string' || raw.length === 0) return undefined;
+
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+
+  if (!Array.isArray(decoded)) return undefined;
+
+  const keys: SeasonAchievementKey[] = [];
+  for (const value of decoded) {
+    const key = parseSeasonAchievementKey(value);
+    if (key && !keys.includes(key)) keys.push(key);
+  }
+  return keys;
+}
+
+/** Depoya yazılacak biçim. Sıra her zaman katalog sırasıdır. */
+export function serializeCelebratedAchievementKeys(
+  keys: readonly SeasonAchievementKey[],
+): string {
+  const unique = SEASON_ACHIEVEMENT_KEYS.filter((key) => keys.includes(key));
+  return JSON.stringify(unique);
+}
+
+export type AchievementCelebrationDecision = {
+  /**
+   * `seed` — bu (kullanıcı, sezon) için ilk çalıştırma. Kutlama YOK; mevcut
+   * açılmış rozetler baseline olarak yazılır.
+   * `queue` — baseline zaten var; yeni açılan rozetler kutlama sırasına girer.
+   */
+  type: 'seed' | 'queue';
+  /** Depoya yazılacak tam liste (`seed`) veya mevcut kayıt (`queue`). */
+  celebrated: SeasonAchievementKey[];
+  /** Gösterilecek yeni rozetler — KATALOG sırasında. */
+  queue: SeasonAchievementKey[];
+};
+
+/**
+ * Hangi rozetlerin kutlanacağına karar verir.
+ *
+ * DEĞİŞMEZLER
+ *  - İlk çalıştırmada (kayıt yok / bozuk) kutlama ÜRETİLMEZ: mevcut açılmış
+ *    rozetlerin tamamı baseline olur.
+ *  - Baseline oluştuktan sonra yalnızca YENİ açılan rozetler kuyruğa girer.
+ *  - Kuyruk her zaman `SEASON_ACHIEVEMENT_KEYS` sırasındadır; sunucu sırası
+ *    değişse bile gösterim sırası kararlı kalır.
+ *  - Karar "gösterildi" anlamına GELMEZ. Kalıcı kayıt yalnızca overlay
+ *    gerçekten render/layout olduğunda ilerler.
+ *  - Bu fonksiyon hiçbir başarı koşulu veya ilerleme HESAPLAMAZ; yalnızca
+ *    sunucudan gelen "açık" listesini karşılaştırır.
+ */
+export function decideAchievementCelebrations(input: {
+  /** Sunucuya göre şu an AÇIK olan rozetler. */
+  unlockedKeys: readonly string[];
+  /** Depodaki kayıt; `undefined` ise baseline henüz yok. */
+  celebrated?: readonly SeasonAchievementKey[];
+}): AchievementCelebrationDecision {
+  const unlocked = SEASON_ACHIEVEMENT_KEYS.filter((key) => input.unlockedKeys.includes(key));
+
+  if (input.celebrated === undefined) {
+    // İlk çalıştırma: eski rozetler topluca kutlanmaz.
+    return { celebrated: unlocked, queue: [], type: 'seed' };
+  }
+
+  const celebrated = SEASON_ACHIEVEMENT_KEYS.filter((key) => input.celebrated!.includes(key));
+  return {
+    celebrated,
+    queue: unlocked.filter((key) => !celebrated.includes(key)),
+    type: 'queue',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 7) Rank katmanı sahipliği — aynı anda tek overlay
+// ---------------------------------------------------------------------------
+
+/**
+ * Rank deneyimindeki tam ekran katmanlar.
+ *
+ * Sıra ÖNCELİK sırasıdır: aynı anda birden fazlası beklerken önce sıradaki
+ * gösterilir. Öncelik ÖNCELEME (preemption) DEĞİLDİR — süren bir katman
+ * bölünmez; yeni gelen sırasını bekler.
+ */
+export const RANK_OVERLAY_PRIORITY = ['rank-up', 'season-recap', 'achievement'] as const;
+
+export type RankOverlayOwner = (typeof RANK_OVERLAY_PRIORITY)[number];
+
+/**
+ * Bir katman gösterime başlayabilir mi?
+ *
+ * Saf ve senkron: `active` boşsa ya da zaten aynı katmansa evet. Böylece iki
+ * katman AYNI KAREDE üst üste açılamaz.
+ */
+export function canClaimRankOverlay(
+  active: RankOverlayOwner | undefined,
+  owner: RankOverlayOwner,
+): boolean {
+  return active === undefined || active === owner;
 }

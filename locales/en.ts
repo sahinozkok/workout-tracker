@@ -776,6 +776,11 @@ export const en: TranslationSchema = {
       retry: 'Try again',
       unlockedA11y: '{name}: unlocked.',
       lockedA11y: '{name}: locked. Progress {current} of {target}.',
+      celebration: {
+        title: 'ACHIEVEMENT UNLOCKED',
+        continue: 'Continue',
+        a11y: 'Achievement unlocked: {name}.',
+      },
       items: {
         first_workout: {
           name: 'First Step',
