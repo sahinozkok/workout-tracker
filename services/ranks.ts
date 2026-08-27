@@ -2,6 +2,7 @@ import {
   FriendRankLeaderboardRow,
   parseFriendRankLeaderboard,
   parseRankEventKind,
+  parseSeasonAchievementKey,
   parseSeasonAchievements,
   RANK_EVENT_LIMIT,
   resolveRankEventLabel,
@@ -17,6 +18,7 @@ import {
   RankSeasonSummary,
   RankWeekFocus,
   SeasonAchievement,
+  SeasonAchievementShowcaseEntry,
 } from '@/types/ranks';
 
 /**
@@ -316,4 +318,51 @@ export async function syncMySeasonAchievements(clientToday: string): Promise<Sea
   if (error) throw error;
 
   return parseSeasonAchievements(data as SeasonAchievementRow[] | null);
+}
+
+type FriendAchievementShowcaseRow = {
+  season_index?: unknown;
+  achievement_key?: unknown;
+  unlocked_at?: unknown;
+};
+
+/**
+ * Arkadaşın güncel sezon rozet vitrini (en fazla üç rozet).
+ *
+ * GÜVENLİK — sıralama, üçlü sınır ve arkadaşlık kontrolünün otoritesi
+ * SUNUCUDUR. Bu katman güvenlik amacıyla kırpma, yeniden sıralama veya
+ * kullanıcı kimliğine göre filtreleme YAPMAZ; yalnızca satırları güvenle
+ * daraltır. Arkadaş değilse RPC hiç satır döndürmez ve vitrin çizilmez.
+ *
+ * Bilinmeyen bir başarı anahtarı (sunucu ileride yeni rozet eklerse) sessizce
+ * düşer; ekran çökmez. Geçersiz veya boş `unlocked_at` `undefined` olur ve
+ * satır yine gösterilebilir.
+ */
+export async function fetchFriendAchievementShowcase(
+  targetUserId: string,
+): Promise<SeasonAchievementShowcaseEntry[]> {
+  const { data, error } = await supabase.rpc('get_friend_season_achievement_showcase', {
+    target_user_id: targetUserId,
+  });
+  if (error) throw error;
+
+  const entries: SeasonAchievementShowcaseEntry[] = [];
+
+  for (const row of (data ?? []) as FriendAchievementShowcaseRow[]) {
+    const key = parseSeasonAchievementKey(row.achievement_key);
+    if (!key) continue;
+
+    const unlockedAt =
+      typeof row.unlocked_at === 'string' && row.unlocked_at.trim().length > 0
+        ? row.unlocked_at
+        : undefined;
+    const seasonIndex =
+      typeof row.season_index === 'number' && Number.isFinite(row.season_index)
+        ? row.season_index
+        : undefined;
+
+    entries.push({ key, seasonIndex, unlockedAt });
+  }
+
+  return entries;
 }

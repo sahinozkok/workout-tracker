@@ -778,6 +778,11 @@ export const tr = {
       retry: 'Tekrar dene',
       unlockedA11y: '{name}: açıldı.',
       lockedA11y: '{name}: kilitli. İlerleme {current} / {target}.',
+      /** Profil vitrini — en fazla üç rozet. */
+      showcase: {
+        title: 'SEZON ROZETLERİ',
+        empty: 'Bu sezon henüz rozet kazanmadın.',
+      },
       /** Yeni rozet açıldığında gösterilen kısa kutlama. */
       celebration: {
         title: 'BAŞARI KAZANILDI',

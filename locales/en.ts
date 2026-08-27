@@ -776,6 +776,10 @@ export const en: TranslationSchema = {
       retry: 'Try again',
       unlockedA11y: '{name}: unlocked.',
       lockedA11y: '{name}: locked. Progress {current} of {target}.',
+      showcase: {
+        title: 'SEASON BADGES',
+        empty: 'No badges earned this season yet.',
+      },
       celebration: {
         title: 'ACHIEVEMENT UNLOCKED',
         continue: 'Continue',

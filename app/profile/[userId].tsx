@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { withAlpha } from '@/constants/color-presets';
 import { resolveProfileColor } from '@/hooks/use-feature-colors';
+import { ProfileAchievementShowcase } from '@/components/ranks/profile-achievement-showcase';
 import { RankBadge } from '@/components/ranks/rank-badge';
 import { LevelProgressRing } from '@/components/rewards/level-progress-ring';
 import { ProfileDisciplineCard } from '@/components/profile-discipline-card';
@@ -13,10 +14,10 @@ import { Fonts, Layout, ThemeColors } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useTranslation } from '@/context/language-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
-import { fetchFriendRank } from '@/services/ranks';
+import { fetchFriendAchievementShowcase, fetchFriendRank } from '@/services/ranks';
 import { getFriendDisciplineDays, getFriendProfile } from '@/services/friends';
 import { FriendProfile } from '@/types/friends';
-import { FriendRankSummary } from '@/types/ranks';
+import { FriendRankSummary, SeasonAchievementShowcaseEntry } from '@/types/ranks';
 import { DisciplineStatus } from '@/types/workout';
 import { toDateKey } from '@/utils/discipline';
 
@@ -60,6 +61,21 @@ export default function FriendProfileScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
   const isMountedRef = useRef(true);
+
+  /**
+   * Arkadaşın sezon rozet vitrini.
+   *
+   * Mevcut profil / disiplin / rank akışından TAMAMEN AYRI ve toleranslı
+   * okunur: RPC hatası profili hata ekranına düşürmez, yalnızca vitrin
+   * gizlenir. Arkadaş değilse RPC hiç satır döndürmez ve vitrin çizilmez.
+   */
+  const [showcase, setShowcase] = useState<SeasonAchievementShowcaseEntry[]>([]);
+  const [hasShowcaseError, setHasShowcaseError] = useState(false);
+  /**
+   * İstek nesli: hesap veya route (`userId`) değişirse eski isteğin cevabı
+   * YENİ profilin state'ine yazamaz.
+   */
+  const showcaseRequestIdRef = useRef(0);
 
   const load = useCallback(async () => {
     if (!userId || isOwnProfile) return;
@@ -112,6 +128,36 @@ export default function FriendProfileScreen() {
       isMountedRef.current = false;
     };
   }, [load]);
+
+  useEffect(() => {
+    // Nesil, uzunluk kontrolünden ÖNCE artar: route değişince uçuştaki eski
+    // cevap da geçersizleşir ve yeni profile yazamaz.
+    const requestId = showcaseRequestIdRef.current + 1;
+    showcaseRequestIdRef.current = requestId;
+
+    setShowcase([]);
+    setHasShowcaseError(false);
+
+    if (!userId || isOwnProfile) return;
+
+    let isActive = true;
+
+    fetchFriendAchievementShowcase(userId)
+      .then((entries) => {
+        // Unmount sonrası ve eski nesil cevabı state'e YAZILMAZ.
+        if (!isActive || showcaseRequestIdRef.current !== requestId) return;
+        setShowcase(entries);
+      })
+      .catch(() => {
+        if (!isActive || showcaseRequestIdRef.current !== requestId) return;
+        // Vitrin sessizce gizlenir; profil ekranı düşmez.
+        setHasShowcaseError(true);
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [isOwnProfile, userId]);
 
   if (isOwnProfile || isLoading) {
     return (
@@ -180,6 +226,15 @@ export default function FriendProfileScreen() {
             </View>
             {friendRank && <RankBadge rankId={friendRank.currentRank} rp={friendRank.currentRp} />}
           </View>
+
+          {/* Arkadaşın sezon rozetleri: rank rozeti YENİDEN ÇİZİLMEZ. Salt
+              okunurdur (`onPress` verilmez) ve arkadaşın KENDİ seçtiği vurgu
+              rengini kullanır. RPC hata verirse sessizce gizlenir. */}
+          <ProfileAchievementShowcase
+            accentColor={ownerAccent.color}
+            entries={showcase}
+            hasError={hasShowcaseError}
+          />
 
           {/* Ana hedef: bilinmeyen değer gelirse güvenli fallback. */}
           <View style={styles.goalChip}>

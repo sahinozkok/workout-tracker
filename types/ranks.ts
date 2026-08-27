@@ -198,3 +198,19 @@ export type SeasonAchievement = {
   /** Sunucudan gelen hedef. İstemci eşik saklamaz. */
   targetProgress: number;
 };
+
+/**
+ * Profil vitrininde gösterilen TEK rozet.
+ *
+ * Yalnızca gösterim alanları taşınır: ilerleme, hedef, kilitli rozetler ve
+ * metadata bu tipte YOKTUR. Kendi profilinde `RankContext` içindeki mevcut
+ * `achievements` verisinden türetilir; arkadaş profilinde
+ * `get_friend_season_achievement_showcase` RPC'sinden gelir.
+ */
+export type SeasonAchievementShowcaseEntry = {
+  /** Sunucunun belirlediği güncel sezon. İstemci sezon gönderemez. */
+  seasonIndex?: number;
+  key: SeasonAchievementKey;
+  /** Sunucudan gelen açılma anı; okunamıyorsa `undefined`. */
+  unlockedAt?: string;
+};

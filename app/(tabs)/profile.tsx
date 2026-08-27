@@ -25,6 +25,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { MotionPressable } from '@/components/motion-pressable';
 import { getOnAccentColor, withAlpha } from '@/constants/color-presets';
+import { ProfileAchievementShowcase } from '@/components/ranks/profile-achievement-showcase';
 import { RankBadge } from '@/components/ranks/rank-badge';
 import { LevelProgressRing } from '@/components/rewards/level-progress-ring';
 import { ProfileProofStats } from '@/components/rewards/profile-proof-stats';
@@ -85,7 +86,17 @@ export default function ProfileScreen() {
    * Sezonluk rank. Level ve gül bakiyesinden TAMAMEN ayrıdır; sunucu değeri
    * gelmeden rozet hiç çizilmez (istemci rank uydurmaz).
    */
-  const { season: rankSeason } = useRanks();
+  /**
+   * Vitrin MEVCUT context verisini kullanır: başarılar için İKİNCİ bir
+   * Supabase sorgusu açılmaz. `loadAchievements`, kutlama baseline'ı, kuyruk
+   * ve overlay koordinasyonu olduğu gibi kalır.
+   */
+  const {
+    achievements,
+    hasAchievementsError,
+    isAchievementsLoading,
+    season: rankSeason,
+  } = useRanks();
   /**
    * Profil vurgusu. Sunucudan gelen tercih her zaman doludur; yine de
    * savunmacı olarak bugünkü tona düşülür.
@@ -384,6 +395,16 @@ export default function ProfileScreen() {
       .map((session) => session.dateKey),
   ).size;
   const disciplineStreak = calculateDisciplineStreak(disciplineStatuses);
+
+  /**
+   * Vitrine YALNIZCA açılmış rozetler girer. İlerleme, hedef ve kilitli
+   * rozetler burada hiç kullanılmaz; istemci hiçbir başarı koşulu hesaplamaz.
+   * Sıralama ve üçlü sınırı bileşen uygular.
+   */
+  const ownShowcaseEntries = achievements
+    .filter((achievement) => achievement.isUnlocked)
+    .map((achievement) => ({ key: achievement.key, unlockedAt: achievement.unlockedAt }));
+
   return (
     /*
       Banner ekranın EN ÜSTÜNDEN başlasın diye üst safe-area kenarı bilinçli
@@ -488,6 +509,18 @@ export default function ProfileScreen() {
               dayStreak={disciplineStreak}
               roseBalance={levelProgress.roseBalance}
               workoutDays={completedWorkoutDayCount}
+            />
+
+            {/* Sezon rozetleri: rank rozeti YENİDEN ÇİZİLMEZ, yalnızca
+                kozmetik başarı rozetleri gösterilir. Veri zaten mount olan
+                `RankContext`ten gelir; yeni sorgu açılmaz. Hata durumunda
+                vitrin sessizce gizlenir ve profil çalışmaya devam eder. */}
+            <ProfileAchievementShowcase
+              accentColor={profileAccent.color}
+              entries={ownShowcaseEntries}
+              hasError={hasAchievementsError}
+              isLoading={isAchievementsLoading}
+              onPress={() => router.push('/rank')}
             />
 
           </MotionSection>
