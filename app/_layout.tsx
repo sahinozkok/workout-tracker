@@ -201,6 +201,9 @@ function AppNavigation() {
               hareketini etkilemez, bu yüzden iOS jesti aynen çalışır. */}
           <Stack.Screen name="friends/index" options={{ headerShown: false }} />
           <Stack.Screen name="friends/search" options={{ headerShown: false }} />
+          {/* Arkadaş sezon sıralaması da kök Stack'te açılır: alt sekme
+              çubuğuna YENİ SEKME EKLENMEZ ve ekran kendi başlığını çizer. */}
+          <Stack.Screen name="friends/leaderboard" options={{ headerShown: false }} />
           <Stack.Screen
             name="profile/[userId]"
             options={{ headerBackTitle: t('friends.title'), title: '' }}

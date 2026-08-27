@@ -203,11 +203,17 @@ export function FriendsScreen({ autoFocusSearch = false }: FriendsScreenProps) {
     ]);
   }
 
-  /** Başlıktaki üç nokta: yalnızca gerçekten var olan iki eylemi sunar. */
+  /** Başlıktaki üç nokta: yalnızca gerçekten var olan eylemleri sunar. */
   function openScreenMenu() {
     Alert.alert(t('friends.moreActions'), undefined, [
       { text: t('friends.refresh'), onPress: () => void load() },
       { text: t('friends.findFriend'), onPress: focusSearch },
+      // Sezon sıralaması kök Stack'te ayrı bir ekrandır; mevcut üç sekmeye
+      // dördüncü bir sekme SIKIŞTIRILMAZ.
+      {
+        text: t('friends.leaderboard.menuAction'),
+        onPress: () => router.push('/friends/leaderboard'),
+      },
       { text: t('common.cancel'), style: 'cancel' },
     ]);
   }

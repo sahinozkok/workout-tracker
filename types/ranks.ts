@@ -117,3 +117,43 @@ export type SeasonRecap = {
   startingRp: number;
   planCompletionPercent: number;
 };
+
+/**
+ * Arkadaş sezon sıralamasındaki tek satır.
+ *
+ * Bütün değerler `get_friends_rank_leaderboard()` RPC'sinden gelir; istemci
+ * RP, rank veya sıra HESAPLAMAZ. Satırda e-posta, gül bakiyesi, level/XP,
+ * bio/hedef, ham `rank_events`, workout ayrıntısı veya disiplin günü YOKTUR.
+ */
+export type FriendRankLeaderboardEntry = {
+  userId: string;
+  /** Profil adı okunamadıysa `undefined`; ekran çeviriden yedek metin koyar. */
+  displayName?: string;
+  username?: string;
+  avatarUrl?: string;
+  /** Bu satır aktif kullanıcının kendisi mi? */
+  isSelf: boolean;
+  /**
+   * Güncel sezonda rank satırı var mı?
+   *
+   * `false` ise `currentRp`, `currentRank` ve `position` alanlarının ÜÇÜ DE
+   * `undefined`dır: eski sezon değeri kullanılmaz, Bronze/0'a zorlanmaz.
+   */
+  isRanked: boolean;
+  currentRp?: number;
+  currentRank?: RankId;
+  /** `dense_rank()` sırası — eşit RP aynı numarayı paylaşır. */
+  position?: number;
+};
+
+/** Arkadaş sezon sıralamasının tam yanıtı. */
+export type FriendRankLeaderboard = {
+  /** Sunucunun belirlediği güncel sezon. İstemci sezon gönderemez. */
+  seasonIndex?: number;
+  /** Sunucudan geldiği sıradadır; istemci yeniden sıralamaz. */
+  entries: FriendRankLeaderboardEntry[];
+  /** Sınırdan bağımsız TOPLAM katılımcı sayısı. */
+  participantCount: number;
+  /** Sınır nedeniyle bazı katılımcılar listede yoksa `true`. */
+  isTruncated: boolean;
+};

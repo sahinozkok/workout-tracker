@@ -1,4 +1,6 @@
 import {
+  FriendRankLeaderboardRow,
+  parseFriendRankLeaderboard,
   parseRankEventKind,
   RANK_EVENT_LIMIT,
   resolveRankEventLabel,
@@ -6,6 +8,7 @@ import {
 import { RankId, RANK_IDS } from '@/constants/ranks';
 import { supabase } from '@/lib/supabase';
 import {
+  FriendRankLeaderboard,
   FriendRankSummary,
   RankEvent,
   RankSeasonArchive,
@@ -224,4 +227,28 @@ export async function fetchMyRankEvents(): Promise<RankEvent[]> {
   }
 
   return events;
+}
+
+/**
+ * Arkadaşlar arası sezon sıralaması.
+ *
+ * GÜVENLİK — RPC'nin PARAMETRESİ YOKTUR. Aktif kullanıcı sunucuda
+ * `auth.uid()` ile belirlenir; istemci kullanıcı kimliği, sezon numarası, RP
+ * veya rank GÖNDEREMEZ. Kapsam sunucuda aktif kullanıcı ile
+ * `friendships.status = 'accepted'` karşı taraflarıyla sınırlıdır; bekleyen
+ * istekler ve arkadaş olmayanlar hiç dönmez. Global leaderboard YOKTUR.
+ *
+ * Sıralama ve sıra numaraları sunucudan geldiği gibi korunur — bu katman
+ * yalnızca satırları güvenle daraltır. Bilinmeyen bir rank kimliği ekranı
+ * çökertmez, bozuk satır sessizce düşer ve güncel sezonda rank satırı olmayan
+ * arkadaş Bronze/0'a ZORLANMAZ.
+ */
+export async function fetchFriendsRankLeaderboard(): Promise<FriendRankLeaderboard> {
+  const { data, error } = await supabase.rpc('get_friends_rank_leaderboard');
+  if (error) throw error;
+
+  return parseFriendRankLeaderboard<RankId>(data as FriendRankLeaderboardRow[] | null, {
+    fallbackRank: 'bronze',
+    order: RANK_IDS,
+  });
 }

@@ -707,6 +707,21 @@ export const tr = {
     calendarTitle: 'Disiplin takvimi',
     calendarReadOnly: 'Yalnızca gün ve durum gösterilir.',
     noUsername: 'kullanıcı adı yok',
+    /** Arkadaşlar arası sezon sıralaması. Global liste YOKTUR. */
+    leaderboard: {
+      title: 'Arkadaş sıralaması',
+      menuAction: 'Sezon sıralaması',
+      sectionFriends: 'ARKADAŞLARIN · {count}',
+      you: 'Sen',
+      unranked: 'Bu sezon henüz sıralanmadı',
+      emptyTitle: 'Sıralayacak arkadaş yok',
+      emptyBody: 'Arkadaş ekledikçe sezon sıralaman burada oluşur.',
+      limitNote: '{total} kişiden ilk {shown} tanesi gösteriliyor.',
+      unknownUser: 'Bilinmeyen kullanıcı',
+      loading: 'Sıralama yükleniyor…',
+      rankedA11y: '{name}, {position}. sıra, {rank}, {rp} RP.',
+      unrankedA11y: '{name}, bu sezon henüz sıralanmadı.',
+    },
   },
   rewards: {
     levelLabel: 'Seviye {level}',

@@ -1,5 +1,6 @@
 /**
- * RANK DENEYİMİ — SAF KARARLAR (RP geçmişi + rank yükselme + sezon özeti)
+ * RANK DENEYİMİ — SAF KARARLAR
+ * (RP geçmişi + rank yükselme + sezon özeti + arkadaş sıralaması)
  *
  * Bu dosya `constants/ranks.ts` ile AYNI duruşu izler: **hiçbir `import`u
  * YOKTUR**. Harness (`.mjs`) modülü tek başına `tsc` ile derleyip
@@ -328,4 +329,155 @@ export function decideSeasonRecap(input: {
  */
 export function seasonRecapStorageKey(userId: string, closedSeasonIndex: number): string {
   return `rank:season-recap-shown:${userId}:${closedSeasonIndex}`;
+}
+
+// ---------------------------------------------------------------------------
+// 4) Arkadaş sezon sıralaması — satır eşlemesi
+// ---------------------------------------------------------------------------
+
+/**
+ * `get_friends_rank_leaderboard()` RPC'sinin döndürebileceği en fazla satır.
+ *
+ * SQL tarafındaki `display_position <= 100` sınırıyla AYNI olmalıdır; harness
+ * ikisini karşılaştırır. Aktif kullanıcının kendi satırı bu sınırdan muaftır.
+ */
+export const FRIEND_RANK_LEADERBOARD_LIMIT = 100;
+
+/**
+ * Sunucudan gelen HAM satır.
+ *
+ * Bütün alanlar `unknown`: bu eşleme katmanı sunucunun sözleşmeye uyduğunu
+ * VARSAYMAZ. Bozuk/eksik satır uygulamayı çökertmez, sessizce güvenli tarafa
+ * düşer.
+ */
+export type FriendRankLeaderboardRow = {
+  participant_id?: unknown;
+  display_name?: unknown;
+  username?: unknown;
+  avatar_url?: unknown;
+  season_index?: unknown;
+  current_rp?: unknown;
+  current_rank?: unknown;
+  rank_position?: unknown;
+  is_self?: unknown;
+  is_ranked?: unknown;
+  participant_count?: unknown;
+};
+
+/** Eşlenmiş satır. `Rank` çağıran taraftan gelir; bu dosya import ETMEZ. */
+export type FriendRankLeaderboardParsedEntry<Rank extends string> = {
+  userId: string;
+  /** Profil adı okunamıyorsa `undefined`; ekran çeviriden yedek metin koyar. */
+  displayName?: string;
+  username?: string;
+  avatarUrl?: string;
+  isSelf: boolean;
+  /**
+   * Güncel sezonda rank satırı var mı? `false` ise `currentRp`, `currentRank`
+   * ve `position` alanlarının ÜÇÜ DE `undefined`dır — Bronze/0'a ZORLANMAZ.
+   */
+  isRanked: boolean;
+  currentRp?: number;
+  currentRank?: Rank;
+  position?: number;
+};
+
+/** Ekranın ihtiyaç duyduğu tam yanıt. */
+export type FriendRankLeaderboardParsed<Rank extends string> = {
+  seasonIndex?: number;
+  entries: FriendRankLeaderboardParsedEntry<Rank>[];
+  /** Sunucudaki TOPLAM katılımcı sayısı (sınırdan bağımsız). */
+  participantCount: number;
+  /** Sınır nedeniyle bazı katılımcılar listede yok mu? */
+  isTruncated: boolean;
+};
+
+function asText(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/** Sonlu, negatif olmayan tam sayı; aksi hâlde `undefined`. */
+function asCount(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  const floored = Math.floor(value);
+  return floored >= 0 ? floored : undefined;
+}
+
+/**
+ * Tek satırı eşler. Katılımcı kimliği okunamıyorsa satır DÜŞER (`undefined`).
+ *
+ * İSTEMCİ BURADA HİÇBİR ŞEY HESAPLAMAZ: RP, rank ve sıra doğrudan sunucudan
+ * gelir. `is_ranked` doğru olsa bile RP veya sıra tutarsızsa satır güvenli
+ * biçimde "bu sezon sıralanmadı" durumuna düşer — uydurma değer üretilmez.
+ */
+export function parseFriendRankLeaderboardRow<Rank extends string>(
+  row: FriendRankLeaderboardRow,
+  options: { order: readonly Rank[]; fallbackRank: Rank },
+): FriendRankLeaderboardParsedEntry<Rank> | undefined {
+  const userId = asText(row.participant_id);
+  if (!userId) return undefined;
+
+  const currentRp = asCount(row.current_rp);
+  const position = asCount(row.rank_position);
+  const isRanked =
+    row.is_ranked === true && currentRp !== undefined && position !== undefined && position > 0;
+
+  const rawRank = asText(row.current_rank);
+  const currentRank =
+    rawRank !== undefined && options.order.includes(rawRank as Rank)
+      ? (rawRank as Rank)
+      : options.fallbackRank;
+
+  return {
+    avatarUrl: asText(row.avatar_url),
+    // Sıralanmamış katılımcıda rank/RP/sıra HİÇ doldurulmaz.
+    currentRank: isRanked ? currentRank : undefined,
+    currentRp: isRanked ? currentRp : undefined,
+    displayName: asText(row.display_name),
+    isRanked,
+    isSelf: row.is_self === true,
+    position: isRanked ? position : undefined,
+    userId,
+    username: asText(row.username),
+  };
+}
+
+/**
+ * Bütün yanıtı eşler.
+ *
+ * Sıralama SUNUCUDAN geldiği gibi korunur; istemci yeniden sıralamaz. Sezon
+ * numarası ve toplam katılımcı sayısı her satırda aynıdır, ilk geçerli
+ * satırdan okunur. Aynı katılımcı iki kez gelirse (beklenmez) ilk satır
+ * kalır: kullanıcının kendi satırı listede İKİ KEZ görünmez.
+ */
+export function parseFriendRankLeaderboard<Rank extends string>(
+  rows: readonly FriendRankLeaderboardRow[] | null | undefined,
+  options: { order: readonly Rank[]; fallbackRank: Rank },
+): FriendRankLeaderboardParsed<Rank> {
+  const entries: FriendRankLeaderboardParsedEntry<Rank>[] = [];
+  const seen = new Set<string>();
+  let seasonIndex: number | undefined;
+  let participantCount: number | undefined;
+
+  for (const row of rows ?? []) {
+    const entry = parseFriendRankLeaderboardRow(row, options);
+    if (!entry || seen.has(entry.userId)) continue;
+    seen.add(entry.userId);
+    entries.push(entry);
+
+    if (seasonIndex === undefined) seasonIndex = asCount(row.season_index);
+    if (participantCount === undefined) participantCount = asCount(row.participant_count);
+  }
+
+  // Toplam okunamazsa en azından gösterilen satır sayısı doğrudur.
+  const total = Math.max(participantCount ?? 0, entries.length);
+
+  return {
+    entries,
+    isTruncated: total > entries.length,
+    participantCount: total,
+    seasonIndex,
+  };
 }

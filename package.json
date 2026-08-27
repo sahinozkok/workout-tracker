@@ -9,7 +9,8 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "verify:ranks": "node ./scripts/verify-ranks.mjs"
+    "verify:ranks": "node ./scripts/verify-ranks.mjs",
+    "verify:rank-leaderboard": "node ./scripts/verify-rank-leaderboard.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

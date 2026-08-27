@@ -283,12 +283,23 @@ check('10. RLS tek güvenlik otoritesi — istemci kullanıcı kimliği gönderm
   }
 });
 
-check('11. Faz 2 yeni migration/tablo ÜRETMEDİ', () => {
+check('11. Faz 2 UYGULANMIŞ migration’ları DEĞİŞTİRMEDİ', () => {
+  /**
+   * RP geçmişi mevcut `rank_events` tablosunu kullanır; kendi migration'ını
+   * ÜRETMEZ. Kontrol, uygulanmış (takip edilen) migration dosyalarından
+   * hiçbirinin DEĞİŞMEDİĞİNİ doğrular.
+   *
+   * Sonraki fazların ekleyebileceği YENİ (takip edilmeyen) migration
+   * dosyaları bu harness'ın kapsamı dışındadır ve kendi harness'larında
+   * doğrulanır — burada yanlış alarm üretmemeleri için hariç tutulur.
+   */
   const migrations = execFileSync('git', ['status', '--porcelain', 'supabase/migrations'], {
     cwd: ROOT,
     encoding: 'utf8',
   });
-  assertEqual(migrations.trim(), '', 'supabase/migrations altında değişiklik var');
+  for (const line of migrations.split('\n').filter(Boolean)) {
+    assert(line.startsWith('??'), `uygulanmış migration değiştirilmiş: ${line}`);
+  }
 });
 
 check('12. RP geçmişi polling YAPMAZ ve yalnızca istendiğinde yüklenir', () => {
@@ -1745,14 +1756,19 @@ check('55. Özet metinleri iki dilde de locale dosyasından geliyor', () => {
   assert(localeEn.includes("softResetValue: '{from} RP → {to} RP'"), 'en soft reset şablonu yanlış');
 });
 
-check('56. Faz 3 yeni migration/tablo ÜRETMEDİ', () => {
+check('56. Faz 3 UYGULANMIŞ migration’ları DEĞİŞTİRMEDİ', () => {
+  /**
+   * Sezon özeti mevcut `RankSeasonArchive` / `RankSeasonSummary` verisiyle
+   * çalışır; kendi migration'ını ÜRETMEZ. Bkz. 11 numaralı kontrolün notu:
+   * sonraki fazların eklediği YENİ migration dosyaları bu harness'ın kapsamı
+   * dışındadır, DEĞİŞTİRİLMİŞ bir migration ise hâlâ testi düşürür.
+   */
   const migrations = execFileSync('git', ['status', '--porcelain', 'supabase'], {
     cwd: ROOT,
     encoding: 'utf8',
   });
-  // Yalnızca takip edilmeyen `supabase/.temp/` kalabilir; migration değişmemeli.
   for (const line of migrations.split('\n').filter(Boolean)) {
-    assert(line.includes('supabase/.temp'), `supabase altında beklenmeyen değişiklik: ${line}`);
+    assert(line.startsWith('??'), `uygulanmış migration değiştirilmiş: ${line}`);
   }
 });
 
