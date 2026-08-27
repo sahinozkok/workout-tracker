@@ -3,6 +3,11 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import { NestableDraggableFlatList, ScaleDecorator } from 'react-native-draggable-flatlist';
 
 import { useFeatureColor } from '@/hooks/use-feature-colors';
+import {
+  MotionListItem,
+  useListCellExiting,
+  useListEntrance,
+} from '@/components/motion-list-item';
 import { ProgramListProps } from '@/components/program-list.types';
 import { WorkoutVisualDisplay } from '@/components/workout-visual-display';
 import { getFeatureFallbackColor } from '@/constants/color-presets';
@@ -22,6 +27,11 @@ import { getProgramIconBackground, getProgramVisual } from '@/utils/workout-visu
  *
  * Web'de `react-native-draggable-flatlist` çalışmadığı için `.web.tsx` eşi
  * HTML5 sürükle-bırak kullanır (projedeki `program-exercise-list` kalıbı).
+ *
+ * HAREKET: satırlar ilk yüklemede küçük bir stagger ile gelir, silinen satır
+ * kısa bir opaklık çıkışıyla kaybolur. Sürükleme sırasında diğer satırların
+ * kayması KÜTÜPHANENİN kendi hücre animasyonudur ve bilerek olduğu gibi
+ * bırakıldı; üstüne Reanimated layout animation eklenmez.
  */
 export default function ProgramList({
   activeProgramId,
@@ -38,14 +48,17 @@ export default function ProgramList({
   const workoutDaysIconColor = useFeatureColor('workoutDays', workoutDaysDefault).color;
   const { t } = useTranslation();
   const styles = createStyles(colors);
+  const { getDelay } = useListEntrance(programs.length);
+  const itemExitingAnimation = useListCellExiting();
 
   return (
     <View style={styles.list}>
       <NestableDraggableFlatList<WorkoutProgram>
         data={programs}
+        itemExitingAnimation={itemExitingAnimation}
         keyExtractor={(item) => item.id}
         onDragEnd={({ data }) => onReorder(data)}
-        renderItem={({ item, drag, isActive: isDragging }) => {
+        renderItem={({ item, drag, getIndex, isActive: isDragging }) => {
           const isActive = item.id === activeProgramId;
           const isBusy = busyProgramId === item.id;
           const workoutDays = item.days.filter((day) => !day.isOffDay).length;
@@ -60,62 +73,69 @@ export default function ProgramList({
            */
           return (
             <ScaleDecorator activeScale={1}>
-              <Pressable
-                accessibilityHint={t('programs.openHint')}
-                accessibilityRole="button"
-                delayLongPress={200}
-                disabled={isDragging}
-                onLongPress={drag}
-                onPress={() => onOpen(item.id)}
-                style={({ pressed }) => [
-                  styles.row,
-                  isDragging && styles.rowDragging,
-                  pressed && styles.rowPressed,
-                ]}>
-                {showIcons && (
-                  <View
-                    style={[
-                      styles.programIcon,
-                      getProgramIconBackground(
-                        getProgramVisual(item.visual, item.icon),
-                        workoutDaysIconColor,
-                        isDark,
-                      ),
-                    ]}>
-                    <WorkoutVisualDisplay
-                      color={colors.primary}
-                      iconColor={workoutDaysIconColor}
-                      size={22}
-                      visual={getProgramVisual(item.visual, item.icon)}
-                    />
-                  </View>
-                )}
-                <View style={styles.rowText}>
-                  <Text numberOfLines={1} style={styles.rowTitle}>
-                    {item.name}
-                  </Text>
-                  <View style={styles.rowMetaLine}>
-                    <Text numberOfLines={1} style={styles.rowMeta}>
-                      {t('programs.weeklySummary', { workouts: workoutDays })}
-                      {restDays > 0 ? t('programs.restSuffix', { count: restDays }) : ''}
-                    </Text>
-                    {isActive && <Text style={styles.activeText}>{t('programs.active')}</Text>}
-                  </View>
-                </View>
+              {/*
+                Giriş animasyonu hücrenin İÇİNDE durur; sürüklerken satır
+                unmount olmadığı için tekrar oynamaz. Çıkış ve kayma dışarıda
+                kalır (bkz. `useListCellExiting`).
+              */}
+              <MotionListItem delay={getDelay(getIndex() ?? 0)} disableExiting disableLayout>
                 <Pressable
-                  accessibilityLabel={t('programs.options', { name: item.name })}
+                  accessibilityHint={t('programs.openHint')}
                   accessibilityRole="button"
-                  disabled={isBusy}
-                  hitSlop={12}
-                  onPress={() => onOptions(item, isActive)}
-                  style={({ pressed }) => [styles.moreButton, pressed && styles.pressed]}>
-                  {isBusy ? (
-                    <ActivityIndicator color={colors.textSecondary} size="small" />
-                  ) : (
-                    <Ionicons name="ellipsis-horizontal" size={18} color={colors.textTertiary} />
+                  delayLongPress={200}
+                  disabled={isDragging}
+                  onLongPress={drag}
+                  onPress={() => onOpen(item.id)}
+                  style={({ pressed }) => [
+                    styles.row,
+                    isDragging && styles.rowDragging,
+                    pressed && styles.rowPressed,
+                  ]}>
+                  {showIcons && (
+                    <View
+                      style={[
+                        styles.programIcon,
+                        getProgramIconBackground(
+                          getProgramVisual(item.visual, item.icon),
+                          workoutDaysIconColor,
+                          isDark,
+                        ),
+                      ]}>
+                      <WorkoutVisualDisplay
+                        color={colors.primary}
+                        iconColor={workoutDaysIconColor}
+                        size={22}
+                        visual={getProgramVisual(item.visual, item.icon)}
+                      />
+                    </View>
                   )}
+                  <View style={styles.rowText}>
+                    <Text numberOfLines={1} style={styles.rowTitle}>
+                      {item.name}
+                    </Text>
+                    <View style={styles.rowMetaLine}>
+                      <Text numberOfLines={1} style={styles.rowMeta}>
+                        {t('programs.weeklySummary', { workouts: workoutDays })}
+                        {restDays > 0 ? t('programs.restSuffix', { count: restDays }) : ''}
+                      </Text>
+                      {isActive && <Text style={styles.activeText}>{t('programs.active')}</Text>}
+                    </View>
+                  </View>
+                  <Pressable
+                    accessibilityLabel={t('programs.options', { name: item.name })}
+                    accessibilityRole="button"
+                    disabled={isBusy}
+                    hitSlop={12}
+                    onPress={() => onOptions(item, isActive)}
+                    style={({ pressed }) => [styles.moreButton, pressed && styles.pressed]}>
+                    {isBusy ? (
+                      <ActivityIndicator color={colors.textSecondary} size="small" />
+                    ) : (
+                      <Ionicons name="ellipsis-horizontal" size={18} color={colors.textTertiary} />
+                    )}
+                  </Pressable>
                 </Pressable>
-              </Pressable>
+              </MotionListItem>
             </ScaleDecorator>
           );
         }}

@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { MotionListItem, useListEntrance } from '@/components/motion-list-item';
 import { ProgramExerciseListProps } from '@/components/program-exercise-list.types';
 import { WorkoutVisualDisplay } from '@/components/workout-visual-display';
 import { Layout, ThemeColors } from '@/constants/theme';
@@ -13,12 +14,20 @@ import { getExerciseVisual } from '@/utils/workout-visual';
 /** Varsayılan Antrenman Günleri rengi; kullanıcı seçim yapmadıysa bu kullanılır. */
 const WORKOUT_ORANGE = '#FF9138';
 
+/**
+ * Bir günün egzersiz listesi (web).
+ *
+ * Native sürümden HAREKET FARKI: burada FlatList yok, satırlar düz `View`.
+ * Bu yüzden `layout` animasyonu da açık — satır silinince kalan satırlar
+ * boşluğu kayarak kapatır.
+ */
 export default function ProgramExerciseList({ exercises, onEdit, onReorder, showIcons = false }: ProgramExerciseListProps) {
   const { colors } = useAppTheme();
   const { t } = useTranslation();
   // Antrenman Günleri semantik rengi; seçilmediyse bugünkü turuncu.
   const workoutDaysColor = useFeatureColor('workoutDays', WORKOUT_ORANGE).color;
   const styles = createStyles(colors, workoutDaysColor);
+  const { getDelay } = useListEntrance(exercises.length);
   const [draggingIndex, setDraggingIndex] = useState<number>();
   const didDragRef = useRef(false);
 
@@ -56,34 +65,36 @@ export default function ProgramExerciseList({ exercises, onEdit, onReorder, show
         };
 
         return (
-          <View
-            {...(webDragProps as object)}
-            key={exercise.id}
-            style={[styles.exerciseRow, draggingIndex === index && styles.exerciseRowActive]}>
-            <Pressable
-              accessibilityHint={t('a11y.editExerciseHint')}
-              accessibilityLabel={t('a11y.editExercise', { name: exerciseName })}
-              accessibilityRole="button"
-              onPress={() => {
-                if (!didDragRef.current) onEdit(exercise, exerciseName);
-              }}
-              style={({ pressed }) => [styles.exerciseMain, pressed && styles.pressed]}>
-              {showIcons && (
-                <View style={styles.exerciseIcon}>
-                  <WorkoutVisualDisplay color={workoutDaysColor} size={20} visual={getExerciseVisual(exercise.visual)} />
+          <MotionListItem delay={getDelay(index)} key={exercise.id}>
+            {/* Sürükleme özellikleri satırın KENDİ düğümünde kalır. */}
+            <View
+              {...(webDragProps as object)}
+              style={[styles.exerciseRow, draggingIndex === index && styles.exerciseRowActive]}>
+              <Pressable
+                accessibilityHint={t('a11y.editExerciseHint')}
+                accessibilityLabel={t('a11y.editExercise', { name: exerciseName })}
+                accessibilityRole="button"
+                onPress={() => {
+                  if (!didDragRef.current) onEdit(exercise, exerciseName);
+                }}
+                style={({ pressed }) => [styles.exerciseMain, pressed && styles.pressed]}>
+                {showIcons && (
+                  <View style={styles.exerciseIcon}>
+                    <WorkoutVisualDisplay color={workoutDaysColor} size={20} visual={getExerciseVisual(exercise.visual)} />
+                  </View>
+                )}
+                <View style={styles.exerciseInfo}>
+                  <Text numberOfLines={1} style={styles.exerciseName}>
+                    {exerciseName}
+                  </Text>
+                  <View style={styles.targetInfo}>
+                    <Text style={styles.exerciseTarget}>{exercise.targetSets}×{exercise.targetReps}</Text>
+                    <Text style={styles.exerciseRest}>{t('day.restSecondsShort', { seconds: exercise.restSeconds })}</Text>
+                  </View>
                 </View>
-              )}
-              <View style={styles.exerciseInfo}>
-                <Text numberOfLines={1} style={styles.exerciseName}>
-                  {exerciseName}
-                </Text>
-                <View style={styles.targetInfo}>
-                  <Text style={styles.exerciseTarget}>{exercise.targetSets}×{exercise.targetReps}</Text>
-                  <Text style={styles.exerciseRest}>{t('day.restSecondsShort', { seconds: exercise.restSeconds })}</Text>
-                </View>
-              </View>
-            </Pressable>
-          </View>
+              </Pressable>
+            </View>
+          </MotionListItem>
         );
       })}
     </View>

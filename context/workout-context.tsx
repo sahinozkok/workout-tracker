@@ -2,6 +2,7 @@ import { createContext, PropsWithChildren, useCallback, useContext, useEffect, u
 
 import { useAuth } from '@/context/auth-context';
 import { getProgramExerciseName } from '@/data/exercises';
+import { useOptionalRanks } from '@/context/rank-context';
 import { useRewards } from '@/context/reward-context';
 import { supabase } from '@/lib/supabase';
 import {
@@ -188,6 +189,14 @@ function getErrorMessage(error: unknown) {
 export function WorkoutProvider({ children }: PropsWithChildren) {
   const { user } = useAuth();
   const { syncWorkoutDay } = useRewards();
+  /**
+   * Sezonluk rank AYRI bir sistemdir ve XP/gül akışına hiç karışmaz.
+   * `useOptionalRanks` bilinçlidir: rank sağlayıcısı bir sebeple mount
+   * edilmemişse antrenman akışı hata vermeden çalışmaya devam eder — rank
+   * yalnızca bir göstergedir, set kaydını veya kronometreyi engelleyemez.
+   */
+  const ranks = useOptionalRanks();
+  const syncRank = ranks?.syncRank;
   const [programs, setPrograms] = useState<WorkoutProgram[]>([]);
   const [isProgramsLoading, setIsProgramsLoading] = useState(true);
   const [programsError, setProgramsError] = useState<string>();
@@ -567,6 +576,14 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
       setWorkoutSets(previousSets);
       throw error;
     }
+
+    /**
+     * Silinen antrenman rank kanıtı olmaktan çıkar: sunucu bir sonraki
+     * uzlaştırmada ona bağlı RP için telafi satırı yazar. Disiplin takvimi,
+     * streak geçmişi ve daha önce verilmiş XP ödülleri DEĞİŞMEZ (setler
+     * sunucuda duruyor, takvim fonksiyonları `deleted_at` okumuyor).
+     */
+    void syncRank?.();
   }
 
   async function deleteProgram(programId: string) {
@@ -834,6 +851,12 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
      * cevabına bağlı kalmaz.
      */
     void syncWorkoutDay(toDateKey(new Date()), dateKey);
+    /**
+     * Rank uzlaştırması. XP çağrısından BAĞIMSIZDIR ve ayrıca beklenmez.
+     * Sunucu defteri idempotent olduğu için tekrar çağrılması RP'yi ikinci kez
+     * yazmaz; kısmi → tam geçişte yalnızca aradaki fark eklenir.
+     */
+    void syncRank?.();
   }
 
   async function undoCompletedSet(dateKey: string, programExerciseId: string) {

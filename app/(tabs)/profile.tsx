@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
@@ -24,6 +25,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { MotionPressable } from '@/components/motion-pressable';
 import { getOnAccentColor, withAlpha } from '@/constants/color-presets';
+import { RankBadge } from '@/components/ranks/rank-badge';
 import { LevelProgressRing } from '@/components/rewards/level-progress-ring';
 import { ProfileProofStats } from '@/components/rewards/profile-proof-stats';
 import { ProfileDisciplineCard } from '@/components/profile-discipline-card';
@@ -33,6 +35,7 @@ import { Fonts, Layout, ThemeColors, Type } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useLanguage } from '@/context/language-context';
 import { useProfile } from '@/context/profile-context';
+import { useRanks } from '@/context/rank-context';
 import { useRewards } from '@/context/reward-context';
 import { useWorkout } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
@@ -79,6 +82,11 @@ export default function ProfileScreen() {
   const { t } = useLanguage();
   const { progress: levelProgress } = useRewards();
   /**
+   * Sezonluk rank. Level ve gül bakiyesinden TAMAMEN ayrıdır; sunucu değeri
+   * gelmeden rozet hiç çizilmez (istemci rank uydurmaz).
+   */
+  const { season: rankSeason } = useRanks();
+  /**
    * Profil vurgusu. Sunucudan gelen tercih her zaman doludur; yine de
    * savunmacı olarak bugünkü tona düşülür.
    */
@@ -102,6 +110,28 @@ export default function ProfileScreen() {
   // Ref kullanılır; unmount temizliği her zaman en güncel değeri görür.
   const stagedPathsRef = useRef<Partial<Record<ProfileImageKind, string>>>({});
   const userIdRef = useRef<string | undefined>(user?.id);
+  /**
+   * Seviye kartının giriş animasyonunu tetikler.
+   *
+   * SADECE ekran odak kazandığında artar. Profil verisi, tema, düzenleme
+   * formu veya başka bir state güncellendiğinde değeri değişmediği için kart
+   * sebepsiz yere yeniden oynamaz.
+   */
+  const [levelRevealToken, setLevelRevealToken] = useState(0);
+  const hasFocusedOnceRef = useRef(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      // İlk odak mount ile aynı ana denk gelir; kart o anda zaten oynuyor.
+      // Burada tekrar tetiklenirse animasyon boşuna baştan başlardı.
+      if (!hasFocusedOnceRef.current) {
+        hasFocusedOnceRef.current = true;
+        return;
+      }
+
+      setLevelRevealToken((current) => current + 1);
+    }, []),
+  );
 
   useEffect(() => {
     userIdRef.current = user?.id;
@@ -424,11 +454,21 @@ export default function ProfileScreen() {
             </Text>
             <Text style={styles.summaryName}>{draft.displayName || t('profile.displayNamePlaceholder')}</Text>
 
+            {/* Level rozeti (ömür boyu XP) ve rank rozeti (sezon disiplini)
+                YAN YANA durur ama iki AYRI sistemdir. Rank rozeti yalnızca
+                sunucudan gerçek bir sezon özeti geldiğinde çizilir. */}
             <View style={styles.levelIdentityRow}>
               <View style={styles.levelPill}>
                 <Text style={styles.levelPillIcon}>❀</Text>
                 <Text style={styles.levelPillText}>{t('rewards.levelLabel', { level: levelProgress.level })}</Text>
               </View>
+              {rankSeason && (
+                <RankBadge
+                  onPress={() => router.push('/rank')}
+                  rankId={rankSeason.currentRank}
+                  rp={rankSeason.currentRp}
+                />
+              )}
             </View>
 
             <View style={styles.levelSection}>
@@ -437,6 +477,7 @@ export default function ProfileScreen() {
                 fillColor={profileAccent.color}
                 level={levelProgress.level}
                 message={draft.bio.trim() || undefined}
+                revealToken={levelRevealToken}
                 xpForNextLevel={levelProgress.xpForNextLevel}
                 xpIntoLevel={levelProgress.xpIntoLevel}
               />
@@ -806,6 +847,9 @@ function createStyles(
     levelIdentityRow: {
       alignItems: 'center',
       flexDirection: 'row',
+      // Seviye ve rank rozeti yan yana durduğunda 8 pt boşluk kalır. Tek
+      // rozet varken `gap` görünür bir etki yapmaz; yerleşim değişmez.
+      gap: 8,
       justifyContent: 'center',
       marginTop: 4,
       width: '100%',

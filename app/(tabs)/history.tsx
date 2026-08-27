@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ExerciseProgress } from '@/components/exercise-progress';
+import { MotionListItem, useListEntrance } from '@/components/motion-list-item';
 import { MotionSection, MotionSwap } from '@/components/motion-section';
 import { ProgressRing } from '@/components/progress-ring';
 import { Layout, ThemeColors, Type } from '@/constants/theme';
@@ -88,6 +89,11 @@ export default function HistoryScreen() {
   const uniqueExerciseCount = new Set(
     completedWorkoutSets.map((workoutSet) => workoutSet.exerciseName.trim().toLocaleLowerCase(locale)),
   ).size;
+  /**
+   * Satır hareketi. Kanca aşağıdaki erken dönüşlerin ÜSTÜNDE çağrılır; yükleme
+   * ve boş durumlarında kanca sırası bozulmasın.
+   */
+  const { getDelay } = useListEntrance(completedSessions.length);
 
   async function handleDeleteSession(sessionId: string) {
     setSwipedSessionId(undefined);
@@ -183,9 +189,10 @@ export default function HistoryScreen() {
             </MotionSection>
 
             <MotionSection delay={80} style={styles.list}>
-              {completedSessions.map((session) => (
+              {completedSessions.map((session, index) => (
                 <SessionHistoryRow
                   colors={colors}
+                  entranceDelay={getDelay(index)}
                   expanded={expandedSessionId === session.id}
                   isSwipeOpen={swipedSessionId === session.id}
                   key={session.id}
@@ -380,6 +387,7 @@ function SwipeableSessionRow({
 
 function SessionHistoryRow({
   colors,
+  entranceDelay,
   expanded,
   isSwipeOpen,
   locale,
@@ -394,6 +402,7 @@ function SessionHistoryRow({
   t,
 }: {
   colors: ThemeColors;
+  entranceDelay: number;
   expanded: boolean;
   isSwipeOpen: boolean;
   locale: string;
@@ -416,7 +425,12 @@ function SessionHistoryRow({
   const workoutName = day?.name ?? t('history.completedWorkout');
 
   return (
-    <View style={styles.sessionRowWrapper}>
+    /*
+      Satırın DIŞ düğümü zaten burasıydı; sadece Reanimated düğümüne çevrildi,
+      yani fazladan katman EKLENMEDİ. Kaydırma (`PanResponder`) ve silme
+      düğmesi bir alt katmanda, dokunulmadan duruyor.
+    */
+    <MotionListItem delay={entranceDelay} style={styles.sessionRowWrapper}>
       <SwipeableSessionRow
         accessibilityLabel={t('history.deleteWorkoutLabel', { name: workoutName })}
         deleteLabel={t('common.delete')}
@@ -518,7 +532,7 @@ function SessionHistoryRow({
           )}
         </View>
       )}
-    </View>
+    </MotionListItem>
   );
 }
 

@@ -11,6 +11,7 @@ import { AuthProvider, useAuth } from '@/context/auth-context';
 import { LanguageProvider, useLanguage, useTranslation } from '@/context/language-context';
 import { MascotProvider } from '@/context/mascot-context';
 import { ProfileProvider, useProfile } from '@/context/profile-context';
+import { RankProvider } from '@/context/rank-context';
 import { RewardProvider } from '@/context/reward-context';
 import { ThemePreferenceProvider } from '@/context/theme-context';
 import { useWorkout, WorkoutProvider } from '@/context/workout-context';
@@ -54,12 +55,18 @@ function UserScopedApp() {
           `+N XP` katmanı da bu sağlayıcının içinde, bütün ekranların üzerinde
           tek kopya olarak çizilir. */}
       <RewardProvider>
-        <WorkoutProvider>
-          <MascotProvider>
-            <SharedDisciplineSync />
-            <AppNavigation />
-          </MascotProvider>
-        </WorkoutProvider>
+        {/* Sezonluk rank AYRI bir katmandır: XP/gül/level durumuna hiç
+            dokunmaz. `WorkoutProvider`'ın DIŞINDA durur ki antrenman akışı
+            set kaydından sonra rank senkronizasyonunu buradan tetikleyebilsin.
+            Rank okunamazsa antrenman akışı etkilenmez. */}
+        <RankProvider>
+          <WorkoutProvider>
+            <MascotProvider>
+              <SharedDisciplineSync />
+              <AppNavigation />
+            </MascotProvider>
+          </WorkoutProvider>
+        </RankProvider>
       </RewardProvider>
     </ProfileProvider>
   );
@@ -176,6 +183,12 @@ function AppNavigation() {
           <Stack.Screen
             name="settings"
             options={{ headerBackTitle: t('tabs.profile'), title: t('profile.settings') }}
+          />
+          {/* Sezon rankı kök Stack'te açılır: yeni bir alt sekme EKLENMEZ ve
+              bu ekranda sekme çubuğu görünmez. */}
+          <Stack.Screen
+            name="rank"
+            options={{ headerBackTitle: t('tabs.profile'), title: t('ranks.navTitle') }}
           />
           {/* Arkadaşlık ekranları kök Stack'te açılır: alt sekme çubuğu
               görünmez, native geri hareketi korunur.

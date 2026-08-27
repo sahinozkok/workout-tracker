@@ -30,6 +30,8 @@ import { FriendPersonRow } from '@/components/friends/friend-person-row';
 import { FriendsEmptyState } from '@/components/friends/friends-empty-state';
 import { FriendsTabs, FriendsTabKey } from '@/components/friends/friends-tabs';
 import { FriendsMetrics, useFriendsPalette } from '@/components/friends/friends-theme';
+import { MotionListItem, useListEntrance } from '@/components/motion-list-item';
+import { MotionSwap } from '@/components/motion-section';
 import { useTranslation } from '@/context/language-context';
 import {
   cancelFriendRequest,
@@ -214,6 +216,16 @@ export function FriendsScreen({ autoFocusSearch = false }: FriendsScreenProps) {
   const outgoing = requests.filter((request) => request.direction === 'outgoing');
   const isBusy = pendingId !== undefined;
 
+  /**
+   * Her liste kendi "ilk gerçek yükleme"sini ayrı takip eder: arkadaşlar
+   * dolarken gelen istekler hâlâ boş olabilir. Sonraki tazelemelerde satırlar
+   * unmount olmadığı için hiçbir giriş tekrar oynamaz.
+   */
+  const friendsEntrance = useListEntrance(friends.length);
+  const incomingEntrance = useListEntrance(incoming.length);
+  const outgoingEntrance = useListEntrance(outgoing.length);
+  const resultsEntrance = useListEntrance(results.length);
+
   function goToProfile(userId: string) {
     router.push({ pathname: '/profile/[userId]', params: { userId } });
   }
@@ -286,18 +298,28 @@ export function FriendsScreen({ autoFocusSearch = false }: FriendsScreenProps) {
       <View style={styles.resultsBlock}>
         <Text style={styles.sectionLabel}>{t('friends.sectionSuggestions')}</Text>
         <View style={styles.resultsList}>
-          {results.map((person) => (
-            <FriendPersonRow
-              actions={renderSearchAction(person)}
-              avatarSize={FriendsMetrics.avatarSizeCompact}
-              card
-              key={person.id}
-              onPress={
-                person.friendshipStatus === 'accepted' ? () => goToProfile(person.id) : undefined
-              }
-              person={person}
-              usernameFallback={t('friends.noUsername')}
-            />
+          {/*
+            Arama sonuçları her tuşta yeniden mount oluyor (yükleniyor
+            göstergesi araya giriyor). Bu yüzden giriş animasyonu YALNIZCA ilk
+            sonuç partisinde açık; sonrasında kapatılır, yoksa her karakterde
+            bütün liste yeniden belirirdi.
+          */}
+          {results.map((person, index) => (
+            <MotionListItem
+              delay={resultsEntrance.getDelay(index)}
+              disableEntering={!resultsEntrance.isFirstBatch}
+              key={person.id}>
+              <FriendPersonRow
+                actions={renderSearchAction(person)}
+                avatarSize={FriendsMetrics.avatarSizeCompact}
+                card
+                onPress={
+                  person.friendshipStatus === 'accepted' ? () => goToProfile(person.id) : undefined
+                }
+                person={person}
+                usernameFallback={t('friends.noUsername')}
+              />
+            </MotionListItem>
           ))}
         </View>
       </View>
@@ -333,24 +355,25 @@ export function FriendsScreen({ autoFocusSearch = false }: FriendsScreenProps) {
             {t('friends.sectionFriends', { count: friends.length })}
           </Text>
           {friends.map((friend, index) => (
-            <FriendPersonRow
-              actions={
-                <Pressable
-                  accessibilityLabel={t('friends.remove')}
-                  accessibilityRole="button"
-                  disabled={isBusy}
-                  hitSlop={{ bottom: 10, left: 10, right: 6, top: 10 }}
-                  onPress={() => confirmRemove(friend)}
-                  style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}>
-                  <Ionicons color={palette.textSecondary} name="ellipsis-vertical" size={18} />
-                </Pressable>
-              }
-              isLast={index === friends.length - 1}
-              key={friend.friendshipId}
-              onPress={() => goToProfile(friend.id)}
-              person={friend}
-              usernameFallback={t('friends.noUsername')}
-            />
+            <MotionListItem delay={friendsEntrance.getDelay(index)} key={friend.friendshipId}>
+              <FriendPersonRow
+                actions={
+                  <Pressable
+                    accessibilityLabel={t('friends.remove')}
+                    accessibilityRole="button"
+                    disabled={isBusy}
+                    hitSlop={{ bottom: 10, left: 10, right: 6, top: 10 }}
+                    onPress={() => confirmRemove(friend)}
+                    style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}>
+                    <Ionicons color={palette.textSecondary} name="ellipsis-vertical" size={18} />
+                  </Pressable>
+                }
+                isLast={index === friends.length - 1}
+                onPress={() => goToProfile(friend.id)}
+                person={friend}
+                usernameFallback={t('friends.noUsername')}
+              />
+            </MotionListItem>
           ))}
         </View>
       );
@@ -373,38 +396,41 @@ export function FriendsScreen({ autoFocusSearch = false }: FriendsScreenProps) {
             <View style={styles.section}>
               <Text style={styles.sectionLabel}>{t('friends.sectionIncoming')}</Text>
               {incoming.map((request, index) => (
-                <FriendPersonRow
-                  actions={
-                    <>
-                      <Pressable
-                        accessibilityRole="button"
-                        disabled={isBusy}
-                        onPress={() =>
-                          void runAction(request.friendshipId, () =>
-                            respondToFriendRequest(request.friendshipId, true),
-                          )
-                        }
-                        style={({ pressed }) => [styles.accentPill, pressed && styles.pressed]}>
-                        <Text style={styles.accentPillText}>{t('friends.accept')}</Text>
-                      </Pressable>
-                      <Pressable
-                        accessibilityRole="button"
-                        disabled={isBusy}
-                        onPress={() =>
-                          void runAction(request.friendshipId, () =>
-                            respondToFriendRequest(request.friendshipId, false),
-                          )
-                        }
-                        style={({ pressed }) => [styles.outlinePill, pressed && styles.pressed]}>
-                        <Text style={styles.outlinePillText}>{t('friends.decline')}</Text>
-                      </Pressable>
-                    </>
-                  }
-                  isLast={index === incoming.length - 1}
-                  key={request.friendshipId}
-                  person={request}
-                  usernameFallback={t('friends.noUsername')}
-                />
+                <MotionListItem
+                  delay={incomingEntrance.getDelay(index)}
+                  key={request.friendshipId}>
+                  <FriendPersonRow
+                    actions={
+                      <>
+                        <Pressable
+                          accessibilityRole="button"
+                          disabled={isBusy}
+                          onPress={() =>
+                            void runAction(request.friendshipId, () =>
+                              respondToFriendRequest(request.friendshipId, true),
+                            )
+                          }
+                          style={({ pressed }) => [styles.accentPill, pressed && styles.pressed]}>
+                          <Text style={styles.accentPillText}>{t('friends.accept')}</Text>
+                        </Pressable>
+                        <Pressable
+                          accessibilityRole="button"
+                          disabled={isBusy}
+                          onPress={() =>
+                            void runAction(request.friendshipId, () =>
+                              respondToFriendRequest(request.friendshipId, false),
+                            )
+                          }
+                          style={({ pressed }) => [styles.outlinePill, pressed && styles.pressed]}>
+                          <Text style={styles.outlinePillText}>{t('friends.decline')}</Text>
+                        </Pressable>
+                      </>
+                    }
+                    isLast={index === incoming.length - 1}
+                    person={request}
+                    usernameFallback={t('friends.noUsername')}
+                  />
+                </MotionListItem>
               ))}
             </View>
           )}
@@ -413,25 +439,28 @@ export function FriendsScreen({ autoFocusSearch = false }: FriendsScreenProps) {
             <View style={styles.section}>
               <Text style={styles.sectionLabel}>{t('friends.sectionOutgoing')}</Text>
               {outgoing.map((request, index) => (
-                <FriendPersonRow
-                  actions={
-                    <Pressable
-                      accessibilityRole="button"
-                      disabled={isBusy}
-                      onPress={() =>
-                        void runAction(request.friendshipId, () =>
-                          cancelFriendRequest(request.friendshipId),
-                        )
-                      }
-                      style={({ pressed }) => [styles.outlinePill, pressed && styles.pressed]}>
-                      <Text style={styles.outlinePillText}>{t('friends.cancel')}</Text>
-                    </Pressable>
-                  }
-                  isLast={index === outgoing.length - 1}
-                  key={request.friendshipId}
-                  person={request}
-                  usernameFallback={t('friends.noUsername')}
-                />
+                <MotionListItem
+                  delay={outgoingEntrance.getDelay(index)}
+                  key={request.friendshipId}>
+                  <FriendPersonRow
+                    actions={
+                      <Pressable
+                        accessibilityRole="button"
+                        disabled={isBusy}
+                        onPress={() =>
+                          void runAction(request.friendshipId, () =>
+                            cancelFriendRequest(request.friendshipId),
+                          )
+                        }
+                        style={({ pressed }) => [styles.outlinePill, pressed && styles.pressed]}>
+                        <Text style={styles.outlinePillText}>{t('friends.cancel')}</Text>
+                      </Pressable>
+                    }
+                    isLast={index === outgoing.length - 1}
+                    person={request}
+                    usernameFallback={t('friends.noUsername')}
+                  />
+                </MotionListItem>
               ))}
             </View>
           )}
@@ -453,6 +482,21 @@ export function FriendsScreen({ autoFocusSearch = false }: FriendsScreenProps) {
   }
 
   const isSearchHighlighted = isSearchFocused || query.length > 0;
+
+  /**
+   * Sekme içeriğinin crossfade anahtarı.
+   *
+   * BİLİNÇLİ olarak yalnızca "yükleniyor / boş / dolu" ayrımını taşır. Satır
+   * SAYISINI taşımaz: bir istek kabul edilince liste dolu kalıyorsa yalnızca o
+   * satır çıkar, bütün blok yeniden belirmez.
+   */
+  const tabContentKey = isLoading
+    ? 'loading'
+    : selectedTab === 'friends'
+      ? `friends:${friends.length === 0 ? 'empty' : 'list'}`
+      : selectedTab === 'requests'
+        ? `requests:${incoming.length === 0 && outgoing.length === 0 ? 'empty' : 'list'}`
+        : 'suggestions';
 
   return (
     <View style={styles.root}>
@@ -534,7 +578,7 @@ export function FriendsScreen({ autoFocusSearch = false }: FriendsScreenProps) {
           </View>
         )}
 
-        {renderTabContent()}
+        <MotionSwap transitionKey={tabContentKey}>{renderTabContent()}</MotionSwap>
       </ScrollView>
     </View>
   );

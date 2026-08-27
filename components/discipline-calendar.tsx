@@ -215,9 +215,15 @@ export function DisciplineCalendarView({
         })}
       </View>
 
+      {/*
+        Week/Month/Year geçişi sakin tempoda oynar (bkz. `getCalmSwapMotion`).
+        `emphasis` bilinçli olarak verilmez: sakin tempo kendi karakterini
+        tanımlar ve o propu okumaz. Yıl görünümü `heavy` kalır — layout
+        animasyonu olmadan sade fade ile gelir.
+      */}
       <MotionSwap
         contentWeight={period === 'year' ? 'heavy' : 'regular'}
-        emphasis="clear"
+        pace="calm"
         transitionKey={period}>
       {period === 'week' ? (
         <WeekStrip

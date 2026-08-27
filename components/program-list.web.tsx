@@ -3,6 +3,7 @@ import { useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 
 import { useFeatureColor } from '@/hooks/use-feature-colors';
+import { MotionListItem, useListEntrance } from '@/components/motion-list-item';
 import { createStyles } from '@/components/program-list';
 import { ProgramListProps } from '@/components/program-list.types';
 import { WorkoutVisualDisplay } from '@/components/workout-visual-display';
@@ -17,6 +18,10 @@ import { getProgramIconBackground, getProgramVisual } from '@/utils/workout-visu
  * `react-native-draggable-flatlist` web'de çalışmadığı için sürükleme HTML5
  * drag-and-drop ile yapılır. Satır tasarımı native sürümle AYNI `createStyles`
  * fonksiyonundan gelir; iki platform arasında görsel fark oluşmaz.
+ *
+ * HAREKET FARKI: burada FlatList yok, satırlar düz `View`. Bu yüzden native
+ * sürümden farklı olarak `layout` animasyonu da açılabiliyor — satır silinince
+ * kalan satırlar boşluğu kayarak kapatır.
  */
 export default function ProgramList({
   activeProgramId,
@@ -33,6 +38,7 @@ export default function ProgramList({
   const workoutDaysIconColor = useFeatureColor('workoutDays', workoutDaysDefault).color;
   const { t } = useTranslation();
   const styles = createStyles(colors);
+  const { getDelay } = useListEntrance(programs.length);
   const [draggingIndex, setDraggingIndex] = useState<number>();
   // Sürükleme bittikten hemen sonraki tıklamanın detay açmasını engeller.
   const didDragRef = useRef(false);
@@ -74,62 +80,67 @@ export default function ProgramList({
         };
 
         return (
-          <View
-            {...(webDragProps as object)}
-            key={program.id}
-            style={[styles.row, draggingIndex === index && styles.rowDragging]}>
-            <Pressable
-              accessibilityHint={t('programs.openHint')}
-              accessibilityRole="button"
-              onPress={() => {
-                if (!didDragRef.current) onOpen(program.id);
-              }}
-              style={({ pressed }) => [styles.rowMain, pressed && styles.rowPressed]}>
-              {showIcons && (
-                <View
-                  style={[
-                    styles.programIcon,
-                    getProgramIconBackground(
-                      getProgramVisual(program.visual, program.icon),
-                      workoutDaysIconColor,
-                      isDark,
-                    ),
-                  ]}>
-                  <WorkoutVisualDisplay
-                    color={colors.primary}
-                    iconColor={workoutDaysIconColor}
-                    size={22}
-                    visual={getProgramVisual(program.visual, program.icon)}
-                  />
-                </View>
-              )}
-              <View style={styles.rowText}>
-                <Text numberOfLines={1} style={styles.rowTitle}>
-                  {program.name}
-                </Text>
-                <View style={styles.rowMetaLine}>
-                  <Text numberOfLines={1} style={styles.rowMeta}>
-                    {t('programs.weeklySummary', { workouts: workoutDays })}
-                    {restDays > 0 ? t('programs.restSuffix', { count: restDays }) : ''}
+          <MotionListItem delay={getDelay(index)} key={program.id}>
+            {/*
+              Sürükleme özellikleri satırın KENDİ düğümünde kalır; hareket
+              sarmalayıcısı yalnızca dıştan giriş/çıkış/kayma verir.
+            */}
+            <View
+              {...(webDragProps as object)}
+              style={[styles.row, draggingIndex === index && styles.rowDragging]}>
+              <Pressable
+                accessibilityHint={t('programs.openHint')}
+                accessibilityRole="button"
+                onPress={() => {
+                  if (!didDragRef.current) onOpen(program.id);
+                }}
+                style={({ pressed }) => [styles.rowMain, pressed && styles.rowPressed]}>
+                {showIcons && (
+                  <View
+                    style={[
+                      styles.programIcon,
+                      getProgramIconBackground(
+                        getProgramVisual(program.visual, program.icon),
+                        workoutDaysIconColor,
+                        isDark,
+                      ),
+                    ]}>
+                    <WorkoutVisualDisplay
+                      color={colors.primary}
+                      iconColor={workoutDaysIconColor}
+                      size={22}
+                      visual={getProgramVisual(program.visual, program.icon)}
+                    />
+                  </View>
+                )}
+                <View style={styles.rowText}>
+                  <Text numberOfLines={1} style={styles.rowTitle}>
+                    {program.name}
                   </Text>
-                  {isActive && <Text style={styles.activeText}>{t('programs.active')}</Text>}
+                  <View style={styles.rowMetaLine}>
+                    <Text numberOfLines={1} style={styles.rowMeta}>
+                      {t('programs.weeklySummary', { workouts: workoutDays })}
+                      {restDays > 0 ? t('programs.restSuffix', { count: restDays }) : ''}
+                    </Text>
+                    {isActive && <Text style={styles.activeText}>{t('programs.active')}</Text>}
+                  </View>
                 </View>
-              </View>
-            </Pressable>
-            <Pressable
-              accessibilityLabel={t('programs.options', { name: program.name })}
-              accessibilityRole="button"
-              disabled={isBusy}
-              hitSlop={12}
-              onPress={() => onOptions(program, isActive)}
-              style={({ pressed }) => [styles.moreButton, pressed && styles.pressed]}>
-              {isBusy ? (
-                <ActivityIndicator color={colors.textSecondary} size="small" />
-              ) : (
-                <Ionicons name="ellipsis-horizontal" size={18} color={colors.textTertiary} />
-              )}
-            </Pressable>
-          </View>
+              </Pressable>
+              <Pressable
+                accessibilityLabel={t('programs.options', { name: program.name })}
+                accessibilityRole="button"
+                disabled={isBusy}
+                hitSlop={12}
+                onPress={() => onOptions(program, isActive)}
+                style={({ pressed }) => [styles.moreButton, pressed && styles.pressed]}>
+                {isBusy ? (
+                  <ActivityIndicator color={colors.textSecondary} size="small" />
+                ) : (
+                  <Ionicons name="ellipsis-horizontal" size={18} color={colors.textTertiary} />
+                )}
+              </Pressable>
+            </View>
+          </MotionListItem>
         );
       })}
     </View>

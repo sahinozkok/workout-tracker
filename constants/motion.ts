@@ -42,6 +42,43 @@ export const MotionOpacity = {
 export const MotionDistance = {
   section: 10,
   swap: 6,
+  /**
+   * Liste satırının giriş mesafesi. Bölüm girişinden (10) bilinçli olarak daha
+   * kısadır: bir ekranda çok sayıda satır aynı anda gelir ve büyük mesafe
+   * listeyi dalgalandırır.
+   */
+  listItem: 8,
+  /**
+   * "Sakin" (calm) geçişin dikey mesafesi. Disiplin takvimi gibi GENİŞ bir
+   * blok 10 pt kayınca ızgaranın tamamı sıçrıyormuş gibi görünüyor; bu yüzden
+   * bilinçli olarak neredeyse hissedilmeyecek kadar küçük tutuldu.
+   */
+  calmSwap: 5,
+} as const;
+
+/**
+ * "Sakin" (calm) geçiş süreleri (ms).
+ *
+ * Disiplin takvimleri gibi GENİŞ içerik blokları içindir. Week/Month/Year
+ * geçişi standart sürelerle oynatılınca ızgara "çat diye" yer değiştirmiş gibi
+ * hissettiriyordu. Bu değerler AYRI tutulur; `MotionDuration.instant`,
+ * `fast` veya `standard` büyütülseydi uygulamanın geri kalanı da yavaşlardı.
+ */
+export const MotionCalmDuration = {
+  /** Yeni içeriğin girişi. */
+  enter: 300,
+  /** Eski içeriğin çıkışı. */
+  exit: 220,
+  /** Yükseklik/konum değişiminin yumuşatılması. */
+  layout: 300,
+  /**
+   * Ağır içerik (yıl ızgarası) sade bir fade ile gelir/gider. Bu ikisi
+   * `enter`/`exit`ten ayrıdır çünkü yıl görünümünde dikey hareket ve layout
+   * animasyonu YOKTUR — geriye yalnızca opaklık kaldığı için biraz daha uzun
+   * bir süre daha doğal duruyor.
+   */
+  heavyEnter: 260,
+  heavyExit: 240,
 } as const;
 
 /** Bölümlerin art arda görünmesi için ortak gecikme değerleri (ms). */

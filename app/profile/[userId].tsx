@@ -6,14 +6,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { withAlpha } from '@/constants/color-presets';
 import { resolveProfileColor } from '@/hooks/use-feature-colors';
+import { RankBadge } from '@/components/ranks/rank-badge';
 import { LevelProgressRing } from '@/components/rewards/level-progress-ring';
 import { ProfileDisciplineCard } from '@/components/profile-discipline-card';
 import { Fonts, Layout, ThemeColors } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useTranslation } from '@/context/language-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
+import { fetchFriendRank } from '@/services/ranks';
 import { getFriendDisciplineDays, getFriendProfile } from '@/services/friends';
 import { FriendProfile } from '@/types/friends';
+import { FriendRankSummary } from '@/types/ranks';
 import { DisciplineStatus } from '@/types/workout';
 import { toDateKey } from '@/utils/discipline';
 
@@ -52,6 +55,8 @@ export default function FriendProfileScreen() {
   const styles = createStyles(colors, ownerAccent.color);
 
   const [statuses, setStatuses] = useState<Record<string, DisciplineStatus>>({});
+  /** Arkadaşın sezon rank özeti. Arkadaş değilse RPC boş döner ve rozet çizilmez. */
+  const [friendRank, setFriendRank] = useState<FriendRankSummary>();
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
   const isMountedRef = useRef(true);
@@ -79,6 +84,19 @@ export default function FriendProfileScreen() {
       const next: Record<string, DisciplineStatus> = {};
       for (const day of days) next[day.dateKey] = day.status;
       setStatuses(next);
+
+      /**
+       * Rank özeti AYRI ve TOLERANSLI okunur: `sync_my_rank` başka bir
+       * kullanıcı için çalıştırılamaz, bu yüzden arkadaşın rank satırı henüz
+       * hiç oluşmamış olabilir. O durumda rozet çizilmez ve profil ekranı
+       * normal açılmaya devam eder — rank hatası profili düşürmez.
+       */
+      try {
+        const rank = await fetchFriendRank(userId);
+        if (isMountedRef.current) setFriendRank(rank);
+      } catch {
+        if (isMountedRef.current) setFriendRank(undefined);
+      }
     } catch {
       if (isMountedRef.current) setHasError(true);
     } finally {
@@ -152,11 +170,15 @@ export default function FriendProfileScreen() {
           </Text>
           <Text style={styles.name}>{profile.displayName}</Text>
 
+          {/* Rank rozeti YALNIZCA `get_friend_rank` veri döndürürse çizilir;
+              o RPC de `are_friends` ile korunur. Arkadaş değilse veri hiç
+              gelmez. Gül bakiyesi ve ham RP event geçmişi HİÇ gösterilmez. */}
           <View style={styles.levelIdentityRow}>
             <View style={styles.levelPill}>
               <Text style={styles.levelPillIcon}>❀</Text>
               <Text style={styles.levelPillText}>{t('rewards.levelLabel', { level: profile.level })}</Text>
             </View>
+            {friendRank && <RankBadge rankId={friendRank.currentRank} rp={friendRank.currentRp} />}
           </View>
 
           {/* Ana hedef: bilinmeyen değer gelirse güvenli fallback. */}
@@ -242,6 +264,8 @@ function createStyles(colors: ThemeColors, ownerAccent: string) {
     levelIdentityRow: {
       alignItems: 'center',
       flexDirection: 'row',
+      // Seviye ve rank rozeti yan yana durduğunda 8 pt boşluk kalır.
+      gap: 8,
       justifyContent: 'center',
       marginTop: 10,
       width: '100%',

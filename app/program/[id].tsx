@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { MotionListItem, useListEntrance } from '@/components/motion-list-item';
 import { MotionPressable } from '@/components/motion-pressable';
 import { WorkoutVisualDisplay } from '@/components/workout-visual-display';
 import { WorkoutVisualPicker } from '@/components/workout-visual-picker';
@@ -32,6 +33,19 @@ import { DisciplineStatus, WorkoutVisual } from '@/types/workout';
 import { toDateKey } from '@/utils/discipline';
 import { getWeekdayDateInCurrentWeek } from '@/utils/workout-schedule';
 import { DEFAULT_PROGRAM_VISUAL, getProgramIconBackground, getProgramVisual } from '@/utils/workout-visual';
+
+/**
+ * WORKOUT DAYS ZAMAN ÇİZELGESİNİN ÖLÇÜLERİ
+ *
+ * Bağlantı çizgilerinin konumu bu dört değerden HESAPLANIR; çizgi stillerinde
+ * elle yazılmış tek bir konum sabiti yoktur. Satır yüksekliği, dikey boşluk
+ * veya çember boyutu ileride değişirse çizgiler kendiliğinden uyar.
+ */
+const TIMELINE_COLUMN_HEIGHT = 64;
+const TIMELINE_ROW_VERTICAL_PADDING = 10;
+const DAY_NUMBER_SIZE = 34;
+/** Çember sütun içinde dikeyde ortalandığı için üst ve alt boşluk eşittir. */
+const DAY_NUMBER_INSET = (TIMELINE_COLUMN_HEIGHT - DAY_NUMBER_SIZE) / 2;
 
 export default function ProgramDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -49,6 +63,11 @@ export default function ProgramDetailScreen() {
   const [programNameDraft, setProgramNameDraft] = useState('');
   const [programVisualDraft, setProgramVisualDraft] = useState<WorkoutVisual>(DEFAULT_PROGRAM_VISUAL);
   const program = programs.find((item) => item.id === id);
+  /**
+   * Gün satırlarının hareketi. Kanca erken dönüşlerin ÜSTÜNDE çağrılır; aksi
+   * hâlde yükleme/bulunamadı durumlarında kanca sırası bozulurdu.
+   */
+  const { getDelay } = useListEntrance(program?.days.length ?? 0);
 
   if (isProgramsLoading) {
     return (
@@ -173,54 +192,69 @@ export default function ProgramDetailScreen() {
             const isFuture = Boolean(dayDate && dayDate.getTime() > today.getTime());
             // Gelecek günlerde ve aktif olmayan programlarda durum üretilmez.
             const status = isActiveProgram && dayDateKey && !isFuture ? disciplineStatuses[dayDateKey] : undefined;
+            const isFirstDay = dayIndex === 0;
             const isLastDay = dayIndex === program.days.length - 1;
 
             return (
-              <Pressable
-                accessibilityHint={t('programDetail.openDayHint')}
-                accessibilityLabel={t('programDetail.openDayLabel', { name: day.name })}
-                accessibilityRole="button"
-                key={day.id}
-                onPress={() =>
-                  router.push({
-                    pathname: '/program/[id]/day/[dayId]',
-                    params: { id: program.id, dayId: day.id },
-                  })
-                }
-                style={({ pressed }) => [styles.dayRow, pressed && styles.pressed]}>
-                <View style={styles.timelineColumn}>
-                  {!isLastDay && <View style={styles.timelineLine} />}
-                  <View
-                    style={[
-                      styles.dayNumber,
-                      { borderColor: getDayStatusColor(colors, status) },
-                      isToday && styles.dayNumberToday,
-                    ]}>
-                    <Text
+              /*
+                Gün sırası değişince satır yeni yerine kayar (`layout`); gün
+                eklenip silinince yalnızca o satır görünür/kaybolur. Sürükleme
+                gesture'ı olmadığı için burada layout animasyonu güvenli.
+              */
+              <MotionListItem delay={getDelay(dayIndex)} key={day.id}>
+                <Pressable
+                  accessibilityHint={t('programDetail.openDayHint')}
+                  accessibilityLabel={t('programDetail.openDayLabel', { name: day.name })}
+                  accessibilityRole="button"
+                  onPress={() =>
+                    router.push({
+                      pathname: '/program/[id]/day/[dayId]',
+                      params: { id: program.id, dayId: day.id },
+                    })
+                  }
+                  style={({ pressed }) => [styles.dayRow, pressed && styles.pressed]}>
+                  <View style={styles.timelineColumn}>
+                    {/*
+                      Zaman çizelgesi İKİ PARÇA hâlinde çizilir: her satır kendi
+                      çemberinin üstünü bir önceki satıra, altını bir sonrakine
+                      bağlar. İki parça tam olarak satır sınırında buluştuğu
+                      için kopukluk oluşmaz; hiçbir parça kendi satırının
+                      dışına taşmaz, yani kırpılma riski de yoktur.
+                    */}
+                    {!isFirstDay && <View style={styles.timelineLineAbove} />}
+                    {!isLastDay && <View style={styles.timelineLineBelow} />}
+                    <View
                       style={[
-                        styles.dayNumberText,
-                        { color: status ? getDayStatusColor(colors, status) : colors.textTertiary },
-                        isToday && styles.dayNumberTextToday,
+                        styles.dayNumber,
+                        { borderColor: getDayStatusColor(colors, status) },
+                        isToday && styles.dayNumberToday,
                       ]}>
-                      {dayIndex + 1}
+                      <Text
+                        style={[
+                          styles.dayNumberText,
+                          { color: status ? getDayStatusColor(colors, status) : colors.textTertiary },
+                          isToday && styles.dayNumberTextToday,
+                        ]}>
+                        {dayIndex + 1}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.dayText}>
+                    <Text numberOfLines={1} style={[styles.dayName, day.isOffDay && styles.dayNameOff]}>
+                      {day.name}
+                    </Text>
+                    <Text numberOfLines={1} style={[styles.dayWeekday, isToday && styles.dayWeekdayToday]}>
+                      {isToday ? t('day.today') : getWeekdayLabel(day.scheduledWeekday, locale)}
+                      {day.isOffDay
+                        ? ''
+                        : ` · ${t('programDetail.exerciseCount', { count: day.exercises.length })}`}
                     </Text>
                   </View>
-                </View>
 
-                <View style={styles.dayText}>
-                  <Text numberOfLines={1} style={[styles.dayName, day.isOffDay && styles.dayNameOff]}>
-                    {day.name}
-                  </Text>
-                  <Text numberOfLines={1} style={[styles.dayWeekday, isToday && styles.dayWeekdayToday]}>
-                    {isToday ? t('day.today') : getWeekdayLabel(day.scheduledWeekday, locale)}
-                    {day.isOffDay
-                      ? ''
-                      : ` · ${t('programDetail.exerciseCount', { count: day.exercises.length })}`}
-                  </Text>
-                </View>
-
-                <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
-              </Pressable>
+                  <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+                </Pressable>
+              </MotionListItem>
             );
           })}
         </View>
@@ -418,24 +452,45 @@ function createStyles(colors: ThemeColors, todayColor: string) {
       alignItems: 'center',
       flexDirection: 'row',
       gap: 14,
-      minHeight: 64,
-      paddingVertical: 10,
+      minHeight: TIMELINE_COLUMN_HEIGHT,
+      paddingVertical: TIMELINE_ROW_VERTICAL_PADDING,
     },
-    timelineColumn: { alignItems: 'center', height: 64, justifyContent: 'center', width: 34 },
-    timelineLine: {
+    timelineColumn: {
+      alignItems: 'center',
+      height: TIMELINE_COLUMN_HEIGHT,
+      justifyContent: 'center',
+      width: DAY_NUMBER_SIZE,
+    },
+    /**
+     * Satırın ÜST kenarından (bir önceki satırın alt parçasının bittiği nokta)
+     * bu çemberin ÜST kenarına kadar. `bottom`, sütunun altından ölçüldüğü için
+     * çemberin üstü `TIMELINE_COLUMN_HEIGHT - DAY_NUMBER_INSET` uzaklıktadır.
+     */
+    timelineLineAbove: {
       backgroundColor: colors.separator,
-      bottom: -10,
+      bottom: TIMELINE_COLUMN_HEIGHT - DAY_NUMBER_INSET,
       position: 'absolute',
-      top: 42,
+      top: -TIMELINE_ROW_VERTICAL_PADDING,
+      width: StyleSheet.hairlineWidth,
+    },
+    /**
+     * Bu çemberin ALT kenarından satırın alt kenarına kadar. Sonraki satırın
+     * üst parçası tam olarak burada devam eder.
+     */
+    timelineLineBelow: {
+      backgroundColor: colors.separator,
+      bottom: -TIMELINE_ROW_VERTICAL_PADDING,
+      position: 'absolute',
+      top: DAY_NUMBER_INSET + DAY_NUMBER_SIZE,
       width: StyleSheet.hairlineWidth,
     },
     dayNumber: {
       alignItems: 'center',
-      borderRadius: 17,
+      borderRadius: DAY_NUMBER_SIZE / 2,
       borderWidth: 2,
-      height: 34,
+      height: DAY_NUMBER_SIZE,
       justifyContent: 'center',
-      width: 34,
+      width: DAY_NUMBER_SIZE,
     },
     dayNumberToday: { borderColor: todayColor },
     dayNumberText: { fontSize: 14, fontWeight: '600' },

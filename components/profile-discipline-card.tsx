@@ -242,9 +242,10 @@ function ProfileDisciplineCardView({
         })}
       </View>
 
+      {/* Ana Sayfa takvimiyle AYNI sakin tempo; iki ekran aynı hisse sahip. */}
       <MotionSwap
         contentWeight={period === 'year' ? 'heavy' : 'regular'}
-        emphasis="clear"
+        pace="calm"
         transitionKey={period}>
       {period === 'week' ? (
         <WeekRow

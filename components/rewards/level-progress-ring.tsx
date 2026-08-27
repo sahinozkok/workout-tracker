@@ -1,8 +1,16 @@
-import { useMemo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo } from 'react';
+import { StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import Animated, {
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withDelay,
+  withTiming,
+} from 'react-native-reanimated';
 
 import { ProgressRing } from '@/components/progress-ring';
 import { MAX_LEVEL } from '@/constants/level-curve';
+import { MotionDistance, MotionDuration, MotionEasing } from '@/constants/motion';
 import { Fonts } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
@@ -33,6 +41,17 @@ const FILL_COLOR = '#D5755B';
 const RING_SIZE = 96;
 const RING_STROKE = 7;
 
+/**
+ * Metin sütununun kırpma kutusuna dikeyde eklenen pay (pt).
+ *
+ * Sütun yatayda KIRPILMAK ZORUNDA (yazı kendi sütununun sağ kenarından sola
+ * doğru açılarak görünüyor), ama dikeyde kırpılmamalı: serif başlığın alt
+ * uzantıları `lineHeight` kutusunu birkaç piksel taşabiliyor. Bu pay kadar
+ * `padding` eklenip aynı miktarda negatif `margin` ile geri alınır; kutu
+ * dikeyde genişler, YERLEŞİM ise birebir aynı kalır.
+ */
+const COPY_CLIP_BLEED = 4;
+
 type LevelProgressRingProps = {
   /**
    * Eyebrow (`YOUR RHYTHM`) rengi. Verilmezse bugünkü ton korunur.
@@ -50,6 +69,17 @@ type LevelProgressRingProps = {
    */
   message?: string;
   level: number;
+  /**
+   * Giriş animasyonunu tetikleyen anahtar.
+   *
+   * VERİLMEZSE kart doğrudan son hâlinde çizilir ve hiçbir animasyon çalışmaz
+   * — arkadaş profili (`app/profile/[userId].tsx`) bu yolu kullanır.
+   *
+   * Değeri her DEĞİŞTİĞİNDE animasyon baştan oynar. Bu yüzden kendi profilde
+   * yalnızca ekran odak kazandığında artırılır; tema, profil verisi veya başka
+   * bir state güncellemesi kartı yeniden oynatmaz.
+   */
+  revealToken?: number;
   xpForNextLevel: number;
   xpIntoLevel: number;
 };
@@ -59,11 +89,92 @@ export function LevelProgressRing({
   fillColor,
   level,
   message,
+  revealToken,
   xpForNextLevel,
   xpIntoLevel,
 }: LevelProgressRingProps) {
   const { isDark } = useAppTheme();
   const { t } = useTranslation();
+  const reduceMotion = useReducedMotion();
+  /** Reduce Motion açıkken de, token verilmediğinde de animasyon yoktur. */
+  const hasEntrance = revealToken !== undefined && !reduceMotion;
+
+  /**
+   * 0 → yalnızca halka görünür ve yatayda ortalıdır.
+   * 1 → bugünkü yerleşimin BİREBİR aynısı.
+   *
+   * Animasyon boyunca yalnızca `opacity` ve `transform` değişir; hiçbir ölçü
+   * animasyonlanmadığı için layout sıçraması oluşamaz ve bitiş noktası her
+   * zaman mevcut tasarımın tam olarak kendisidir.
+   */
+  const reveal = useSharedValue(hasEntrance ? 0 : 1);
+  /** Ölçülen gerçek genişlikler; sabit ekran genişliği HİÇ kullanılmaz. */
+  const rowWidth = useSharedValue(0);
+  const copyWidth = useSharedValue(0);
+
+  useEffect(() => {
+    if (!hasEntrance) {
+      reveal.value = 1;
+      return;
+    }
+
+    reveal.value = 0;
+    reveal.value = withDelay(
+      // İlk anda sahnede yalnızca ortadaki halka durur.
+      MotionDuration.instant,
+      withTiming(1, { duration: MotionDuration.slow, easing: MotionEasing.standard }),
+    );
+  }, [hasEntrance, reveal, revealToken]);
+
+  const handleRowLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      rowWidth.value = event.nativeEvent.layout.width;
+    },
+    [rowWidth],
+  );
+
+  const handleCopyLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      copyWidth.value = event.nativeEvent.layout.width;
+    },
+    [copyWidth],
+  );
+
+  /**
+   * Halka merkezden mevcut sağ konumuna kayar. `opacity` koruması, genişlik
+   * henüz ölçülmemişken halkanın bir kare boyunca son konumunda görünüp ortaya
+   * ışınlanmasını engeller.
+   */
+  const ringStyle = useAnimatedStyle(() => {
+    const isMeasured = rowWidth.value > 0;
+    const centerShift = isMeasured ? Math.max(0, (rowWidth.value - RING_SIZE) / 2) : 0;
+
+    return {
+      opacity: hasEntrance && !isMeasured ? 0 : 1,
+      transform: [{ translateX: -centerShift * (1 - reveal.value) }],
+    };
+  });
+
+  /**
+   * Metin sütunu kendi genişliği kadar sağa itilmiş başlar; kırpma kutusu
+   * yüzünden hiç görünmez. Halka sağa kayarken bu itme geri alınır, yani yazı
+   * halkanın arkasından çıkıyormuş gibi SOLA doğru açılır. Opaklık kullanmaya
+   * gerek yok: açılma zaten kırpma ile oluyor.
+   */
+  const copyStyle = useAnimatedStyle(() => {
+    const isMeasured = copyWidth.value > 0;
+
+    return {
+      opacity: hasEntrance && !isMeasured ? 0 : 1,
+      transform: [{ translateX: copyWidth.value * (1 - reveal.value) }],
+    };
+  });
+
+  /** Ayırıcı ve "Next level" satırı aynı anda, çok küçük bir kayma ile gelir. */
+  const detailsStyle = useAnimatedStyle(() => ({
+    opacity: reveal.value,
+    transform: [{ translateX: MotionDistance.swap * (1 - reveal.value) }],
+  }));
 
   // Oran hesabı BİLİNÇLİ olarak değişmedi; her koşulda 0–1 arasına sıkışır ve
   // en yüksek seviyede halka tamamen dolu gösterilir.
@@ -83,6 +194,10 @@ export function LevelProgressRing({
         root: {
           backgroundColor: cardBackground,
           borderRadius: 24,
+          // Güvenlik ağı: giriş animasyonu sırasında hiçbir parça kart
+          // sınırının dışına taşamaz. Son görünümde hiçbir şey taşmadığı için
+          // bugünkü kart birebir aynı çizilir.
+          overflow: 'hidden',
           padding: 16,
           width: '100%',
         },
@@ -92,7 +207,15 @@ export function LevelProgressRing({
           gap: 12,
           justifyContent: 'space-between',
         },
-        copy: { flex: 1, gap: 6, minWidth: 0 },
+        /** Yatay kırpma kutusu; ölçüleri `copyInner` belirler. */
+        copy: {
+          flex: 1,
+          marginVertical: -COPY_CLIP_BLEED,
+          minWidth: 0,
+          overflow: 'hidden',
+          paddingVertical: COPY_CLIP_BLEED,
+        },
+        copyInner: { gap: 6 },
         eyebrow: {
           color: accentColor ?? '#C28A91',
           fontSize: 9,
@@ -149,23 +272,27 @@ export function LevelProgressRing({
 
   return (
     <View style={styles.root}>
-      <View style={styles.topRow}>
-        <View style={styles.copy}>
-          <Text style={styles.eyebrow}>{t('rewards.levelCardEyebrow')}</Text>
-          {/* Kısa biyografi. Boşsa satır hiç render edilmez. */}
-          {message ? <Text style={styles.message}>{message}</Text> : null}
+      <View onLayout={handleRowLayout} style={styles.topRow}>
+        <View onLayout={handleCopyLayout} style={styles.copy}>
+          <Animated.View style={[styles.copyInner, copyStyle]}>
+            <Text style={styles.eyebrow}>{t('rewards.levelCardEyebrow')}</Text>
+            {/* Kısa biyografi. Boşsa satır hiç render edilmez. */}
+            {message ? <Text style={styles.message}>{message}</Text> : null}
+          </Animated.View>
         </View>
 
         {/* Erişilebilirlik halkanın tamamındadır: iç metinler ayrı ayrı
-            okunmaz, ilerleme tek bir öğe olarak duyurulur. */}
-        <View
+            okunmaz, ilerleme tek bir öğe olarak duyurulur. Hareket için ek bir
+            katman AÇILMAZ; aynı düğüm `Animated.View` olur. */}
+        <Animated.View
           accessibilityLabel={
             isMaxLevel
               ? t('rewards.progressMaxA11y', { level })
               : t('rewards.progressA11y', { current: xpIntoLevel, level, next: xpForNextLevel })
           }
           accessibilityRole="progressbar"
-          accessible>
+          accessible
+          style={ringStyle}>
           <ProgressRing
             color={fillColor ?? FILL_COLOR}
             progress={ratio}
@@ -181,21 +308,23 @@ export function LevelProgressRing({
               </Text>
             </View>
           </ProgressRing>
+        </Animated.View>
+      </View>
+
+      <Animated.View style={detailsStyle}>
+        <View style={styles.separator} />
+
+        <View style={styles.footer}>
+          <Text style={styles.footerLabel}>
+            {isMaxLevel ? t('rewards.maximumLevelReached') : t('rewards.levelCardNext')}
+          </Text>
+          <Text style={styles.footerValue}>
+            {isMaxLevel
+              ? t('rewards.levelLabel', { level })
+              : t('rewards.levelXpValue', { current: xpIntoLevel, next: xpForNextLevel })}
+          </Text>
         </View>
-      </View>
-
-      <View style={styles.separator} />
-
-      <View style={styles.footer}>
-        <Text style={styles.footerLabel}>
-          {isMaxLevel ? t('rewards.maximumLevelReached') : t('rewards.levelCardNext')}
-        </Text>
-        <Text style={styles.footerValue}>
-          {isMaxLevel
-            ? t('rewards.levelLabel', { level })
-            : t('rewards.levelXpValue', { current: xpIntoLevel, next: xpForNextLevel })}
-        </Text>
-      </View>
+      </Animated.View>
     </View>
   );
 }
