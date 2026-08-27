@@ -1,5 +1,5 @@
 /**
- * RANK DENEYİMİ — SAF KARARLAR (RP geçmişi + rank yükselme)
+ * RANK DENEYİMİ — SAF KARARLAR (RP geçmişi + rank yükselme + sezon özeti)
  *
  * Bu dosya `constants/ranks.ts` ile AYNI duruşu izler: **hiçbir `import`u
  * YOKTUR**. Harness (`.mjs`) modülü tek başına `tsc` ile derleyip
@@ -225,4 +225,107 @@ export function canShowRankCelebration(pathname: string | null | undefined): boo
  */
 export function rankCelebrationStorageKey(userId: string, seasonIndex: number): string {
   return `rank:celebrated:${userId}:${seasonIndex}`;
+}
+
+// ---------------------------------------------------------------------------
+// 3) Sezon sonu özeti — tek seferlik gösterim kararı
+// ---------------------------------------------------------------------------
+
+/**
+ * Özet kararının ihtiyaç duyduğu KAPANMIŞ sezon alanları.
+ *
+ * Bilinçli olarak dardır: karar yalnızca "gösterilebilir mi" sorusunu yanıtlar,
+ * ekranda çizilen değerler sunucu arşivinin kendisinden okunur.
+ */
+export type SeasonRecapArchiveInput = {
+  seasonIndex: number;
+  finalRp: number;
+  scheduledDaysTotal: number;
+  scheduledDaysCompleted: number;
+};
+
+/** Gösterilecek özetin kimliği ve tek türetilmiş gösterim değeri. */
+export type SeasonRecapPlan = {
+  /** Özeti gösterilecek kapanmış sezon. */
+  closedSeasonIndex: number;
+  /** Kullanıcının şu an içinde olduğu sezon. */
+  nextSeasonIndex: number;
+  /**
+   * Plan uyumu yüzdesi.
+   *
+   * Bu bir RP/rank hesabı DEĞİLDİR: sunucunun yazdığı iki sayının oranıdır ve
+   * rank ekranındaki mevcut gösterimle birebir aynı formülü kullanır.
+   */
+  planCompletionPercent: number;
+};
+
+/** Sonlu, negatif olmayan tam sayı mı? Bozuk sunucu verisi ekranı açmamalı. */
+function isSafeCount(value: number): boolean {
+  return Number.isFinite(value) && value >= 0;
+}
+
+/**
+ * Sezon sonu özeti gösterilmeli mi?
+ *
+ * DEĞİŞMEZLER
+ *  - İlk sezonda (veya arşiv yokken) özet YOKTUR.
+ *  - Yalnızca **güncel sezonun hemen öncesi** kapanmış sezon özet üretir; daha
+ *    eski arşivler (kullanıcı bir sezonu tamamen kaçırmışsa da) üretmez.
+ *  - Sunucu verisi eksik/tutarsızsa (negatif sayı, tamamlanan > planlanan,
+ *    sonsuz/NaN değer) özet ÜRETİLMEZ — istemci hiçbir değeri tahmin etmez.
+ *  - Buradaki karar "gösterildi" anlamına GELMEZ; gösterim onayı ayrı bir
+ *    adımdır (bkz. `seasonRecapStorageKey`).
+ */
+export function decideSeasonRecap(input: {
+  currentSeasonIndex: number;
+  /** Yeni sezona soft reset ile girilen RP. Sunucudan gelir. */
+  startingRp: number;
+  /** Kapanmış sezon arşivi; sıralaması önemli değildir. */
+  archives: readonly SeasonRecapArchiveInput[];
+}): SeasonRecapPlan | undefined {
+  const { archives, currentSeasonIndex, startingRp } = input;
+
+  if (!Number.isInteger(currentSeasonIndex) || currentSeasonIndex < 2) return undefined;
+  if (!isSafeCount(startingRp)) return undefined;
+  if (!archives || archives.length === 0) return undefined;
+
+  // En yeni kapanmış sezon.
+  let newest: SeasonRecapArchiveInput | undefined;
+  for (const archive of archives) {
+    if (!Number.isInteger(archive.seasonIndex)) continue;
+    if (!newest || archive.seasonIndex > newest.seasonIndex) newest = archive;
+  }
+
+  if (!newest) return undefined;
+  // Hemen önceki sezon DEĞİLSE özet gösterilmez.
+  if (newest.seasonIndex !== currentSeasonIndex - 1) return undefined;
+
+  if (!isSafeCount(newest.finalRp)) return undefined;
+  if (!isSafeCount(newest.scheduledDaysTotal) || !isSafeCount(newest.scheduledDaysCompleted)) {
+    return undefined;
+  }
+  if (newest.scheduledDaysCompleted > newest.scheduledDaysTotal) return undefined;
+
+  const planCompletionPercent =
+    newest.scheduledDaysTotal > 0
+      ? Math.round((newest.scheduledDaysCompleted / newest.scheduledDaysTotal) * 100)
+      : 0;
+
+  return {
+    closedSeasonIndex: newest.seasonIndex,
+    nextSeasonIndex: currentSeasonIndex,
+    planCompletionPercent,
+  };
+}
+
+/**
+ * Sezon sonu özetinin gösterim kaydının AsyncStorage anahtarı.
+ *
+ * Rank yükselme onayından (`rankCelebrationStorageKey`) BİLİNÇLİ olarak
+ * ayrıdır: iki deneyim birbirinin kaydını okuyamaz veya bozamaz. Anahtar hem
+ * kullanıcı kimliğini hem KAPANMIŞ sezon numarasını taşır, bu yüzden A
+ * hesabının kaydı B'yi etkileyemez.
+ */
+export function seasonRecapStorageKey(userId: string, closedSeasonIndex: number): string {
+  return `rank:season-recap-shown:${userId}:${closedSeasonIndex}`;
 }

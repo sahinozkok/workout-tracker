@@ -764,6 +764,17 @@ export const tr = {
       continue: 'Devam',
       a11y: '{from} rankından {to} rankına yükseldin. Güncel RP: {rp}.',
     },
+    /** Yeni sezona geçildikten sonra bir kez gösterilen sezon sonu özeti. */
+    seasonRecap: {
+      title: 'Sezon tamamlandı',
+      finalRank: 'SEZON SONU RANKI',
+      softReset: 'YENİ SEZON BAŞLANGICI',
+      softResetValue: '{from} RP → {to} RP',
+      nextSeason: '{season} başlıyor.',
+      start: 'Yeni sezona başla',
+      a11y:
+        '{season} tamamlandı. Sezon sonu rankın {rank}, {rp} RP. Yeni sezona {startingRp} RP ile başlıyorsun.',
+    },
     pastSeasons: 'GEÇMİŞ SEZONLAR',
     noPastSeasons: 'Henüz tamamlanmış bir sezon yok. İlk sezonun bittiğinde sonucun burada arşivlenecek.',
     loading: 'Rank yükleniyor…',

@@ -13,7 +13,9 @@ import { AppState } from 'react-native';
 
 import {
   decideRankCelebration,
+  decideSeasonRecap,
   rankCelebrationStorageKey,
+  seasonRecapStorageKey,
 } from '@/constants/rank-experience';
 import { RankId, RANK_IDS } from '@/constants/ranks';
 import { useAuth } from '@/context/auth-context';
@@ -24,6 +26,7 @@ import {
   RankSeasonArchive,
   RankSeasonSummary,
   RankUpCelebration,
+  SeasonRecap,
 } from '@/types/ranks';
 
 /**
@@ -68,6 +71,15 @@ type RankContextValue = {
   acknowledgeRankUpShown: (celebrationId: number) => Promise<void>;
   /** Kutlama kapandı. Yalnızca aynı kimliğe sahip kutlamayı temizler. */
   dismissRankUp: (celebrationId: number) => void;
+  /** Gösterilmeyi bekleyen sezon sonu özeti. Kapanınca temizlenir. */
+  seasonRecap?: SeasonRecap;
+  /**
+   * Sezon özeti ekranda GERÇEKTEN gösterilmeye başladı. Kayıt yalnızca burada
+   * yazılır; kapanışı yönetmez.
+   */
+  acknowledgeSeasonRecapShown: (closedSeasonIndex: number) => Promise<void>;
+  /** Özet kapandı. Yalnızca aynı kapanmış sezonun özetini temizler. */
+  dismissSeasonRecap: (closedSeasonIndex: number) => void;
 };
 
 /** AsyncStorage'da tutulan onay kaydının bellek içi hâli. */
@@ -78,6 +90,19 @@ type CelebrationBaseline = {
 };
 
 const RankContext = createContext<RankContextValue | undefined>(undefined);
+
+/**
+ * Sezon özeti için arşiv isteğinin oturum başına en fazla kaç kez
+ * DENENEBİLECEĞİ.
+ *
+ * Yeniden deneme yalnızca doğal tetikleyicilere (rank sync, AppState dönüşü)
+ * bağlıdır — zamanlayıcı veya polling YOKTUR. Bu üst sınır, sunucu ısrarla
+ * hata verdiğinde antrenman boyunca her set sonrası yeni bir istek atılmasını
+ * önler. Sınır dolduğunda karar "özet yok" diye KAPATILMAZ: rank ekranından
+ * gelen başarılı bir yükleme özeti hâlâ açabilir, uygulama yeniden
+ * başladığında da deneme hakkı sıfırlanır.
+ */
+const RECAP_HISTORY_MAX_ATTEMPTS = 3;
 
 /** Depodan okunan rank kimliğini güvenle daraltır; bozuk kayıt yok sayılır. */
 function parseStoredRank(value: string | null): RankId | undefined {
@@ -97,6 +122,7 @@ export function RankProvider({ children }: PropsWithChildren) {
   const [events, setEvents] = useState<RankEvent[]>([]);
   const [isEventsLoading, setIsEventsLoading] = useState(false);
   const [rankUp, setRankUp] = useState<RankUpCelebration>();
+  const [seasonRecap, setSeasonRecap] = useState<SeasonRecap>();
 
   const isMountedRef = useRef(true);
   /** Hesap sahipliği. Hesap değişince artar; eski cevap yeni state'e yazamaz. */
@@ -129,6 +155,21 @@ export function RankProvider({ children }: PropsWithChildren) {
   /** Güncel sezonun senkron kopyası; gösterim onayında sahiplik kontrolü için. */
   const seasonRef = useRef<RankSeasonSummary>(undefined);
 
+  /** Arşiv en az bir kez BAŞARIYLA okundu mu? Boş dizi ile karışmasın diye. */
+  const hasLoadedHistoryRef = useRef(false);
+  /** Sezon özeti kararları sıraya alınır: iki cevap yarışamaz. */
+  const recapChainRef = useRef<Promise<void>>(Promise.resolve());
+  /** Bekleyen özetin senkron kopyası. */
+  const seasonRecapRef = useRef<SeasonRecap>(undefined);
+  /** `${userId}:${closedSeasonIndex}` — karar verilmiş özet; tekrar sorulmaz. */
+  const resolvedRecapRef = useRef<string>(undefined);
+  /** `${userId}:${seasonIndex}` — özet için arşiv bu oturumda istendi mi? */
+  const requestedRecapHistoryRef = useRef<string>(undefined);
+  /** Aynı istek için harcanan deneme hakkı; istek fırtınasını önler. */
+  const recapHistoryAttemptsRef = useRef<{ count: number; key: string }>(undefined);
+  /** Gösterim kaydı yazılmış son özet. Aynı özet iki kez yazılmaz. */
+  const acknowledgedRecapRef = useRef<string>(undefined);
+
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
@@ -147,6 +188,10 @@ export function RankProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     seasonRef.current = season;
   }, [season]);
+
+  useEffect(() => {
+    seasonRecapRef.current = seasonRecap;
+  }, [seasonRecap]);
 
   const runSync = useCallback(async () => {
     if (!userId) return;
@@ -199,6 +244,9 @@ export function RankProvider({ children }: PropsWithChildren) {
     try {
       const rows = await fetchMyRankHistory();
       if (!isMountedRef.current || owner !== ownerRef.current) return;
+      // Boş dizi "arşiv yok" demektir; "henüz okunmadı" ile karışmaması için
+      // başarı ayrı bir bayrakla işaretlenir (sezon özeti buna bakar).
+      hasLoadedHistoryRef.current = true;
       setHistory(rows);
     } catch {
       // Arşiv okunamazsa ekran boş liste ile açılır; kullanıcı tekrar deneyebilir.
@@ -295,6 +343,184 @@ export function RankProvider({ children }: PropsWithChildren) {
   const dismissRankUp = useCallback((celebrationId: number) => {
     if (rankUpRef.current?.id === celebrationId) rankUpRef.current = undefined;
     setRankUp((current) => (current && current.id !== celebrationId ? current : undefined));
+  }, []);
+
+  /**
+   * SEZON SONU ÖZETİ — gösterim kararı.
+   *
+   * Rank yükselme akışından TAMAMEN ayrıdır: kendi AsyncStorage anahtarını,
+   * kendi zincirini ve kendi onayını kullanır; ikisi birbirinin kaydını
+   * okumaz veya bozamaz.
+   *
+   * Özet YALNIZCA şu koşullarda oluşur:
+   *   * oturumda bir kullanıcı var,
+   *   * güncel sezon sunucudan yüklendi ve ilk sezon DEĞİL,
+   *   * arşiv başarıyla okundu,
+   *   * en yeni kapanmış sezon güncel sezonun HEMEN ÖNCEKİSİ,
+   *   * sunucu verisi tutarlı (`decideSeasonRecap`),
+   *   * bu özet daha önce gerçekten gösterilmemiş.
+   *
+   * Karar "gösterildi" anlamına GELMEZ; kalıcı kayıt yalnızca overlay ekranda
+   * görünmeye başladığında `acknowledgeSeasonRecapShown` ile yazılır. Böylece
+   * kullanıcı özeti görmeden uygulamayı kapatırsa özet kaybolmaz.
+   */
+  const resolveSeasonRecap = useCallback(
+    async (
+      ownerId: string,
+      snapshot: RankSeasonSummary,
+      archives: RankSeasonArchive[],
+      owner: number,
+    ) => {
+      if (owner !== ownerRef.current) return;
+      // İlk sezonda gösterilecek kapanmış sezon yoktur.
+      if (snapshot.seasonIndex < 2) return;
+
+      const closedSeasonIndex = snapshot.seasonIndex - 1;
+      const recapKey = `${ownerId}:${closedSeasonIndex}`;
+
+      // Bu özet için karar zaten verildi (gösterildi ya da uygun değil).
+      if (resolvedRecapRef.current === recapKey) return;
+      // Aynı özet zaten bekliyor: ikinci bir overlay ÜRETİLMEZ.
+      if (seasonRecapRef.current?.archive.seasonIndex === closedSeasonIndex) return;
+
+      const stored = await AsyncStorage.getItem(
+        seasonRecapStorageKey(ownerId, closedSeasonIndex),
+      ).catch(() => null);
+      if (!isMountedRef.current || owner !== ownerRef.current) return;
+
+      if (stored !== null) {
+        resolvedRecapRef.current = recapKey;
+        return;
+      }
+
+      const plan = hasLoadedHistoryRef.current
+        ? decideSeasonRecap({
+            archives,
+            currentSeasonIndex: snapshot.seasonIndex,
+            startingRp: snapshot.startingRp,
+          })
+        : undefined;
+
+      if (!plan) {
+        /**
+         * Arşiv hiç okunmamış, OKUNAMAMIŞ ya da bu sezon başlamadan önce
+         * okunmuş olabilir. Sezon başına BİR KEZ istenir; polling veya
+         * otomatik yeniden deneme YOKTUR.
+         */
+        const requestKey = `${ownerId}:${snapshot.seasonIndex}`;
+        const attempts =
+          recapHistoryAttemptsRef.current?.key === requestKey
+            ? recapHistoryAttemptsRef.current.count
+            : 0;
+
+        if (
+          requestedRecapHistoryRef.current !== requestKey &&
+          attempts < RECAP_HISTORY_MAX_ATTEMPTS
+        ) {
+          requestedRecapHistoryRef.current = requestKey;
+          recapHistoryAttemptsRef.current = { count: attempts + 1, key: requestKey };
+          await loadHistory();
+
+          /**
+           * İstek BAŞARISIZSA guard geri açılır: karar "özet yok" diye
+           * kapatılmaz ve bir sonraki DOĞAL tetikleyici (rank sync, AppState
+           * dönüşü, rank ekranından gelen başarılı yükleme) yeniden
+           * deneyebilir. Guard'ın hâlâ bu isteğe ait olduğu doğrulanır, aksi
+           * hâlde arada değişen hesabın guard'ı silinirdi.
+           *
+           * Başarılıysa hiçbir şey yapılmaz: `history` değiştiği için bu akış
+           * kendiliğinden yeniden çalışır.
+           */
+          if (
+            !hasLoadedHistoryRef.current &&
+            owner === ownerRef.current &&
+            requestedRecapHistoryRef.current === requestKey
+          ) {
+            requestedRecapHistoryRef.current = undefined;
+          }
+          return;
+        }
+
+        /**
+         * Karar ANCAK arşiv gerçekten okunduysa kapatılır. Aksi hâlde tek bir
+         * ağ hatası sezon özetini bütün oturum boyunca yutardı: deneme hakkı
+         * bitse bile karar açık kalır ve rank ekranından gelen başarılı bir
+         * yükleme özeti açabilir.
+         */
+        if (hasLoadedHistoryRef.current) resolvedRecapRef.current = recapKey;
+        return;
+      }
+
+      const archive = archives.find((row) => row.seasonIndex === plan.closedSeasonIndex);
+      if (!archive) {
+        resolvedRecapRef.current = recapKey;
+        return;
+      }
+
+      // Hesap arada değiştiyse yeni hesabın durumuna HİÇBİR ŞEY yazılmaz.
+      if (!isMountedRef.current || owner !== ownerRef.current) return;
+
+      const next: SeasonRecap = {
+        archive,
+        nextSeasonIndex: plan.nextSeasonIndex,
+        planCompletionPercent: plan.planCompletionPercent,
+        startingRp: snapshot.startingRp,
+      };
+      seasonRecapRef.current = next;
+      setSeasonRecap(next);
+    },
+    [loadHistory],
+  );
+
+  useEffect(() => {
+    if (!userId || !season) return;
+    const owner = ownerRef.current;
+    // Zincir: iki cevap aynı anda depo okuyup yazamaz.
+    recapChainRef.current = recapChainRef.current
+      .then(() => resolveSeasonRecap(userId, season, history, owner))
+      .catch(() => undefined);
+  }, [history, resolveSeasonRecap, season, userId]);
+
+  /**
+   * Sezon özetinin GÖSTERİM ONAYI.
+   *
+   * Kalıcı kaydı yazan TEK yol budur ve yalnızca overlay güvenli bir ekranda
+   * gerçekten görünmeye başladığında çağrılır — düğme beklenmez. State'i
+   * KAPATMAZ; kapatma `dismissSeasonRecap` sorumluluğundadır.
+   *
+   * Sahiplik üç kapıyla doğrulanır: kapanmış sezon kimliği hâlâ bekleyen
+   * özete ait olmalı (hesap değişiminde `seasonRecapRef` temizlenir), oturumda
+   * bir kullanıcı olmalı ve özet güncel sezona ait olmalı. Depo hatası yutulur.
+   */
+  const acknowledgeSeasonRecapShown = useCallback(
+    async (closedSeasonIndex: number) => {
+      if (!userId) return;
+
+      const recap = seasonRecapRef.current;
+      if (!recap || recap.archive.seasonIndex !== closedSeasonIndex) return;
+      if (seasonRef.current?.seasonIndex !== recap.nextSeasonIndex) return;
+
+      const recapKey = `${userId}:${closedSeasonIndex}`;
+      // Aynı özet için ikinci bir yazma yapılmaz.
+      if (acknowledgedRecapRef.current === recapKey) return;
+      acknowledgedRecapRef.current = recapKey;
+      resolvedRecapRef.current = recapKey;
+
+      await AsyncStorage.setItem(
+        seasonRecapStorageKey(userId, closedSeasonIndex),
+        String(closedSeasonIndex),
+      ).catch(() => undefined);
+    },
+    [userId],
+  );
+
+  const dismissSeasonRecap = useCallback((closedSeasonIndex: number) => {
+    if (seasonRecapRef.current?.archive.seasonIndex === closedSeasonIndex) {
+      seasonRecapRef.current = undefined;
+    }
+    setSeasonRecap((current) =>
+      current && current.archive.seasonIndex !== closedSeasonIndex ? current : undefined,
+    );
   }, []);
 
   /**
@@ -412,10 +638,18 @@ export function RankProvider({ children }: PropsWithChildren) {
     seasonRef.current = undefined;
     acknowledgedCelebrationIdRef.current = 0;
     celebrationChainRef.current = Promise.resolve();
+    hasLoadedHistoryRef.current = false;
+    seasonRecapRef.current = undefined;
+    resolvedRecapRef.current = undefined;
+    requestedRecapHistoryRef.current = undefined;
+    recapHistoryAttemptsRef.current = undefined;
+    acknowledgedRecapRef.current = undefined;
+    recapChainRef.current = Promise.resolve();
     setSeason(undefined);
     setHistory([]);
     setEvents([]);
     setRankUp(undefined);
+    setSeasonRecap(undefined);
     setIsRankLoading(Boolean(userId));
   }, [userId]);
 
@@ -442,7 +676,9 @@ export function RankProvider({ children }: PropsWithChildren) {
   const value = useMemo<RankContextValue>(
     () => ({
       acknowledgeRankUpShown,
+      acknowledgeSeasonRecapShown,
       dismissRankUp,
+      dismissSeasonRecap,
       events,
       history,
       isEventsLoading,
@@ -452,11 +688,14 @@ export function RankProvider({ children }: PropsWithChildren) {
       loadHistory,
       rankUp,
       season,
+      seasonRecap,
       syncRank,
     }),
     [
       acknowledgeRankUpShown,
+      acknowledgeSeasonRecapShown,
       dismissRankUp,
+      dismissSeasonRecap,
       events,
       history,
       isEventsLoading,
@@ -466,6 +705,7 @@ export function RankProvider({ children }: PropsWithChildren) {
       loadHistory,
       rankUp,
       season,
+      seasonRecap,
       syncRank,
     ],
   );

@@ -8,6 +8,7 @@ import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { FloatingMascot } from '@/components/mascot/floating-mascot';
 import { RankUpCelebrationLayer } from '@/components/ranks/rank-up-celebration';
+import { SeasonRecapLayer } from '@/components/ranks/season-recap';
 import { AuthProvider, useAuth } from '@/context/auth-context';
 import { LanguageProvider, useLanguage, useTranslation } from '@/context/language-context';
 import { MascotProvider } from '@/context/mascot-context';
@@ -225,6 +226,12 @@ function AppNavigation() {
         güvenlidir.
       */}
       {Boolean(session) && !isPasswordRecovery && <RankUpCelebrationLayer />}
+      {/*
+        Sezon sonu özeti kutlamayla AYNI katman ailesindedir ve ondan SONRA
+        çizilir; ama ikisi hiçbir zaman üst üste açılmaz: özet, bekleyen bir
+        rank yükselmesi varken kendini hiç göstermez ve sırasını bekler.
+      */}
+      {Boolean(session) && !isPasswordRecovery && <SeasonRecapLayer />}
       {Boolean(session) && !isPasswordRecovery && <FloatingMascot />}
       <StatusBar style={isDark ? 'light' : 'dark'} />
     </ThemeProvider>

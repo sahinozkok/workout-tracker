@@ -99,3 +99,21 @@ export type RankUpCelebration = {
   rp: number;
   seasonIndex: number;
 };
+
+/**
+ * Yeni sezona geçildikten sonra bir kez gösterilen SEZON SONU ÖZETİ.
+ *
+ * Bütün sayılar sunucudan gelir: kapanmış sezonun DEĞİŞMEZ arşiv satırı ve
+ * yeni sezonun soft reset ile belirlenmiş başlangıç RP'si. İstemci burada
+ * hiçbir RP, rank veya soft reset değeri HESAPLAMAZ; `planCompletionPercent`
+ * yalnızca sunucunun yazdığı iki sayının gösterim oranıdır.
+ */
+export type SeasonRecap = {
+  /** Kapanmış sezonun sunucu arşivi. */
+  archive: RankSeasonArchive;
+  /** Kullanıcının şu an içinde olduğu sezon. */
+  nextSeasonIndex: number;
+  /** Yeni sezona soft reset ile girilen RP — sunucudan. */
+  startingRp: number;
+  planCompletionPercent: number;
+};

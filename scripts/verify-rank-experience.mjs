@@ -2,7 +2,8 @@
 /**
  * RANK DENEYİMİ (FAZ 2) — DOĞRULAMA HARNESS'I
  *
- * Kapsam: (1) RP hareket geçmişi ve (2) rank yükselme kutlaması. Sezon
+ * Kapsam: (1) RP hareket geçmişi, (2) rank yükselme kutlaması ve (3) sezon
+ * sonu özeti. Sezon
  * sistemi, RP tutarları, eşikler ve soft reset BURADA TEST EDİLMEZ — onlar
  * `scripts/verify-ranks.mjs` içindedir ve o dosyaya dokunulmamıştır.
  *
@@ -93,12 +94,16 @@ const source = (relativePath) => readFileSync(join(ROOT, relativePath), 'utf8');
 const serviceSource = source('services/ranks.ts');
 const contextSource = source('context/rank-context.tsx');
 const overlaySource = source('components/ranks/rank-up-celebration.tsx');
+const recapSource = source('components/ranks/season-recap.tsx');
 const screenSource = source('app/rank.tsx');
 const migrationSource = source('supabase/migrations/20260827120000_add_seasonal_ranks.sql');
 const localeTr = source('locales/tr.ts');
 const localeEn = source('locales/en.ts');
 
 const ORDER = ['bronze', 'silver', 'gold', 'platinum', 'diamond', 'master', 'rosea'];
+
+/** `RECAP_HISTORY_MAX_ATTEMPTS` — `context/rank-context.tsx` ile aynı sınır. */
+const RECAP_HISTORY_MAX_ATTEMPTS = 3;
 
 // ---------------------------------------------------------------------------
 // 1 · Event satırı eşlemesi
@@ -338,7 +343,7 @@ function createDevice() {
  * `applySeason` sunucudan gelen sezon özetini işler; `capturedOwner` verilirse
  * cevap o sahiplik altında yola çıkmış demektir (hesap A/B yarışı).
  */
-function createSession(device) {
+function createSession(device, historyLoader) {
   let owner = 0;
   let userId;
   let baseline;
@@ -350,6 +355,24 @@ function createSession(device) {
   const shown = [];
   const mascotReactions = [];
 
+  // --- Sezon sonu özeti (rank yükselmeden TAMAMEN ayrı durum) ---
+  /** Sunucudan okunmuş arşiv; `undefined` = henüz hiç okunmadı. */
+  let archives;
+  /** `hasLoadedHistoryRef` — arşiv en az bir kez BAŞARIYLA okundu mu? */
+  let hasLoadedHistory = false;
+  /** Layout onayı verilmiş özet; aynı overlay ikinci kez yazma istemez. */
+  let layoutAcknowledgedRecap;
+  /** Aynı istek için harcanan deneme hakkı; istek fırtınasını önler. */
+  let recapHistoryAttempts;
+  let recap;
+  let recapVisible;
+  let resolvedRecapKey;
+  let requestedRecapHistoryKey;
+  let acknowledgedRecapKey;
+  let startingRpOfCurrentSeason = 0;
+  const recapsShown = [];
+  const historyRequests = [];
+
   function signIn(nextUserId) {
     owner += 1;
     userId = nextUserId;
@@ -358,12 +381,25 @@ function createSession(device) {
     visible = undefined;
     acknowledgedId = 0;
     currentSeasonIndex = undefined;
+    archives = undefined;
+    hasLoadedHistory = false;
+    layoutAcknowledgedRecap = undefined;
+    recap = undefined;
+    recapVisible = undefined;
+    resolvedRecapKey = undefined;
+    requestedRecapHistoryKey = undefined;
+    recapHistoryAttempts = undefined;
+    acknowledgedRecapKey = undefined;
+    startingRpOfCurrentSeason = 0;
   }
 
   function applySeason(snapshot, capturedOwner = owner) {
     if (capturedOwner !== owner) return;
     const ownerId = userId;
     currentSeasonIndex = snapshot.seasonIndex;
+    startingRpOfCurrentSeason = snapshot.startingRp ?? 0;
+    // Sezon özeti kararı her sezon cevabında yeniden değerlendirilir.
+    resolveRecap(capturedOwner);
     const storageKey = rx.rankCelebrationStorageKey(ownerId, snapshot.seasonIndex);
 
     let base = baseline;
@@ -450,10 +486,160 @@ function createSession(device) {
     if (pending?.id === dismissedId) pending = undefined;
   }
 
+  // -------------------------------------------------------------------------
+  // Sezon sonu özeti — `resolveSeasonRecap` / `acknowledgeSeasonRecapShown`
+  // -------------------------------------------------------------------------
+
+  /** Sunucu arşiv cevabı (`loadHistory` BAŞARIYLA döndü). */
+  function loadHistory(rows, capturedOwner = owner) {
+    if (capturedOwner !== owner) return;
+    archives = rows;
+    hasLoadedHistory = true;
+    resolveRecap();
+  }
+
+  function resolveRecap(capturedOwner = owner) {
+    if (capturedOwner !== owner) return;
+    if (!userId || currentSeasonIndex === undefined) return;
+    if (currentSeasonIndex < 2) return;
+
+    const closedSeasonIndex = currentSeasonIndex - 1;
+    const recapKey = `${userId}:${closedSeasonIndex}`;
+
+    if (resolvedRecapKey === recapKey) return;
+    // Aynı özet zaten bekliyor: ikinci overlay üretilmez.
+    if (recap?.archive.seasonIndex === closedSeasonIndex) return;
+
+    if (device.get(rx.seasonRecapStorageKey(userId, closedSeasonIndex)) !== undefined) {
+      resolvedRecapKey = recapKey;
+      return;
+    }
+
+    const plan = hasLoadedHistory
+      ? rx.decideSeasonRecap({
+          archives,
+          currentSeasonIndex,
+          startingRp: startingRpOfCurrentSeason,
+        })
+      : undefined;
+
+    if (!plan) {
+      const requestKey = `${userId}:${currentSeasonIndex}`;
+      const attempts =
+        recapHistoryAttempts?.key === requestKey ? recapHistoryAttempts.count : 0;
+
+      if (requestedRecapHistoryKey !== requestKey && attempts < RECAP_HISTORY_MAX_ATTEMPTS) {
+        requestedRecapHistoryKey = requestKey;
+        recapHistoryAttempts = { count: attempts + 1, key: requestKey };
+        historyRequests.push(requestKey);
+
+        // Enjekte edilmiş yükleyici varsa istek burada "tamamlanır".
+        const result = historyLoader ? historyLoader() : undefined;
+        if (result?.ok) {
+          archives = result.rows;
+          hasLoadedHistory = true;
+          // Arşiv değişti → akış kendiliğinden yeniden çalışır.
+          resolveRecap(capturedOwner);
+          return;
+        }
+
+        /**
+         * İstek BAŞARISIZSA guard geri açılır: karar "özet yok" diye
+         * kapatılmaz ve sonraki doğal tetikleyici yeniden deneyebilir.
+         */
+        if (result && !result.ok && requestedRecapHistoryKey === requestKey) {
+          requestedRecapHistoryKey = undefined;
+        }
+        return;
+      }
+
+      // Karar ANCAK arşiv gerçekten okunduysa kapatılır.
+      if (hasLoadedHistory) resolvedRecapKey = recapKey;
+      return;
+    }
+
+    const archive = archives.find((row) => row.seasonIndex === plan.closedSeasonIndex);
+    if (!archive) {
+      resolvedRecapKey = recapKey;
+      return;
+    }
+
+    if (capturedOwner !== owner) return;
+    recap = {
+      archive,
+      nextSeasonIndex: plan.nextSeasonIndex,
+      planCompletionPercent: plan.planCompletionPercent,
+      startingRp: startingRpOfCurrentSeason,
+    };
+  }
+
+  function acknowledgeRecapShown(closedSeasonIndex) {
+    if (!userId) return;
+    if (!recap || recap.archive.seasonIndex !== closedSeasonIndex) return;
+    if (currentSeasonIndex !== recap.nextSeasonIndex) return;
+
+    const recapKey = `${userId}:${closedSeasonIndex}`;
+    if (acknowledgedRecapKey === recapKey) return;
+    acknowledgedRecapKey = recapKey;
+    resolvedRecapKey = recapKey;
+
+    device.set(rx.seasonRecapStorageKey(userId, closedSeasonIndex), String(closedSeasonIndex));
+  }
+
+  /**
+   * `SeasonRecapLayer` render'ı.
+   *
+   * ÖNCELİK: bekleyen bir rank yükselmesi varken özet HİÇ açılmaz.
+   */
+  function renderRecap(pathname) {
+    if (recapVisible || !recap) return;
+    if (!rx.canShowRankCelebration(pathname)) return;
+    if (pending) return;
+
+    recapVisible = recap;
+    recapsShown.push({
+      closedSeasonIndex: recapVisible.archive.seasonIndex,
+      finalRp: recapVisible.archive.finalRp,
+      nextSeasonIndex: recapVisible.nextSeasonIndex,
+      startingRp: recapVisible.startingRp,
+    });
+    // Kalıcı kayıt BURADA YAZILMAZ: `setShown` yalnızca render planlar.
+  }
+
+  /**
+   * `onLayout` — overlay GERÇEKTEN mount/layout oldu.
+   *
+   * Gösterim onayının tek tetikleyicisi budur. Tekrarlanan layout olayları
+   * (döndürme, yazı tipi ölçeği) ikinci bir yazma üretmez.
+   */
+  function layoutRecap() {
+    if (!recapVisible) return;
+    const closedSeasonIndex = recapVisible.archive.seasonIndex;
+    if (layoutAcknowledgedRecap === closedSeasonIndex) return;
+    layoutAcknowledgedRecap = closedSeasonIndex;
+    acknowledgeRecapShown(closedSeasonIndex);
+  }
+
+  function dismissRecap() {
+    if (!recapVisible) return;
+    const closedSeasonIndex = recapVisible.archive.seasonIndex;
+    recapVisible = undefined;
+    layoutAcknowledgedRecap = undefined;
+    if (recap?.archive.seasonIndex === closedSeasonIndex) recap = undefined;
+  }
+
   return {
+    acknowledgeRecapShown,
     acknowledgeShown,
     applySeason,
     dismiss,
+    dismissRecap,
+    historyRequests,
+    get isHistoryLoaded() {
+      return hasLoadedHistory;
+    },
+    layoutRecap,
+    loadHistory,
     get owner() {
       return owner;
     },
@@ -461,7 +647,15 @@ function createSession(device) {
     get pending() {
       return pending;
     },
+    get pendingRecap() {
+      return recap;
+    },
+    recapsShown,
     render,
+    renderRecap,
+    get resolvedRecap() {
+      return resolvedRecapKey;
+    },
     shown,
     signIn,
   };
@@ -1106,6 +1300,787 @@ check('41. Kaynak: kalıcı kayıt yalnızca onay yolundan ilerliyor', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 5 · Sezon sonu özeti — tek seferlik gösterim
+// ---------------------------------------------------------------------------
+
+/** Sunucu arşiv satırı üreticisi. Bütün değerler "sunucudan" gelmiş sayılır. */
+function archiveRow(seasonIndex, overrides = {}) {
+  return {
+    endsOn: '2026-08-23',
+    finalRank: 'gold',
+    finalRp: 520,
+    longestStreak: 12,
+    peakRank: 'gold',
+    scheduledDaysCompleted: 30,
+    scheduledDaysTotal: 40,
+    seasonIndex,
+    startsOn: '2026-06-29',
+    workoutsCompleted: 34,
+    ...overrides,
+  };
+}
+
+check('42. İlk sezonda ve arşiv yokken özet ÜRETİLMEZ', () => {
+  // İlk sezon: kapanmış sezon yok, arşiv hiç istenmez.
+  const firstSeason = createSession(createDevice());
+  firstSeason.signIn('user-a');
+  firstSeason.applySeason({ currentRank: 'bronze', currentRp: 40, seasonIndex: 1, startingRp: 0 });
+  firstSeason.renderRecap(HOME);
+  assertEqual(firstSeason.recapsShown.length, 0, 'ilk sezonda özet gösterildi');
+  assertEqual(firstSeason.historyRequests.length, 0, 'ilk sezonda gereksiz arşiv isteği atıldı');
+
+  // Sezon 3 ama arşiv boş (kullanıcı hiç sezon kapatmamış).
+  const noArchive = createSession(createDevice());
+  noArchive.signIn('user-a');
+  noArchive.applySeason({ currentRank: 'silver', currentRp: 260, seasonIndex: 3, startingRp: 100 });
+  noArchive.loadHistory([]);
+  noArchive.renderRecap(HOME);
+  assertEqual(noArchive.recapsShown.length, 0, 'arşiv boşken özet gösterildi');
+
+  // Saf karar da aynı sonucu verir.
+  assertEqual(
+    rx.decideSeasonRecap({ archives: [], currentSeasonIndex: 3, startingRp: 100 }),
+    undefined,
+    'boş arşiv özet üretti',
+  );
+  assertEqual(
+    rx.decideSeasonRecap({
+      archives: [{ finalRp: 500, scheduledDaysCompleted: 1, scheduledDaysTotal: 2, seasonIndex: 1 }],
+      currentSeasonIndex: 1,
+      startingRp: 0,
+    }),
+    undefined,
+    'ilk sezon özet üretti',
+  );
+});
+
+check('43. Hemen önceki sezon arşivi bekleyen özet üretir', () => {
+  const device = createDevice();
+  const app = createSession(device);
+  app.signIn('user-a');
+
+  app.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  // Arşiv otomatik olarak BİR KEZ istenir.
+  assertEqual(app.historyRequests.length, 1, 'arşiv tam olarak bir kez istenmeli');
+  assertEqual(app.pendingRecap, undefined, 'arşiv gelmeden özet üretildi');
+
+  app.loadHistory([archiveRow(4, { finalRp: 1850 }), archiveRow(3), archiveRow(2)]);
+  assert(app.pendingRecap, 'özet oluşmadı');
+  assertEqual(app.pendingRecap.archive.seasonIndex, 4, 'yanlış sezon özetlendi');
+  assertEqual(app.pendingRecap.nextSeasonIndex, 5, 'yeni sezon numarası yanlış');
+  assertEqual(app.pendingRecap.startingRp, 300, 'başlangıç RP sunucu değerinden alınmadı');
+
+  app.renderRecap(HOME);
+  assertDeepEqual(
+    app.recapsShown,
+    [{ closedSeasonIndex: 4, finalRp: 1850, nextSeasonIndex: 5, startingRp: 300 }],
+    'özet doğru sunucu değerleriyle gösterilmedi',
+  );
+});
+
+check('44. Görünmeden kapanan özet sonraki açılışta YENİDEN oluşur', () => {
+  const device = createDevice();
+  const storageKey = rx.seasonRecapStorageKey('user-a', 4);
+
+  const first = createSession(device);
+  first.signIn('user-a');
+  first.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  first.loadHistory([archiveRow(4)]);
+  // Kullanıcı aktif antrenmanda: özet bekliyor, hiç gösterilmedi.
+  first.renderRecap(WORKOUT);
+  first.renderRecap(WORKOUT);
+  assertEqual(first.recapsShown.length, 0, 'antrenman ekranında özet açıldı');
+  assertEqual(device.get(storageKey), undefined, 'gösterilmeyen özet kalıcı kayıt yazdı');
+
+  // Uygulama tamamen kapandı; soğuk açılış.
+  const second = createSession(device);
+  second.signIn('user-a');
+  second.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  second.loadHistory([archiveRow(4)]);
+  second.renderRecap(HOME);
+  second.layoutRecap();
+
+  assertEqual(second.recapsShown.length, 1, 'görülmemiş özet yeniden açılışta kayboldu');
+  assertEqual(device.get(storageKey), '4', 'gösterim kaydı yazılmadı');
+});
+
+check('45. Görünmeye BAŞLAYAN özet düğmeye basılmasa da tekrar açılmaz', () => {
+  const device = createDevice();
+  const storageKey = rx.seasonRecapStorageKey('user-a', 4);
+
+  const first = createSession(device);
+  first.signIn('user-a');
+  first.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  first.loadHistory([archiveRow(4)]);
+  first.renderRecap(HOME);
+  first.layoutRecap();
+  assertEqual(first.recapsShown.length, 1, 'güvenli ekranda gösterilmeliydi');
+  assertEqual(device.get(storageKey), '4', 'layout sonrası kayıt yazılmadı');
+
+  // Düğmeye BASILMADAN uygulama kapandı; soğuk açılış.
+  const second = createSession(device);
+  second.signIn('user-a');
+  second.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  second.loadHistory([archiveRow(4)]);
+  second.renderRecap(HOME);
+  assertEqual(second.recapsShown.length, 0, 'gösterilmiş özet tekrar açıldı');
+  assertEqual(second.historyRequests.length, 0, 'kayıt varken gereksiz arşiv isteği atıldı');
+});
+
+check('46. Aynı oturumdaki tekrar sync/render ikinci özet üretmez', () => {
+  const device = createDevice();
+  const storageKey = rx.seasonRecapStorageKey('user-a', 4);
+  const app = createSession(device);
+  app.signIn('user-a');
+
+  app.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  app.loadHistory([archiveRow(4)]);
+
+  // Set sonrası sync, AppState dönüşü, gece yarısı sync…
+  for (let index = 0; index < 5; index += 1) {
+    app.applySeason({ currentRank: 'silver', currentRp: 320 + index, seasonIndex: 5, startingRp: 300 });
+  }
+  app.renderRecap(HOME);
+  app.layoutRecap();
+  app.renderRecap(HOME);
+  app.layoutRecap();
+  app.renderRecap('/profile');
+  app.layoutRecap();
+  app.acknowledgeRecapShown(4);
+  app.acknowledgeRecapShown(4);
+
+  assertEqual(app.recapsShown.length, 1, 'ikinci özet overlay’i üretildi');
+  assertEqual(device.writesFor(storageKey).length, 1, 'gösterim kaydı tekrarlandı');
+
+  // Kapandıktan sonra tekrar sync gelse de yeniden açılmaz.
+  app.dismissRecap();
+  app.applySeason({ currentRank: 'silver', currentRp: 340, seasonIndex: 5, startingRp: 300 });
+  app.renderRecap(HOME);
+  assertEqual(app.recapsShown.length, 1, 'kapatılan özet yeniden açıldı');
+});
+
+check('47. Eski veya alakasız sezon arşivi özet ÜRETMEZ', () => {
+  const device = createDevice();
+  const app = createSession(device);
+  app.signIn('user-a');
+
+  // Güncel sezon 6 ama en yeni kapanmış sezon 4 (kullanıcı 5'i tamamen kaçırdı).
+  app.applySeason({ currentRank: 'bronze', currentRp: 80, seasonIndex: 6, startingRp: 60 });
+  app.loadHistory([archiveRow(4), archiveRow(3)]);
+  app.renderRecap(HOME);
+  assertEqual(app.recapsShown.length, 0, 'hemen önceki olmayan sezon özetlendi');
+
+  // Saf karar: yalnızca `currentSeasonIndex - 1` kabul edilir.
+  assertEqual(
+    rx.decideSeasonRecap({
+      archives: [{ finalRp: 500, scheduledDaysCompleted: 1, scheduledDaysTotal: 2, seasonIndex: 4 }],
+      currentSeasonIndex: 6,
+      startingRp: 60,
+    }),
+    undefined,
+    'iki sezon önceki arşiv özet üretti',
+  );
+  const valid = rx.decideSeasonRecap({
+    archives: [
+      { finalRp: 500, scheduledDaysCompleted: 1, scheduledDaysTotal: 2, seasonIndex: 4 },
+      { finalRp: 700, scheduledDaysCompleted: 30, scheduledDaysTotal: 40, seasonIndex: 5 },
+    ],
+    currentSeasonIndex: 6,
+    startingRp: 60,
+  });
+  assertEqual(valid?.closedSeasonIndex, 5, 'en yeni kapanmış sezon seçilmedi');
+  assertEqual(valid?.planCompletionPercent, 75, 'plan uyumu yüzdesi yanlış');
+});
+
+check('48. Tutarsız/eksik sunucu verisi özet ÜRETMEZ', () => {
+  const base = { finalRp: 500, scheduledDaysCompleted: 10, scheduledDaysTotal: 20, seasonIndex: 4 };
+  const call = (archive, startingRp = 300) =>
+    rx.decideSeasonRecap({ archives: [archive], currentSeasonIndex: 5, startingRp });
+
+  assert(call(base), 'geçerli veri özet üretmeliydi');
+  assertEqual(call({ ...base, finalRp: Number.NaN }), undefined, 'NaN finalRp kabul edildi');
+  assertEqual(call({ ...base, finalRp: -10 }), undefined, 'negatif finalRp kabul edildi');
+  assertEqual(
+    call({ ...base, scheduledDaysCompleted: 30 }),
+    undefined,
+    'tamamlanan > planlanan kabul edildi',
+  );
+  assertEqual(
+    call({ ...base, scheduledDaysTotal: -1 }),
+    undefined,
+    'negatif planlanan gün kabul edildi',
+  );
+  assertEqual(call(base, Number.POSITIVE_INFINITY), undefined, 'sonsuz startingRp kabul edildi');
+  assertEqual(call(base, -1), undefined, 'negatif startingRp kabul edildi');
+  // Planlı gün yoksa yüzde 0'dır ve özet yine gösterilebilir.
+  assertEqual(
+    call({ ...base, scheduledDaysCompleted: 0, scheduledDaysTotal: 0 })?.planCompletionPercent,
+    0,
+    'planlı gün yokken yüzde 0 olmalı',
+  );
+});
+
+check('49. Hesap A’nın geç arşiv cevabı B’ye state YAZMAZ', () => {
+  const device = createDevice();
+  const app = createSession(device);
+
+  app.signIn('user-a');
+  app.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  const ownerOfA = app.owner;
+
+  // B giriş yaptı; A'nın uçuştaki arşiv cevabı ancak şimdi döndü.
+  app.signIn('user-b');
+  app.loadHistory([archiveRow(4)], ownerOfA);
+  app.renderRecap(HOME);
+
+  assertEqual(app.pendingRecap, undefined, 'A’nın arşivi B’de özet üretti');
+  assertEqual(app.recapsShown.length, 0, 'A’nın cevabı B’de overlay açtı');
+  assertEqual(
+    device.get(rx.seasonRecapStorageKey('user-b', 4)),
+    undefined,
+    'A’nın cevabı B’nin anahtarına yazdı',
+  );
+});
+
+check('50. A’nın gösterildi anahtarı B’yi ETKİLEMEZ', () => {
+  const device = createDevice();
+  const app = createSession(device);
+
+  // A özetini gördü.
+  app.signIn('user-a');
+  app.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  app.loadHistory([archiveRow(4)]);
+  app.renderRecap(HOME);
+  app.layoutRecap();
+  assertEqual(app.recapsShown.length, 1, 'A’nın özeti gösterilmeliydi');
+  assertEqual(device.get(rx.seasonRecapStorageKey('user-a', 4)), '4', 'A’nın kaydı yazılmadı');
+
+  // B aynı cihazda, aynı sezonda: kendi özetini GÖRMELİ.
+  app.signIn('user-b');
+  app.applySeason({ currentRank: 'gold', currentRp: 480, seasonIndex: 5, startingRp: 300 });
+  app.loadHistory([archiveRow(4, { finalRp: 900 })]);
+  app.renderRecap(HOME);
+  app.layoutRecap();
+
+  assertEqual(app.recapsShown.length, 2, 'A’nın kaydı B’nin özetini bastırdı');
+  assertEqual(app.recapsShown[1].finalRp, 900, 'B kendi sunucu verisini görmedi');
+  assertEqual(device.get(rx.seasonRecapStorageKey('user-b', 4)), '4', 'B’nin kaydı yazılmadı');
+  // Anahtarlar gerçekten ayrı.
+  assert(
+    rx.seasonRecapStorageKey('user-a', 4) !== rx.seasonRecapStorageKey('user-b', 4),
+    'özet anahtarı kullanıcıya göre ayrışmıyor',
+  );
+  assertEqual(
+    rx.seasonRecapStorageKey('user-a', 4),
+    'rank:season-recap-shown:user-a:4',
+    'özet anahtarı beklenen biçimde değil',
+  );
+  // Rank yükselme anahtarıyla da çakışmaz.
+  assert(
+    rx.seasonRecapStorageKey('user-a', 4) !== rx.rankCelebrationStorageKey('user-a', 4),
+    'özet ve kutlama aynı anahtarı paylaşıyor',
+  );
+});
+
+check('51. Bekleyen rank yükselmesi varken iki overlay ÜST ÜSTE açılmaz', () => {
+  const device = createDevice();
+  const app = createSession(device);
+  app.signIn('user-a');
+
+  // Yeni sezon + aynı sezon içinde yükseliş: ikisi de bekliyor.
+  app.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  app.loadHistory([archiveRow(4)]);
+  app.applySeason({ currentRank: 'gold', currentRp: 470, seasonIndex: 5, startingRp: 300 });
+  assert(app.pending, 'rank yükselmesi oluşmadı');
+  assert(app.pendingRecap, 'sezon özeti oluşmadı');
+
+  // Önce kutlama; özet sırasını bekler.
+  app.render(HOME);
+  app.renderRecap(HOME);
+  assertEqual(app.shown.length, 1, 'kutlama gösterilmedi');
+  assertEqual(app.recapsShown.length, 0, 'özet kutlamayla üst üste açıldı');
+  assertEqual(
+    device.get(rx.seasonRecapStorageKey('user-a', 4)),
+    undefined,
+    'gösterilmeyen özet kayıt yazdı',
+  );
+
+  // Kutlama kapandı → özet gösterilebilir.
+  app.dismiss();
+  app.renderRecap(HOME);
+  app.layoutRecap();
+  assertEqual(app.recapsShown.length, 1, 'kutlama kapandıktan sonra özet açılmadı');
+  assertEqual(device.get(rx.seasonRecapStorageKey('user-a', 4)), '4', 'özet kaydı yazılmadı');
+});
+
+check('52. Özet güvenli olmayan ekranda BEKLER, güvenli ekranda açılır', () => {
+  const device = createDevice();
+  const app = createSession(device);
+  app.signIn('user-a');
+
+  app.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  app.loadHistory([archiveRow(4)]);
+
+  for (const pathname of [WORKOUT, '/reset-password', '/login', '/confirm']) {
+    app.renderRecap(pathname);
+  }
+  assertEqual(app.recapsShown.length, 0, 'güvenli olmayan ekranda özet açıldı');
+  assert(app.pendingRecap, 'özet düşürüldü, bekletilmedi');
+
+  app.renderRecap(HOME);
+  app.layoutRecap();
+  app.renderRecap(HOME);
+  assertEqual(app.recapsShown.length, 1, 'güvenli ekranda tam olarak bir kez açılmalı');
+});
+
+check('53. Kaynak: kalıcı kayıt yalnızca gösterim onayından ilerliyor', () => {
+  assert(
+    contextSource.includes('const acknowledgeSeasonRecapShown = useCallback('),
+    'sezon özeti gösterim onayı metodu yok',
+  );
+  // Tespit yolunda (`resolveSeasonRecap`) HİÇBİR yazma olmamalı.
+  const resolveBody = contextSource.slice(
+    contextSource.indexOf('const resolveSeasonRecap = useCallback('),
+    contextSource.indexOf('const acknowledgeSeasonRecapShown = useCallback('),
+  );
+  assert(resolveBody.length > 0, 'resolveSeasonRecap bulunamadı');
+  assert(
+    !resolveBody.includes('AsyncStorage.setItem'),
+    'özet tespit edilirken kalıcı kayıt yazılıyor',
+  );
+  assert(
+    resolveBody.includes('AsyncStorage.getItem(') && resolveBody.includes('seasonRecapStorageKey'),
+    'tespit yolu gösterildi kaydını okumuyor',
+  );
+  // Onay state'i KAPATMAZ.
+  const acknowledgeBody = contextSource.slice(
+    contextSource.indexOf('const acknowledgeSeasonRecapShown = useCallback('),
+    contextSource.indexOf('const dismissSeasonRecap = useCallback('),
+  );
+  assert(!acknowledgeBody.includes('setSeasonRecap'), 'gösterim onayı state’i kapatıyor');
+  assert(
+    acknowledgeBody.includes('acknowledgedRecapRef.current === recapKey'),
+    'aynı özet için tekrar yazma koruması yok',
+  );
+  assert(
+    acknowledgeBody.includes('recap.archive.seasonIndex !== closedSeasonIndex') &&
+      acknowledgeBody.includes('seasonRef.current?.seasonIndex !== recap.nextSeasonIndex'),
+    'onay kimlik/sezon sahipliğini doğrulamıyor',
+  );
+  /**
+   * Depo hataları yutulur: HER AsyncStorage çağrısının hemen ardından bir
+   * `catch` gelmeli. Aksi hâlde tek bir depo hatası sağlayıcıyı düşürür ve
+   * antrenman/navigasyon akışını bozardı.
+   */
+  const storageCalls = [...contextSource.matchAll(/AsyncStorage\.(getItem|setItem|removeItem)\(/g)];
+  assert(storageCalls.length >= 6, 'beklenen AsyncStorage çağrıları bulunamadı');
+  for (const call of storageCalls) {
+    const tail = contextSource.slice(call.index, call.index + 260);
+    assert(
+      /\)\s*\.catch\(\(\) => (null|undefined)\)/.test(tail),
+      `korumasız AsyncStorage çağrısı: ${tail.split('\n')[0]}`,
+    );
+  }
+});
+
+check('54. Kutlama katmanı: öncelik, onay ve Reduce Motion', () => {
+  assert(recapSource.includes('if (rankUp) return;'), 'özet rank yükselmesine öncelik vermiyor');
+  assert(
+    recapSource.includes('canShowRankCelebration(pathname)'),
+    'özet route güvenliğini okumuyor',
+  );
+  assertEqual(
+    (recapSource.match(/acknowledgeSeasonRecapShown\(/g) ?? []).length,
+    1,
+    'gösterim onayı katmandan birden fazla kez çağrılıyor',
+  );
+  // Reduce Motion: ölçek kaldırılır, süre kısa fade'e iner — kutlamayla aynı.
+  assert(recapSource.includes('useReducedMotion'), 'özet Reduce Motion’ı okumuyor');
+  assert(
+    /transform: reduceMotion \? \[\]/.test(recapSource),
+    'Reduce Motion açıkken ölçek hareketi kaldırılmıyor',
+  );
+  assert(
+    recapSource.includes('reduceMotion ? MotionDuration.instant : MotionDuration.standard'),
+    'Reduce Motion açıkken giriş süresi kısaltılmıyor',
+  );
+  // İstatistikler mevcut MotionSection ile hafifçe sıralanır (kendi içinde
+  // Reduce Motion'ı da kapatır); yeni animasyon altyapısı kurulmaz.
+  assert(recapSource.includes('MotionStagger.step'), 'istatistikler sırayla görünmüyor');
+  assert(!/duration:\s*\d+/.test(recapSource), 'özet katmanında ham (token’sız) süre değeri var');
+  // İçerik kırpılmaz, safe area’ya uyar.
+  assert(recapSource.includes('ScrollView'), 'küçük ekranda içerik kaydırılamıyor');
+  assert(recapSource.includes('useSafeAreaInsets'), 'safe area dikkate alınmıyor');
+  assert(recapSource.includes('accessibilityViewIsModal'), 'overlay modal olarak işaretlenmemiş');
+  assert(
+    recapSource.includes('accessibilityRole="header"') &&
+      recapSource.includes('accessibilityRole="button"'),
+    'accessibility role değerleri eksik',
+  );
+  // İstemci hiçbir RP/rank/soft reset değeri hesaplamaz.
+  assert(
+    !/softResetRp|resolveRank\(|clampRp/.test(recapSource),
+    'özet katmanı istemcide rank/RP hesaplıyor',
+  );
+  // Sabit kullanıcı metni yok.
+  assert(
+    !/<Text[^>]*>\s*[A-ZĞÜŞİÖÇ][a-zğüşıöç]/.test(recapSource),
+    'özet katmanında çeviriden geçmeyen sabit metin var',
+  );
+});
+
+check('55. Özet metinleri iki dilde de locale dosyasından geliyor', () => {
+  for (const key of [
+    'seasonRecap',
+    'finalRank',
+    'softReset',
+    'softResetValue',
+    'nextSeason',
+    'start',
+  ]) {
+    assert(localeTr.includes(`${key}:`), `tr sözlüğünde ${key} yok`);
+    assert(localeEn.includes(`${key}:`), `en sözlüğünde ${key} yok`);
+  }
+  assert(localeTr.includes("softResetValue: '{from} RP → {to} RP'"), 'tr soft reset şablonu yanlış');
+  assert(localeEn.includes("softResetValue: '{from} RP → {to} RP'"), 'en soft reset şablonu yanlış');
+});
+
+check('56. Faz 3 yeni migration/tablo ÜRETMEDİ', () => {
+  const migrations = execFileSync('git', ['status', '--porcelain', 'supabase'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+  });
+  // Yalnızca takip edilmeyen `supabase/.temp/` kalabilir; migration değişmemeli.
+  for (const line of migrations.split('\n').filter(Boolean)) {
+    assert(line.includes('supabase/.temp'), `supabase altında beklenmeyen değişiklik: ${line}`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 6 · Yaşam döngüsü regresyonları — layout onayı ve arşiv hatası
+// ---------------------------------------------------------------------------
+
+check('57. (A) Başarısız arşiv isteği özeti KALICI olarak atlatmaz', () => {
+  const device = createDevice();
+  let shouldFail = true;
+  const attempts = [];
+
+  const app = createSession(device, () => {
+    attempts.push(shouldFail ? 'fail' : 'ok');
+    return shouldFail ? { ok: false } : { ok: true, rows: [archiveRow(4)] };
+  });
+
+  app.signIn('user-a');
+  // İlk sync: arşiv isteği BAŞARISIZ.
+  app.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  assertDeepEqual(attempts, ['fail'], 'ilk istek atılmadı');
+  assertEqual(app.isHistoryLoaded, false, 'başarısız istek yüklendi sayıldı');
+  assertEqual(app.pendingRecap, undefined, 'arşiv yokken özet üretildi');
+  assertEqual(
+    app.resolvedRecap,
+    undefined,
+    'başarısız istekten sonra karar "özet yok" diye kapatıldı',
+  );
+
+  // Sonraki doğal tetikleyici (rank sync / AppState active): bu kez başarılı.
+  shouldFail = false;
+  app.applySeason({ currentRank: 'silver', currentRp: 330, seasonIndex: 5, startingRp: 300 });
+  assertDeepEqual(attempts, ['fail', 'ok'], 'başarısızlıktan sonra yeniden denenmedi');
+  assert(app.pendingRecap, 'başarılı yüklemeden sonra özet oluşmadı');
+
+  app.renderRecap(HOME);
+  app.layoutRecap();
+  assertEqual(app.recapsShown.length, 1, 'özet gösterilmedi');
+  assertEqual(device.get(rx.seasonRecapStorageKey('user-a', 4)), '4', 'gösterim kaydı yazılmadı');
+});
+
+check('58. (A2) Rank ekranından gelen başarılı yükleme de kararı açar', () => {
+  const device = createDevice();
+  const app = createSession(device, () => ({ ok: false }));
+
+  app.signIn('user-a');
+  app.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  assertEqual(app.resolvedRecap, undefined, 'başarısız istek kararı kapattı');
+
+  // Kullanıcı rank ekranını açtı ve orada yükleme başarılı oldu.
+  app.loadHistory([archiveRow(4)]);
+  assert(app.pendingRecap, 'başarılı yüklemeden sonra özet oluşmadı');
+});
+
+check('59. (B) Arşiv sürekli hata verse de çökme ve sonsuz istek YOK', () => {
+  const device = createDevice();
+  const attempts = [];
+  const app = createSession(device, () => {
+    attempts.push('fail');
+    return { ok: false };
+  });
+
+  app.signIn('user-a');
+  // 20 doğal tetikleyici (ör. antrenman boyunca her set sonrası sync).
+  for (let index = 0; index < 20; index += 1) {
+    app.applySeason({
+      currentRank: 'silver',
+      currentRp: 320 + index,
+      seasonIndex: 5,
+      startingRp: 300,
+    });
+    app.renderRecap(HOME);
+    app.layoutRecap();
+  }
+
+  // Yeniden deneme DOĞAL tetikleyicilere bağlıdır ve oturum başına sınırlıdır:
+  // istek fırtınası oluşmaz.
+  assertEqual(attempts.length, RECAP_HISTORY_MAX_ATTEMPTS, 'istek fırtınası oluştu');
+  assertEqual(app.historyRequests.length, RECAP_HISTORY_MAX_ATTEMPTS, 'istek sayısı sınırı aştı');
+  // Deneme hakkı bitse bile karar KAPATILMAZ.
+  assertEqual(app.resolvedRecap, undefined, 'deneme hakkı bitince karar kalıcı kapatıldı');
+  // Rank ekranından gelen başarılı yükleme özeti hâlâ açabilir.
+  app.loadHistory([archiveRow(4)]);
+  assert(app.pendingRecap, 'deneme hakkı bitince özet kalıcı olarak yutuldu');
+  assertEqual(app.recapsShown.length, 0, 'arşiv yokken özet gösterildi');
+  assertEqual(
+    device.writesFor(rx.seasonRecapStorageKey('user-a', 4)).length,
+    0,
+    'arşiv okunamazken kalıcı kayıt yazıldı',
+  );
+  // Rank yükselme akışı bundan hiç etkilenmez.
+  app.applySeason({ currentRank: 'gold', currentRp: 470, seasonIndex: 5, startingRp: 300 });
+  app.render(HOME);
+  assertEqual(app.shown.length, 1, 'arşiv hatası rank yükselme akışını bozdu');
+});
+
+check('60. (C) `setShown` anında AsyncStorage YAZILMAZ', () => {
+  const device = createDevice();
+  const storageKey = rx.seasonRecapStorageKey('user-a', 4);
+  const app = createSession(device);
+  app.signIn('user-a');
+
+  app.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  app.loadHistory([archiveRow(4)]);
+
+  // Overlay `shown` state'ine alındı ama henüz mount/layout OLMADI.
+  app.renderRecap(HOME);
+  assertEqual(app.recapsShown.length, 1, 'overlay gösterime alınmadı');
+  assertEqual(
+    device.writesFor(storageKey).length,
+    0,
+    'gösterim onayı layout beklemeden yazıldı',
+  );
+});
+
+check('61. (D) Layout callback’i geldiğinde TAM BİR KEZ yazılır', () => {
+  const device = createDevice();
+  const storageKey = rx.seasonRecapStorageKey('user-a', 4);
+  const app = createSession(device);
+  app.signIn('user-a');
+
+  app.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  app.loadHistory([archiveRow(4)]);
+  app.renderRecap(HOME);
+  app.layoutRecap();
+
+  const writes = device.writesFor(storageKey);
+  assertEqual(writes.length, 1, 'layout sonrası tam bir yazma beklenir');
+  assertEqual(writes[0].value, '4', 'yanlış sezon kaydedildi');
+});
+
+check('62. (G) Tekrarlanan layout callback’i ikinci yazma ÜRETMEZ', () => {
+  const device = createDevice();
+  const storageKey = rx.seasonRecapStorageKey('user-a', 4);
+  const app = createSession(device);
+  app.signIn('user-a');
+
+  app.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  app.loadHistory([archiveRow(4)]);
+  app.renderRecap(HOME);
+
+  // Döndürme, yazı tipi ölçeği, içerik boyu değişimi…
+  for (let index = 0; index < 6; index += 1) app.layoutRecap();
+  // Doğrudan onay çağrısı da tekrar yazmaz (context tarafı ikinci katman).
+  app.acknowledgeRecapShown(4);
+
+  assertEqual(device.writesFor(storageKey).length, 1, 'layout tekrarı yeni yazma üretti');
+});
+
+check('63. (E) Layout GELMEDEN kapanış → soğuk açılışta özet yeniden oluşur', () => {
+  const device = createDevice();
+  const storageKey = rx.seasonRecapStorageKey('user-a', 4);
+
+  const first = createSession(device);
+  first.signIn('user-a');
+  first.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  first.loadHistory([archiveRow(4)]);
+  // `shown` ayarlandı ama kart hiç layout olmadan uygulama kapandı.
+  first.renderRecap(HOME);
+  assertEqual(device.get(storageKey), undefined, 'layout olmadan kayıt yazıldı');
+
+  const second = createSession(device);
+  second.signIn('user-a');
+  second.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  second.loadHistory([archiveRow(4)]);
+  second.renderRecap(HOME);
+  second.layoutRecap();
+
+  assertEqual(second.recapsShown.length, 1, 'layout olmadan kapanan özet kayboldu');
+  assertEqual(device.get(storageKey), '4', 'ikinci oturumda kayıt yazılmadı');
+});
+
+check('64. (F) Layout GELDİKTEN sonra kapanış → soğuk açılışta çıkmaz', () => {
+  const device = createDevice();
+
+  const first = createSession(device);
+  first.signIn('user-a');
+  first.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  first.loadHistory([archiveRow(4)]);
+  first.renderRecap(HOME);
+  first.layoutRecap();
+  // "Başla" düğmesine BASILMADI.
+
+  const second = createSession(device);
+  second.signIn('user-a');
+  second.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  second.renderRecap(HOME);
+  second.layoutRecap();
+
+  assertEqual(second.recapsShown.length, 0, 'layout edilmiş özet tekrar açıldı');
+  assertEqual(second.historyRequests.length, 0, 'kayıt varken arşiv isteği atıldı');
+});
+
+check('65. (H) A’nın geç arşiv/onay cevabı B’ye YAZAMAZ', () => {
+  const device = createDevice();
+  const app = createSession(device);
+
+  app.signIn('user-a');
+  app.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  const ownerOfA = app.owner;
+  app.loadHistory([archiveRow(4)]);
+  app.renderRecap(HOME);
+  // A layout olmadan hesap değiştirdi.
+
+  app.signIn('user-b');
+  // A'nın uçuştaki arşiv cevabı ve geç gelen layout onayı şimdi düştü.
+  app.loadHistory([archiveRow(4)], ownerOfA);
+  app.layoutRecap();
+  app.acknowledgeRecapShown(4);
+  app.renderRecap(HOME);
+
+  assertEqual(app.pendingRecap, undefined, 'A’nın arşivi B’de özet üretti');
+  assertEqual(app.recapsShown.length, 1, 'A’nın geç cevabı B’de yeni overlay açtı');
+  assertEqual(
+    device.get(rx.seasonRecapStorageKey('user-b', 4)),
+    undefined,
+    'A’nın onayı B’nin anahtarına yazdı',
+  );
+  assertEqual(
+    device.get(rx.seasonRecapStorageKey('user-a', 4)),
+    undefined,
+    'A layout etmeden kaydı yazıldı',
+  );
+});
+
+check('66. (I) Rank-up önceliği ve unsafe route bekletmesi KORUNUR', () => {
+  const device = createDevice();
+  const app = createSession(device);
+  app.signIn('user-a');
+
+  app.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  app.loadHistory([archiveRow(4)]);
+  app.applySeason({ currentRank: 'gold', currentRp: 470, seasonIndex: 5, startingRp: 300 });
+
+  // Unsafe route: ikisi de bekler, hiçbir kayıt yazılmaz.
+  app.render(WORKOUT);
+  app.renderRecap(WORKOUT);
+  app.layoutRecap();
+  assertEqual(app.shown.length, 0, 'antrenman ekranında kutlama açıldı');
+  assertEqual(app.recapsShown.length, 0, 'antrenman ekranında özet açıldı');
+  assertEqual(device.writes.length, 1, 'bekleme sırasında beklenmeyen yazma oldu (seed hariç)');
+
+  // Güvenli ekran: önce kutlama, özet sırasını bekler.
+  app.render(HOME);
+  app.renderRecap(HOME);
+  app.layoutRecap();
+  assertEqual(app.shown.length, 1, 'kutlama gösterilmedi');
+  assertEqual(app.recapsShown.length, 0, 'özet kutlamayla üst üste açıldı');
+
+  app.dismiss();
+  app.renderRecap(HOME);
+  app.layoutRecap();
+  assertEqual(app.recapsShown.length, 1, 'kutlama kapandıktan sonra özet açılmadı');
+});
+
+check('67. Kaynak: onay YALNIZCA layout yolundan çağrılıyor', () => {
+  // Gösterim kapısını geçen effect artık onay ÇAĞIRMAZ.
+  const gateStart = recapSource.indexOf('if (shown || !seasonRecap || !isSafeScreen) return;');
+  const gateEnd = recapSource.indexOf('}, [isSafeScreen, rankUp, seasonRecap, shown]);');
+  assert(gateStart > 0 && gateEnd > gateStart, 'gösterim effect’i beklenen biçimde değil');
+  assert(
+    !recapSource.slice(gateStart, gateEnd).includes('acknowledgeSeasonRecapShown'),
+    'onay hâlâ setShown ile aynı effect’te çağrılıyor',
+  );
+
+  // Onay tek noktadan, layout callback’inden çağrılır.
+  assertEqual(
+    (recapSource.match(/void acknowledgeSeasonRecapShown\(/g) ?? []).length,
+    1,
+    'gösterim onayı birden fazla yerden çağrılıyor',
+  );
+  const layoutStart = recapSource.indexOf('const handleCardLayout = useCallback(');
+  const layoutEnd = recapSource.indexOf('const handleClosed = useCallback(');
+  assert(layoutStart > 0 && layoutEnd > layoutStart, 'handleCardLayout bulunamadı');
+  const layoutBody = recapSource.slice(layoutStart, layoutEnd);
+  assert(layoutBody.includes('acknowledgeSeasonRecapShown('), 'onay layout yolundan çağrılmıyor');
+  assert(
+    layoutBody.includes('layoutAcknowledgedRef.current === closedSeasonIndex'),
+    'tekrarlanan layout için koruma yok',
+  );
+  assert(
+    recapSource.includes('onLayout={handleCardLayout}'),
+    'layout callback’i karta bağlanmamış',
+  );
+
+  // Context guard’ları yerinde.
+  assert(
+    contextSource.includes('recap.archive.seasonIndex !== closedSeasonIndex') &&
+      contextSource.includes('seasonRef.current?.seasonIndex !== recap.nextSeasonIndex'),
+    'context kimlik/sezon guard’ları kaybolmuş',
+  );
+});
+
+check('68. Kaynak: arşiv okunmadan "özet yok" kararı KAPATILMIYOR', () => {
+  const resolveBody = contextSource.slice(
+    contextSource.indexOf('const resolveSeasonRecap = useCallback('),
+    contextSource.indexOf('const acknowledgeSeasonRecapShown = useCallback('),
+  );
+  assert(
+    resolveBody.includes('if (hasLoadedHistoryRef.current) resolvedRecapRef.current = recapKey;'),
+    'karar arşiv okunmadan da kapatılabiliyor',
+  );
+  assert(resolveBody.includes('await loadHistory();'), 'arşiv isteğinin sonucu beklenmiyor');
+  assert(
+    resolveBody.includes('requestedRecapHistoryRef.current = undefined;'),
+    'başarısız istekten sonra guard geri açılmıyor',
+  );
+  assert(
+    resolveBody.includes('owner === ownerRef.current') &&
+      resolveBody.includes('requestedRecapHistoryRef.current === requestKey'),
+    'guard geri açılırken hesap/istek sahipliği doğrulanmıyor',
+  );
+  // Polling veya otomatik yeniden deneme yok; yeniden deneme sınırlı.
+  assert(
+    !/setInterval|setTimeout/.test(resolveBody),
+    'arşiv isteği için zamanlayıcı/polling kurulmuş',
+  );
+  assert(
+    resolveBody.includes('attempts < RECAP_HISTORY_MAX_ATTEMPTS'),
+    'yeniden deneme sayısı sınırlanmamış (istek fırtınası riski)',
+  );
+  assert(
+    contextSource.includes(`const RECAP_HISTORY_MAX_ATTEMPTS = ${RECAP_HISTORY_MAX_ATTEMPTS};`),
+    'harness ve kaynak deneme sınırı ayrışıyor',
+  );
+});
+
+// ---------------------------------------------------------------------------
 // MUTATION TESTİ — bozuk implementasyon gerçekten düşüyor mu?
 // ---------------------------------------------------------------------------
 
@@ -1204,6 +2179,120 @@ check('M4. Eski "gösterilmeden önce kaydet" davranışı yeni testleri DÜŞÜ
   second.applySeason({ currentRank: 'gold', currentRp: 460, seasonIndex: 3 });
   second.render(HOME);
   assertEqual(second.shown.length, 1, 'doğru model kutlamayı yeniden oluşturmalı');
+});
+
+check('M5. Özet "tespit edilince kaydet" davranışı yeni testleri DÜŞÜRÜR', () => {
+  const device = createDevice();
+  const storageKey = rx.seasonRecapStorageKey('user-a', 4);
+
+  /** Kasıtlı hata: özet TESPİT EDİLDİĞİ anda gösterildi sayılıyor. */
+  const brokenResolve = () => {
+    if (device.get(storageKey) !== undefined) return undefined;
+    const plan = rx.decideSeasonRecap({
+      archives: [
+        { finalRp: 520, scheduledDaysCompleted: 30, scheduledDaysTotal: 40, seasonIndex: 4 },
+      ],
+      currentSeasonIndex: 5,
+      startingRp: 300,
+    });
+    if (!plan) return undefined;
+    device.set(storageKey, String(plan.closedSeasonIndex));
+    return plan;
+  };
+
+  // Özet tespit edildi ama kullanıcı aktif antrenmandaydı, HİÇ göremedi.
+  assert(brokenResolve(), 'bozuk model gerçekten özet üretmeli');
+  assertEqual(device.get(storageKey), '4', 'bozuk model gerçekten erken yazmalı');
+
+  // Soğuk açılış: kaybolan özet artık yeniden oluşturulamaz.
+  assertThrows(
+    () => assert(brokenResolve(), 'mutation'),
+    'erken yazan model testten geçti — kaybolan özet yakalanmıyor',
+  );
+
+  // Doğru model aynı senaryoda özeti KORUR.
+  const correctDevice = createDevice();
+  const first = createSession(correctDevice);
+  first.signIn('user-a');
+  first.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  first.loadHistory([archiveRow(4)]);
+  first.renderRecap(WORKOUT);
+  assertEqual(first.recapsShown.length, 0, 'antrenman ekranında gösterilmemeliydi');
+
+  const second = createSession(correctDevice);
+  second.signIn('user-a');
+  second.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  second.loadHistory([archiveRow(4)]);
+  second.renderRecap(HOME);
+  second.layoutRecap();
+  assertEqual(second.recapsShown.length, 1, 'doğru model özeti yeniden oluşturmalı');
+});
+
+check('M6. "setShown ile birlikte kaydet" davranışı yeni testleri DÜŞÜRÜR', () => {
+  const device = createDevice();
+  const storageKey = rx.seasonRecapStorageKey('user-a', 4);
+
+  // Kasıtlı hata: gösterim kapısı geçilir geçilmez kayıt yazılıyor.
+  const brokenShow = () => device.set(storageKey, '4');
+
+  brokenShow();
+  assertThrows(
+    () => assertEqual(device.writesFor(storageKey).length, 0, 'mutation'),
+    'setShown anında yazan model testten geçti — erken yazma yakalanmıyor',
+  );
+
+  // Doğru model: `renderRecap` yazmaz, yalnızca `layoutRecap` yazar.
+  const correctDevice = createDevice();
+  const app = createSession(correctDevice);
+  app.signIn('user-a');
+  app.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  app.loadHistory([archiveRow(4)]);
+  app.renderRecap(HOME);
+  assertEqual(
+    correctDevice.writesFor(rx.seasonRecapStorageKey('user-a', 4)).length,
+    0,
+    'doğru model layout beklemeden yazdı',
+  );
+  app.layoutRecap();
+  assertEqual(
+    correctDevice.writesFor(rx.seasonRecapStorageKey('user-a', 4)).length,
+    1,
+    'doğru model layout sonrası yazmadı',
+  );
+});
+
+check('M7. "arşiv okunmadan resolved yaz" davranışı özeti kalıcı olarak yutar', () => {
+  /**
+   * Kasıtlı hata: `hasLoadedHistory` kontrolü olmadan karar kapatılıyor.
+   * Tek bir ağ hatası özeti bütün oturum boyunca yutar.
+   */
+  const brokenResolved = new Set();
+  const brokenResolve = (hasLoadedHistory, requestAlreadySent) => {
+    if (!requestAlreadySent) return 'request';
+    brokenResolved.add('user-a:4');
+    return 'resolved';
+  };
+
+  assertEqual(brokenResolve(false, false), 'request', 'ilk turda istek atılmalı');
+  assertEqual(brokenResolve(false, true), 'resolved', 'bozuk model gerçekten kapatmalı');
+  assertThrows(
+    () => assert(!brokenResolved.has('user-a:4'), 'mutation'),
+    'arşiv okunmadan kapatan model testten geçti',
+  );
+
+  // Doğru model aynı senaryoda kararı AÇIK bırakır ve sonra özeti üretir.
+  const device = createDevice();
+  let shouldFail = true;
+  const app = createSession(device, () =>
+    shouldFail ? { ok: false } : { ok: true, rows: [archiveRow(4)] },
+  );
+  app.signIn('user-a');
+  app.applySeason({ currentRank: 'silver', currentRp: 320, seasonIndex: 5, startingRp: 300 });
+  assertEqual(app.resolvedRecap, undefined, 'doğru model kararı erken kapattı');
+
+  shouldFail = false;
+  app.applySeason({ currentRank: 'silver', currentRp: 330, seasonIndex: 5, startingRp: 300 });
+  assert(app.pendingRecap, 'doğru model başarılı yüklemeden sonra özet üretmedi');
 });
 
 check('M3. Bekleyen kutlama güvenli ekran kontrolü olmasa antrenmanı bölerdi', () => {

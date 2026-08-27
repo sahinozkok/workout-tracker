@@ -763,6 +763,16 @@ export const en: TranslationSchema = {
       continue: 'Continue',
       a11y: 'You moved up from {from} to {to}. Current RP: {rp}.',
     },
+    seasonRecap: {
+      title: 'Season complete',
+      finalRank: 'FINAL RANK',
+      softReset: 'NEW SEASON START',
+      softResetValue: '{from} RP → {to} RP',
+      nextSeason: '{season} begins.',
+      start: 'Start the new season',
+      a11y:
+        '{season} is complete. You finished at {rank} with {rp} RP. You start the new season with {startingRp} RP.',
+    },
     pastSeasons: 'PAST SEASONS',
     noPastSeasons: 'No completed seasons yet. Your result will be archived here when your first season ends.',
     loading: 'Loading rank…',
