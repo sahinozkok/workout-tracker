@@ -798,6 +798,32 @@ export const tr = {
     badgeA11y: '{rank}, {rp} RP',
     progressA11y: '{rank}, {rp} RP. Sonraki ranka {remaining} RP kaldı.',
     navTitle: 'Sezon Rankı',
+    /**
+     * Rank rehberi. Sayılar metne GÖMÜLMEZ; `constants/ranks.ts` sabitlerinden
+     * yer tutucu olarak gelir, böylece iki kaynak asla ayrışmaz.
+     */
+    guide: {
+      navTitle: 'Rank Rehberi',
+      openHint: 'RP kurallarını ve rank basamaklarını açar.',
+      lead: 'RP yalnızca kaydedilmiş ve doğrulanmış antrenmanlardan gelir. Aşağıda her kuralın tam karşılığı var.',
+      earnTitle: 'RP NASIL KAZANILIR?',
+      earnPartial: 'Planlı günü kısmen tamamla',
+      earnComplete: 'Planlı günü tamamen tamamla',
+      earnUnscheduled: 'Plan dışı bir antrenmanı tamamla',
+      earnWeeklyPerfect: 'Haftanın bütün planlı günlerini tamamla',
+      earnStreak: '{days} günlük seriye ulaş',
+      earnCompleteNote: 'Bir gün için daha önce +{partial} RP aldıysan, günü tamamlarken yalnızca kalan +{topUp} RP eklenir. Aynı gün toplamda {total} RP’yi aşmaz.',
+      manualNote: 'Takvimi elle işaretlemek RP kazandırmaz.',
+      rpValue: '+{rp} RP',
+      tiersTitle: 'RANK BASAMAKLARI',
+      tierRequirement: '{rp} RP',
+      tierCurrent: 'Şu an',
+      tierCurrentA11y: 'Şu anki rankın.',
+      seasonTitle: 'SEZON NASIL ÇALIŞIR?',
+      seasonLength: 'Bir sezon {weeks} hafta sürer.',
+      seasonArchive: 'Sezon bittiğinde ulaştığın rank ve istatistikler geçmiş sezonlara kaydedilir.',
+      seasonSoftReset: 'Yeni sezonda RP’n sıfırdan başlamaz; sezon sonunda ulaştığın ranka göre RP’nin bir kısmı yeni sezona taşınır.',
+    },
   },
   mascot: {
     settingsTitle: '{name}',

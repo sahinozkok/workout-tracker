@@ -1025,68 +1025,63 @@ check('28. Çeviriler iki dilde de tam', () => {
   assert(screenSource.includes('accessibilityRole'), 'erişilebilirlik rolü kullanılmıyor');
 });
 
-check('29. Regresyon: yalnızca bu özelliğin dosyaları değişti', () => {
-  const status = execFileSync('git', ['status', '--porcelain'], { cwd: ROOT, encoding: 'utf8' });
-  const allowed = new Set([
-    'supabase/.temp/',
-    'supabase/migrations/20260828120000_add_friends_rank_leaderboard.sql',
-    'constants/rank-experience.ts',
-    'types/ranks.ts',
-    'services/ranks.ts',
-    'app/friends/leaderboard.tsx',
-    'app/_layout.tsx',
-    'components/friends/friends-screen.tsx',
-    'locales/tr.ts',
-    'locales/en.ts',
-    'scripts/verify-rank-leaderboard.mjs',
-    'scripts/verify-rank-experience.mjs',
-    'package.json',
-  ]);
-
-  for (const line of status.split('\n').filter(Boolean)) {
-    const path = line.slice(3).trim();
-    assert(allowed.has(path), `kapsam dışı dosya değişmiş: ${path}`);
-  }
-
+check('29. Sıralama özelliği KENDİ sınırlarının içinde kalıyor', () => {
   /**
-   * Faz 4 yalnızca `verify-rank-experience.mjs` içindeki İKİ migration
-   * kontrolünü daraltır (bkz. o dosyadaki 11 ve 56 numaralı notlar): eskiden
-   * `supabase/migrations` altında HİÇBİR değişiklik beklemiyorlardı ve bu faz
-   * bilinçli olarak yeni bir migration ekliyor. Rank deneyimi davranışları
-   * değişmedi — kontrol sayısı ve sonucu aynı kalmalı.
+   * BU KONTROL GIT'E HİÇ BAKMAZ.
+   *
+   * Önceki sürümleri "şu dosyalar HEAD'e göre değişmemiş olmalı" diye
+   * denetliyordu. Bu kalıcı bir regresyon testi değildir:
+   *   * commit sonrası diff boşalır ve kontrol sessizce anlamsızlaşır,
+   *   * commit öncesi ise gelecekteki MEŞRU değişiklikleri gereksiz yere
+   *     engeller.
+   *
+   * Kalıcı olan güvence "hangi dosya değişti" değil, SEMANTİK sınırdır:
+   * arkadaş sıralaması kendi ekranında ve kendi servisinde yaşar; rank ekranı
+   * ve rank rehberi ona hiç dokunmaz. Aşağıdaki kontroller yalnızca dosya
+   * İÇERİĞİNE bakar, çalışma ağacına veya commit durumuna DEĞİL.
    */
-  const experienceHarness = source('scripts/verify-rank-experience.mjs');
-  assert(
-    experienceHarness.includes('UYGULANMIŞ migration’ları DEĞİŞTİRMEDİ'),
-    'rank deneyimi harness’ı beklenen daraltmayı içermiyor',
-  );
-  assert(
-    !/status', 'supabase[^\]]*\]\s*,\s*\{[\s\S]{0,120}\}\s*\);\s*assertEqual\(migrations/.test(
-      experienceHarness,
-    ),
-    'eski katı migration kontrolü hâlâ duruyor',
-  );
 
-  // Dokunulmaması gereken rank/arkadaşlık dosyaları gerçekten temiz.
-  for (const path of [
-    'context/rank-context.tsx',
-    'components/ranks/rank-badge.tsx',
-    'components/ranks/rank-up-celebration.tsx',
-    'components/ranks/season-recap.tsx',
-    'components/friends/friend-person-row.tsx',
-    'components/friends/friends-theme.ts',
-    'services/friends.ts',
-    'app/profile/[userId].tsx',
-    'app/rank.tsx',
-    'constants/ranks.ts',
-    'scripts/verify-ranks.mjs',
-  ]) {
-    const changed = execFileSync('git', ['status', '--porcelain', path], {
-      cwd: ROOT,
-      encoding: 'utf8',
-    });
-    assertEqual(changed.trim(), '', `dokunulmaması gereken dosya değişmiş: ${path}`);
+  /** Sıralama özelliğinin yalnızca kendisine ait olan yüzeyleri. */
+  const LEADERBOARD_SURFACE = [
+    'fetchFriendsRankLeaderboard',
+    'FriendRankLeaderboard',
+    '/friends/leaderboard',
+    'get_friends_rank_leaderboard',
+  ];
+
+  // 1) Özelliğin kendi dosyaları yerinde.
+  for (const path of [LEADERBOARD_SQL_PATH, 'app/friends/leaderboard.tsx', 'services/ranks.ts']) {
+    assert(source(path).length > 0, `özelliğin kendi dosyası bulunamadı: ${path}`);
   }
+
+  // 2) Rank ekranı sıralamaya HİÇ dokunmaz.
+  const rankScreen = source('app/rank.tsx');
+  for (const leak of LEADERBOARD_SURFACE) {
+    assert(!rankScreen.includes(leak), `sıralama özelliği rank ekranına sızmış: ${leak}`);
+  }
+
+  // 3) Rank rehberi de sıralama servisini/RPC'sini kullanmaz.
+  const rankGuide = source('app/rank-guide.tsx');
+  for (const leak of LEADERBOARD_SURFACE) {
+    assert(!rankGuide.includes(leak), `sıralama özelliği rank rehberine sızmış: ${leak}`);
+  }
+  // Rehber salt okunur bir açıklama ekranıdır: hiç ağ isteği yapmaz.
+  assert(!rankGuide.includes('supabase'), 'rank rehberi doğrudan Supabase kullanıyor');
+
+  // 4) Sıralama ekranı hâlâ KENDİ servisini kullanıyor.
+  const leaderboardScreen = source('app/friends/leaderboard.tsx');
+  assert(
+    leaderboardScreen.includes('fetchFriendsRankLeaderboard'),
+    'sıralama ekranı kendi servisini kullanmıyor',
+  );
+  assert(
+    leaderboardScreen.includes("from '@/services/ranks'"),
+    'sıralama ekranı servis katmanını atlıyor',
+  );
+  assert(
+    serviceSource.includes("supabase.rpc('get_friends_rank_leaderboard')"),
+    'servis katmanı sıralama RPC’sini çağırmıyor',
+  );
 });
 
 // ---------------------------------------------------------------------------

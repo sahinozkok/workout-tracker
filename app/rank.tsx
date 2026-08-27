@@ -1,8 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { useEffect, useMemo } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { MotionPressable } from '@/components/motion-pressable';
 import { MotionSection } from '@/components/motion-section';
 import { getRankColor, getRankSoftBackground, useRankName } from '@/components/ranks/rank-badge';
 import { toRankRpDisplay } from '@/constants/rank-experience';
@@ -94,12 +96,24 @@ export default function RankScreen() {
     <SafeAreaView edges={['bottom']} style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <MotionSection style={styles.header}>
-          <Text style={styles.eyebrow}>
-            {season.themeName ?? t('ranks.seasonName', { index: season.seasonIndex })}
-          </Text>
-          <Text style={styles.dateRange}>
-            {formatRange(season.startsOn, season.endsOn, locale)}
-          </Text>
+          {/* Mevcut sezon adı ve tarih aralığı OLDUĞU GİBİ kalır; bilgi düğmesi
+              yalnızca sağdaki boşluğa yerleşir ve kart yerleşimini bozmaz. */}
+          <View style={styles.headerTextGroup}>
+            <Text style={styles.eyebrow}>
+              {season.themeName ?? t('ranks.seasonName', { index: season.seasonIndex })}
+            </Text>
+            <Text style={styles.dateRange}>
+              {formatRange(season.startsOn, season.endsOn, locale)}
+            </Text>
+          </View>
+          <MotionPressable
+            accessibilityHint={t('ranks.guide.openHint')}
+            accessibilityLabel={t('ranks.guide.navTitle')}
+            accessibilityRole="button"
+            onPress={() => router.push('/rank-guide')}
+            style={styles.guideButton}>
+            <Ionicons color={colors.textSecondary} name="help-circle-outline" size={22} />
+          </MotionPressable>
         </MotionSection>
 
         <MotionSection delay={40}>
@@ -349,7 +363,21 @@ function createStyles(colors: ThemeColors) {
     centerState: { alignItems: 'center', flex: 1, gap: 12, justifyContent: 'center', padding: 32 },
     centerText: { color: colors.textSecondary, fontSize: 13, textAlign: 'center' },
 
-    header: { gap: 4, marginBottom: 16 },
+    header: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 12,
+      justifyContent: 'space-between',
+      marginBottom: 16,
+    },
+    headerTextGroup: { flexShrink: 1, gap: 4 },
+    /** Dokunma alanı 44×44 pt'nin altına inmez. */
+    guideButton: {
+      alignItems: 'center',
+      height: Layout.minTouchSize,
+      justifyContent: 'center',
+      width: Layout.minTouchSize,
+    },
     eyebrow: { color: colors.text, fontSize: 17, fontWeight: '600' },
     dateRange: { color: colors.textSecondary, fontSize: 13, fontWeight: '400' },
 

@@ -192,6 +192,13 @@ function AppNavigation() {
             name="rank"
             options={{ headerBackTitle: t('tabs.profile'), title: t('ranks.navTitle') }}
           />
+          {/* Rank rehberi de kök Stack'te açılır: native başlık kullanıldığı
+              için geri düğmesi ve iOS geri kaydırma hareketi aynen çalışır,
+              alt sekme çubuğu görünmez ve yeni sekme EKLENMEZ. */}
+          <Stack.Screen
+            name="rank-guide"
+            options={{ headerBackTitle: t('ranks.navTitle'), title: t('ranks.guide.navTitle') }}
+          />
           {/* Arkadaşlık ekranları kök Stack'te açılır: alt sekme çubuğu
               görünmez, native geri hareketi korunur.
 
