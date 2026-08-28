@@ -1,14 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { MotionPressable } from '@/components/motion-pressable';
 import { MotionSection } from '@/components/motion-section';
+import { AchievementDetailSheet } from '@/components/ranks/achievement-detail-sheet';
 import { ACHIEVEMENT_ICONS } from '@/components/ranks/achievement-icons';
 import { getRankColor, getRankSoftBackground, useRankName } from '@/components/ranks/rank-badge';
-import { toRankRpDisplay } from '@/constants/rank-experience';
+import { SeasonAchievementKey, toRankRpDisplay } from '@/constants/rank-experience';
 import {
   daysRemainingInSeason,
   nextRank,
@@ -426,6 +427,20 @@ function AchievementsGrid({
   styles: ReturnType<typeof createStyles>;
   t: (key: string, params?: Record<string, string | number>) => string;
 }) {
+  /**
+   * Ayrıntısı açık olan rozet.
+   *
+   * Anahtar saklanır, nesne DEĞİL: arka planda yeni bir sunucu cevabı gelirse
+   * pencere donmuş bir kopyayı değil GÜNCEL ilerlemeyi gösterir.
+   */
+  const [openKey, setOpenKey] = useState<SeasonAchievementKey>();
+  const closeDetail = useCallback(() => setOpenKey(undefined), []);
+
+  const openAchievement = achievements.find((entry) => entry.key === openKey);
+  const openUnlockedAt = openAchievement?.unlockedAt;
+  // Tarih biçimlendirmesi bu ekranın mevcut yardımcısıdır; kopyalanmaz.
+  const openUnlockedLabel = openUnlockedAt ? formatUnlockedAt(openUnlockedAt, locale) : undefined;
+
   if (achievements.length === 0) {
     return (
       <View style={styles.achievementsState}>
@@ -462,11 +477,19 @@ function AchievementsGrid({
             colors={colors}
             key={achievement.key}
             locale={locale}
+            onOpen={setOpenKey}
             styles={styles}
             t={t}
           />
         ))}
       </View>
+
+      <AchievementDetailSheet
+        accent={accent}
+        achievement={openAchievement}
+        onClose={closeDetail}
+        unlockedLabel={openUnlockedLabel}
+      />
       {hasError ? (
         <MotionPressable
           accessibilityRole="button"
@@ -486,6 +509,7 @@ function AchievementBadge({
   achievement,
   colors,
   locale,
+  onOpen,
   styles,
   t,
 }: {
@@ -493,6 +517,7 @@ function AchievementBadge({
   achievement: SeasonAchievement;
   colors: ThemeColors;
   locale: string;
+  onOpen: (key: SeasonAchievementKey) => void;
   styles: ReturnType<typeof createStyles>;
   t: (key: string, params?: Record<string, string | number>) => string;
 }) {
@@ -510,17 +535,23 @@ function AchievementBadge({
     : progressLabel;
 
   return (
-    <View
+    <MotionPressable
+      accessibilityHint={t('ranks.achievements.detail.openHint')}
       accessibilityLabel={
         isUnlocked
-          ? t('ranks.achievements.unlockedA11y', { name })
+          ? t('ranks.achievements.unlockedA11y', {
+              current: currentProgress,
+              name,
+              target: targetProgress,
+            })
           : t('ranks.achievements.lockedA11y', {
               current: currentProgress,
               name,
               target: targetProgress,
             })
       }
-      accessible
+      accessibilityRole="button"
+      onPress={() => onOpen(key)}
       style={[styles.achievementCard, !isUnlocked && styles.achievementCardLocked]}>
       <Ionicons
         color={isUnlocked ? accent : colors.textTertiary}
@@ -535,7 +566,7 @@ function AchievementBadge({
           {detail}
         </Text>
       </View>
-    </View>
+    </MotionPressable>
   );
 }
 

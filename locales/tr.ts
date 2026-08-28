@@ -776,8 +776,33 @@ export const tr = {
       empty: 'Bu sezon için henüz başarı bilgisi yok.',
       unavailable: 'Sezon başarıları şu an alınamadı.',
       retry: 'Tekrar dene',
-      unlockedA11y: '{name}: açıldı.',
+      unlockedA11y: '{name}: açıldı. İlerleme {current} / {target}.',
       lockedA11y: '{name}: kilitli. İlerleme {current} / {target}.',
+      /**
+       * Rozet ayrıntı penceresi.
+       *
+       * Hiçbir hedef veya eşik sayısı burada SABİTLENMEZ: `{current}`,
+       * `{target}` ve `{count}` sunucudan gelen değerlerle doldurulur.
+       */
+      detail: {
+        statusUnlocked: 'Kazanıldı',
+        statusInProgress: 'Devam ediyor',
+        progressLabel: 'İlerleme',
+        remainingLabel: 'Kalan',
+        unlockedAtLabel: 'Kazanılma tarihi',
+        close: 'Kapat',
+        closeA11y: 'Rozet ayrıntısını kapat',
+        openHint: 'Rozet ayrıntılarını açar.',
+        /** Kalan miktarın BİRİMİ — sayı sunucudan gelir. */
+        remaining: {
+          workoutOne: '{count} antrenman kaldı',
+          workoutOther: '{count} antrenman kaldı',
+          dayOne: '{count} gün kaldı',
+          dayOther: '{count} gün kaldı',
+          perfectWeekOne: '{count} kusursuz hafta kaldı',
+          perfectWeekOther: '{count} kusursuz hafta kaldı',
+        },
+      },
       /** Profil vitrini — en fazla üç rozet. */
       showcase: {
         title: 'SEZON ROZETLERİ',
