@@ -226,6 +226,14 @@ function AppNavigation() {
             name="profile/[userId]"
             options={{ headerBackTitle: t('friends.title'), title: '' }}
           />
+          {/* Mesajlaşma ekranları da arkadaşlık ekranlarıyla AYNI güvenli
+              bölgede, kök Stack'te açılır: alt sekme çubuğuna YENİ SEKME
+              EKLENMEZ ve bu ekranlarda sekme çubuğu görünmez. Native başlık
+              kapatılır — iki ekran da kendi başlığını çizer; bu native-stack'in
+              kaydırarak geri gitme hareketini etkilemediği için iOS jesti
+              aynen çalışır. */}
+          <Stack.Screen name="messages/index" options={{ headerShown: false }} />
+          <Stack.Screen name="messages/[userId]" options={{ headerShown: false }} />
         </Stack.Protected>
       </Stack>
       {/*

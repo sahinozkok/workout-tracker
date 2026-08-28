@@ -2,9 +2,11 @@
  * Referanstaki kişi satırı: solda avatar, ortada isim + kullanıcı adı, sağda
  * eyleme özel alan.
  *
- * Mesaj/sohbet balonu butonu **bilinçli olarak yoktur** — uygulamada
- * mesajlaşma bulunmuyor. Satırda yalnızca gerçek veri gösterilir; "ortak
- * arkadaş" veya "çevrimiçi" gibi alanlar üretilmez.
+ * Sağdaki `actions` yuvası çağırana aittir: kabul edilmiş arkadaş satırında
+ * sohbet balonu ve üç nokta oraya yerleşir. Bu bileşen hiçbir eylemi kendisi
+ * KARARLAŞTIRMAZ, bu yüzden arama sonuçları ve istek satırları mesaj butonu
+ * ALMAZ. Satırda yalnızca gerçek veri gösterilir; "ortak arkadaş" veya
+ * "çevrimiçi" gibi alanlar üretilmez.
  */
 import { ReactNode, useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';

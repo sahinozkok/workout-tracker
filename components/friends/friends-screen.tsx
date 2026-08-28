@@ -208,6 +208,9 @@ export function FriendsScreen({ autoFocusSearch = false }: FriendsScreenProps) {
     Alert.alert(t('friends.moreActions'), undefined, [
       { text: t('friends.refresh'), onPress: () => void load() },
       { text: t('friends.findFriend'), onPress: focusSearch },
+      // Mesajlar kök Stack'te ayrı bir ekrandır; mevcut üç sekmeye dördüncü
+      // bir sekme SIKIŞTIRILMAZ.
+      { text: t('messages.menuAction'), onPress: () => router.push('/messages') },
       // Sezon sıralaması kök Stack'te ayrı bir ekrandır; mevcut üç sekmeye
       // dördüncü bir sekme SIKIŞTIRILMAZ.
       {
@@ -364,15 +367,39 @@ export function FriendsScreen({ autoFocusSearch = false }: FriendsScreenProps) {
             <MotionListItem delay={friendsEntrance.getDelay(index)} key={friend.friendshipId}>
               <FriendPersonRow
                 actions={
-                  <Pressable
-                    accessibilityLabel={t('friends.remove')}
-                    accessibilityRole="button"
-                    disabled={isBusy}
-                    hitSlop={{ bottom: 10, left: 10, right: 6, top: 10 }}
-                    onPress={() => confirmRemove(friend)}
-                    style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}>
-                    <Ionicons color={palette.textSecondary} name="ellipsis-vertical" size={18} />
-                  </Pressable>
+                  <>
+                    {/* Sohbet YALNIZCA gerçekten kabul edilmiş arkadaşta
+                        görünür: arama sonuçları, istekler ve öneriler bu
+                        butonu almaz. */}
+                    <Pressable
+                      accessibilityLabel={t('messages.openChat', { name: friend.displayName })}
+                      accessibilityRole="button"
+                      /* 36 pt genişlik + 8 pt sol hitSlop = 44 pt; yükseklik
+                         zaten 44 pt. Üç noktanın hitSlop'una taşmaz. */
+                      hitSlop={{ bottom: 0, left: 8, right: 0, top: 0 }}
+                      onPress={() =>
+                        router.push({
+                          pathname: '/messages/[userId]',
+                          params: { userId: friend.id },
+                        })
+                      }
+                      style={({ pressed }) => [styles.messageButton, pressed && styles.pressed]}>
+                      <Ionicons
+                        color={palette.textSecondary}
+                        name="chatbubble-outline"
+                        size={18}
+                      />
+                    </Pressable>
+                    <Pressable
+                      accessibilityLabel={t('friends.remove')}
+                      accessibilityRole="button"
+                      disabled={isBusy}
+                      hitSlop={{ bottom: 10, left: 10, right: 6, top: 10 }}
+                      onPress={() => confirmRemove(friend)}
+                      style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}>
+                      <Ionicons color={palette.textSecondary} name="ellipsis-vertical" size={18} />
+                    </Pressable>
+                  </>
                 }
                 isLast={index === friends.length - 1}
                 onPress={() => goToProfile(friend.id)}
@@ -664,6 +691,13 @@ function createStyles(palette: ReturnType<typeof useFriendsPalette>) {
       height: 36,
       justifyContent: 'center',
       width: 28,
+    },
+    /** Sohbet balonu: 44 pt yükseklik, sol hitSlop ile 44 pt genişlik. */
+    messageButton: {
+      alignItems: 'center',
+      height: FriendsMetrics.minTouchSize,
+      justifyContent: 'center',
+      width: 36,
     },
     accentPill: {
       alignItems: 'center',
