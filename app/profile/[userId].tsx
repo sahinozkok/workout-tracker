@@ -234,6 +234,7 @@ export default function FriendProfileScreen() {
             accentColor={ownerAccent.color}
             entries={showcase}
             hasError={hasShowcaseError}
+            preserveOrder
           />
 
           {/* Ana hedef: bilinmeyen değer gelirse güvenli fallback. */}

@@ -31,6 +31,8 @@ import {
   fetchMyRankEvents,
   fetchMyRankHistory,
   fetchMyRankWeekFocus,
+  fetchMyShowcaseSelection,
+  saveMyShowcaseSelection,
   syncMyRank,
   syncMySeasonAchievements,
 } from '@/services/ranks';
@@ -41,7 +43,11 @@ import {
   RankUpCelebration,
   RankWeekFocus,
   SeasonAchievement,
+  SeasonAchievementShowcaseEntry,
   SeasonRecap,
+  SeasonShowcaseSelection,
+  SeasonShowcaseSelectionResult,
+  SeasonShowcaseSelectionSaveResult,
 } from '@/types/ranks';
 
 /**
@@ -84,6 +90,45 @@ type RankContextValue = {
   achievements: SeasonAchievement[];
   isAchievementsLoading: boolean;
   hasAchievementsError: boolean;
+  /**
+   * VİTRİN SEÇİMİ — güncel sezon.
+   *
+   * Boş liste = OTOMATİK mod. Dolu liste kullanıcının seçtiği SIRAYI taşır.
+   * Seçim kozmetiktir; RP, XP, level veya gül üretmez ve başarı koşullarına,
+   * kutlama/baseline mantığına DOKUNMAZ.
+   */
+  showcaseSelection: SeasonShowcaseSelection;
+  isShowcaseSelectionLoading: boolean;
+  hasShowcaseSelectionError: boolean;
+  /** Özel seçim var mı? `false` ise vitrin otomatik moddadır. */
+  isShowcaseSelectionCustom: boolean;
+  /**
+   * GÜNCEL sezonun seçimi gerçekten yüklendi mi?
+   *
+   * `false` iken taslak hazırlanmamalı ve vitrin otomatik moddaymış gibi
+   * gösterilmemelidir. Sezon değişince yeni sezonun cevabı gelene kadar
+   * yeniden `false` olur.
+   */
+  isShowcaseSelectionReady: boolean;
+  /** Cevabın ait olduğu sezon; `undefined` = henüz yüklenmedi. */
+  showcaseSelectionSeasonIndex?: number;
+  /**
+   * Profilde gösterilecek rozetler — SIRASI HAZIR.
+   *
+   * Özel seçim varsa seçim sırasında, yoksa en son kazanılan üç rozet.
+   */
+  profileShowcaseEntries: SeasonAchievementShowcaseEntry[];
+  loadShowcaseSelection: () => Promise<void>;
+  /**
+   * Seçimi kaydeder. Boş dizi otomatik moda döner.
+   *
+   * Ağ/sunucu hatası FIRLATILIR. Çağrı başarılı olsa bile sonuç yalnızca
+   * `status === 'applied'` ise güncel sezona uygulanmıştır; diğer durumlar
+   * BAŞARISIZLIKTIR ve çağıran ekranı kapatmamalıdır.
+   */
+  saveShowcaseSelection: (
+    keys: readonly SeasonAchievementKey[],
+  ) => Promise<SeasonShowcaseSelectionSaveResult>;
   /** Gösterilmeyi bekleyen başarı kutlaması (kuyruğun başı). */
   achievementCelebration?: SeasonAchievementKey;
   /**
@@ -180,6 +225,17 @@ export function RankProvider({ children }: PropsWithChildren) {
   const [hasAchievementsError, setHasAchievementsError] = useState(false);
   const [achievementQueue, setAchievementQueue] = useState<SeasonAchievementKey[]>([]);
   /**
+   * Sunucudan gelen SON başarılı seçim cevabı — sezon kimliğiyle birlikte.
+   *
+   * `undefined` = henüz yüklenmedi. Bu ayrım kritiktir: "sıfır rozet"
+   * (otomatik mod) ile "cevap gelmedi" birbirine karışırsa ekran boş taslağı
+   * kaydedilebilir sanır ve kullanıcının kayıtlı seçimini ezebilir.
+   */
+  const [showcaseSelectionResult, setShowcaseSelectionResult] =
+    useState<SeasonShowcaseSelectionResult>();
+  const [isShowcaseSelectionLoading, setIsShowcaseSelectionLoading] = useState(false);
+  const [hasShowcaseSelectionError, setHasShowcaseSelectionError] = useState(false);
+  /**
    * Aktif katman — REAKTİF.
    *
    * Değer bilinçli olarak context'e AÇILIR: bir katmanın `claimRankOverlay`
@@ -222,6 +278,12 @@ export function RankProvider({ children }: PropsWithChildren) {
   const isAchievementsFetchingRef = useRef(false);
   const hasQueuedAchievementsRef = useRef(false);
   const loadAchievementsRef = useRef<() => void>(() => undefined);
+
+  /** `${userId}:${seasonIndex}` — seçim bu oturumda okundu mu? */
+  const loadedShowcaseSelectionRef = useRef<string>(undefined);
+  /** Seçim okuması için tek uçuş + kuyruk; diğer yüklemelerle aynı kalıp. */
+  const isShowcaseSelectionFetchingRef = useRef(false);
+  const hasQueuedShowcaseSelectionRef = useRef(false);
 
   /** Depodaki "gösterildi" kaydının bellek içi kopyası. */
   const celebratedAchievementsRef = useRef<{
@@ -534,6 +596,113 @@ export function RankProvider({ children }: PropsWithChildren) {
   );
 
   /**
+   * Vitrin seçimi — güncel sezon.
+   *
+   * Diğer yüklemelerle AYNI kurallar: tek uçuş, latest-wins kuyruğu ve hesap
+   * sahipliği. Hata YALNIZCA seçim durumunu etkiler; profil ve rank akışları
+   * çalışmaya devam eder ve vitrin otomatik moda düşer.
+   */
+  const loadShowcaseSelection = useCallback(async () => {
+    if (!userId) return;
+
+    if (isShowcaseSelectionFetchingRef.current) {
+      hasQueuedShowcaseSelectionRef.current = true;
+      return;
+    }
+
+    isShowcaseSelectionFetchingRef.current = true;
+    const owner = ownerRef.current;
+    if (isMountedRef.current) {
+      setIsShowcaseSelectionLoading(true);
+      setHasShowcaseSelectionError(false);
+    }
+
+    try {
+      const next = await fetchMyShowcaseSelection();
+      if (!isMountedRef.current || owner !== ownerRef.current) return;
+
+      /**
+       * SEZON SAHİPLİĞİ — cevabın ait olduğu sezon, İSTEMCİNİN ŞU ANKİ
+       * sezonuyla eşleşmiyorsa hiçbir şey yazılmaz.
+       *
+       * Aksi hâlde sezon geçişi sırasında uçuşta olan ESKİ sezon cevabı yeni
+       * sezonun state'ine düşer, `loadedShowcaseSelectionRef` yanlışlıkla
+       * yeni sezonla işaretlenir ve yeni sezon eski sezonun özel seçimini
+       * kullanmaya başlardı.
+       */
+      if (!next || next.seasonIndex !== seasonRef.current?.seasonIndex) return;
+
+      setShowcaseSelectionResult(next);
+      // Bu (kullanıcı, sezon) için seçim okundu; gereksiz tekrar istenmez.
+      loadedShowcaseSelectionRef.current = `${userId}:${next.seasonIndex}`;
+    } catch {
+      if (!isMountedRef.current || owner !== ownerRef.current) return;
+      setHasShowcaseSelectionError(true);
+    } finally {
+      if (owner === ownerRef.current) {
+        isShowcaseSelectionFetchingRef.current = false;
+        if (isMountedRef.current) setIsShowcaseSelectionLoading(false);
+
+        if (hasQueuedShowcaseSelectionRef.current) {
+          hasQueuedShowcaseSelectionRef.current = false;
+          void loadShowcaseSelection();
+        }
+      }
+    }
+  }, [userId]);
+
+  /**
+   * Seçimi kaydeder.
+   *
+   * Kalıcı state YALNIZCA sunucu kaydı BAŞARILI olduğunda güncellenir; hata
+   * yukarı fırlatılır ve önceki geçerli seçim olduğu gibi kalır. Optimistic
+   * yazma YOKTUR. Sunucu kaydedilen son hâli döndürdüğü için ikinci bir okuma
+   * sorgusu yapılmaz.
+   */
+  const saveShowcaseSelection = useCallback(
+    async (
+      keys: readonly SeasonAchievementKey[],
+    ): Promise<SeasonShowcaseSelectionSaveResult> => {
+      if (!userId) return { status: 'unavailable' };
+      const owner = ownerRef.current;
+
+      const next = await saveMyShowcaseSelection(keys);
+
+      // Hesap arada değiştiyse eski cevap yeni hesabın state'ine YAZAMAZ.
+      if (owner !== ownerRef.current) return { status: 'account-changed' };
+      if (!isMountedRef.current) return { status: 'unavailable' };
+
+      // Okunamayan cevap (oturum yok / bozuk yanıt) state'e YAZILMAZ.
+      if (!next) return { status: 'unavailable' };
+
+      /**
+       * Kaydetme sırasında sezon değiştiyse bu cevap ARTIK GEÇERSİZDİR: yeni
+       * sezonun state'ine yazılmaz ve yeni sezonun seçimi baştan yüklenir.
+       *
+       * `loadedShowcaseSelectionRef` YALNIZCA temizlenir; eski sezon kimliğiyle
+       * DAMGALANMAZ, aksi hâlde yeni sezon için okuma bir daha istenmezdi.
+       * Çağırana başarısızlık bildirilir: seçim güncel sezona uygulanmamıştır,
+       * ekran kapanmamalı ve taslak korunmalıdır.
+       */
+      if (next.seasonIndex !== seasonRef.current?.seasonIndex) {
+        loadedShowcaseSelectionRef.current = undefined;
+        void loadShowcaseSelection();
+        return { status: 'season-changed' };
+      }
+
+      setShowcaseSelectionResult(next);
+      setHasShowcaseSelectionError(false);
+      loadedShowcaseSelectionRef.current = `${userId}:${next.seasonIndex}`;
+      return {
+        keys: next.isCustom ? next.keys : [],
+        seasonIndex: next.seasonIndex,
+        status: 'applied',
+      };
+    },
+    [loadShowcaseSelection, userId],
+  );
+
+  /**
    * Sezon başarıları.
    *
    * Haftalık odakla AYNI tek-uçuş / latest-wins / hesap sahipliği kurallarını
@@ -592,6 +761,15 @@ export function RankProvider({ children }: PropsWithChildren) {
       achievementCelebrationChainRef.current = achievementCelebrationChainRef.current
         .then(() => reconcileAchievementCelebrations(userId, seasonIndex, unlockedKeys, owner))
         .catch(() => undefined);
+
+      /**
+       * Vitrin seçimi (kullanıcı, sezon) başına BİR KEZ okunur. Sezon
+       * değişince anahtar değişir ve yeni sezon otomatik modda başlar; polling
+       * KURULMAZ.
+       */
+      if (loadedShowcaseSelectionRef.current !== `${userId}:${seasonIndex}`) {
+        void loadShowcaseSelection();
+      }
     } catch {
       if (!isMountedRef.current || owner !== ownerRef.current) return;
       setHasAchievementsError(true);
@@ -606,7 +784,7 @@ export function RankProvider({ children }: PropsWithChildren) {
         }
       }
     }
-  }, [reconcileAchievementCelebrations, userId]);
+  }, [loadShowcaseSelection, reconcileAchievementCelebrations, userId]);
 
   useEffect(() => {
     loadAchievementsRef.current = () => {
@@ -1031,6 +1209,9 @@ export function RankProvider({ children }: PropsWithChildren) {
     isAchievementsFetchingRef.current = false;
     hasQueuedAchievementsRef.current = false;
     hasRequestedAchievementsRef.current = false;
+    loadedShowcaseSelectionRef.current = undefined;
+    isShowcaseSelectionFetchingRef.current = false;
+    hasQueuedShowcaseSelectionRef.current = false;
     celebratedAchievementsRef.current = undefined;
     achievementQueueRef.current = [];
     achievementCelebrationChainRef.current = Promise.resolve();
@@ -1058,6 +1239,9 @@ export function RankProvider({ children }: PropsWithChildren) {
     setHasAchievementsError(false);
     setIsAchievementsLoading(false);
     setAchievementQueue([]);
+    setShowcaseSelectionResult(undefined);
+    setHasShowcaseSelectionError(false);
+    setIsShowcaseSelectionLoading(false);
     setActiveOverlay(undefined);
     setRankUp(undefined);
     setSeasonRecap(undefined);
@@ -1084,6 +1268,54 @@ export function RankProvider({ children }: PropsWithChildren) {
     return () => subscription.remove();
   }, [runSync, todayKey, userId]);
 
+  /**
+   * GÜNCEL sezonun cevabı elimizde mi?
+   *
+   * Cevabın sezonu istemcinin şu anki sezonuyla eşleşmiyorsa (sezon yeni
+   * geçmiş, yeni cevap henüz gelmemiş) seçim HAZIR SAYILMAZ: vitrin yükleniyor
+   * kalır ve eski sezonun seçimi yeni sezona uygulanmaz.
+   */
+  const showcaseSelectionSeasonIndex = showcaseSelectionResult?.seasonIndex;
+  const isShowcaseSelectionReady =
+    showcaseSelectionResult !== undefined &&
+    season?.seasonIndex !== undefined &&
+    showcaseSelectionResult.seasonIndex === season.seasonIndex;
+
+  /** Özel seçim anahtarları — YALNIZCA hazır ve özel modda dolu. */
+  const showcaseSelection = useMemo<SeasonShowcaseSelection>(
+    () =>
+      isShowcaseSelectionReady && showcaseSelectionResult?.isCustom
+        ? showcaseSelectionResult.keys
+        : [],
+    [isShowcaseSelectionReady, showcaseSelectionResult],
+  );
+
+  /**
+   * PROFİLDE GÖSTERİLECEK ROZETLER — sırası hazır.
+   *
+   * Özel seçim varsa seçim SIRASI korunur; seçilen bir rozet artık açık
+   * değilse (beklenmez) sessizce düşer, uydurma rozet gösterilmez. Seçim
+   * yoksa mevcut "en son kazanılan üç rozet" davranışı aynen sürer.
+   *
+   * İstemci burada hiçbir başarı koşulu HESAPLAMAZ; yalnızca sunucudan gelen
+   * `isUnlocked` / `unlockedAt` alanlarını kullanır.
+   */
+  const profileShowcaseEntries = useMemo<SeasonAchievementShowcaseEntry[]>(() => {
+    const unlocked = achievements.filter((achievement) => achievement.isUnlocked);
+
+    if (showcaseSelection.length === 0) {
+      return unlocked.map((achievement) => ({
+        key: achievement.key,
+        unlockedAt: achievement.unlockedAt,
+      }));
+    }
+
+    return showcaseSelection
+      .map((key) => unlocked.find((achievement) => achievement.key === key))
+      .filter((achievement): achievement is SeasonAchievement => achievement !== undefined)
+      .map((achievement) => ({ key: achievement.key, unlockedAt: achievement.unlockedAt }));
+  }, [achievements, showcaseSelection]);
+
   const value = useMemo<RankContextValue>(
     () => ({
       acknowledgeRankUpShown,
@@ -1091,6 +1323,15 @@ export function RankProvider({ children }: PropsWithChildren) {
       achievements,
       acknowledgeAchievementCelebrationShown,
       activeRankOverlay,
+      hasShowcaseSelectionError,
+      isShowcaseSelectionCustom: showcaseSelection.length > 0,
+      isShowcaseSelectionLoading,
+      isShowcaseSelectionReady,
+      loadShowcaseSelection,
+      profileShowcaseEntries,
+      saveShowcaseSelection,
+      showcaseSelection,
+      showcaseSelectionSeasonIndex,
       acknowledgeSeasonRecapShown,
       claimRankOverlay,
       dismissAchievementCelebration,
@@ -1122,6 +1363,14 @@ export function RankProvider({ children }: PropsWithChildren) {
       achievements,
       acknowledgeAchievementCelebrationShown,
       activeRankOverlay,
+      hasShowcaseSelectionError,
+      isShowcaseSelectionLoading,
+      isShowcaseSelectionReady,
+      loadShowcaseSelection,
+      profileShowcaseEntries,
+      saveShowcaseSelection,
+      showcaseSelection,
+      showcaseSelectionSeasonIndex,
       acknowledgeSeasonRecapShown,
       claimRankOverlay,
       dismissAchievementCelebration,

@@ -116,6 +116,7 @@ const componentCode = componentSource
   .replace(/\/\*[\s\S]*?\*\//g, ' ')
   .replace(/^\s*\/\/.*$/gm, ' ');
 const ownProfileSource = source('app/(tabs)/profile.tsx');
+const contextSource = source('context/rank-context.tsx');
 const friendProfileSource = source('app/profile/[userId].tsx');
 const typesSource = source('types/ranks.ts');
 const localeTr = source('locales/tr.ts');
@@ -281,10 +282,28 @@ check('1. Kendi profilinde YALNIZCA açılmış rozetler görünür', () => {
 
   assertDeepEqual(keysOf(selectShowcase(entries)), ['streak_3', 'first_workout'], 'kilitli rozet sızdı');
 
-  // Ekran gerçekten yalnızca `isUnlocked` filtresi uyguluyor; ilerleme HESAPLAMIYOR.
+  /**
+   * Açılmış filtresi ARTIK CONTEXT'TE (`profileShowcaseEntries`): vitrin
+   * seçimi eklendiğinde türetme oraya taşındı. Değişmez aynı — vitrine
+   * yalnızca açılmış rozetler girer — yalnızca yeri değişti.
+   */
+  const derivation = contextSource.slice(
+    contextSource.indexOf('const profileShowcaseEntries = useMemo'),
+    contextSource.indexOf('const value = useMemo<RankContextValue>('),
+  );
+  assert(derivation.length > 0, 'profileShowcaseEntries türetmesi bulunamadı');
   assert(
-    ownProfileSource.includes('.filter((achievement) => achievement.isUnlocked)'),
-    'kendi profili açılmış filtresini uygulamıyor',
+    derivation.includes('achievements.filter((achievement) => achievement.isUnlocked)'),
+    'context açılmış filtresini uygulamıyor',
+  );
+  // Ekran türetilmiş listeyi kullanır; kendi başına filtre/hesap yapmaz.
+  assert(
+    ownProfileSource.includes('entries={profileShowcaseEntries}'),
+    'kendi profili türetilmiş vitrin listesini kullanmıyor',
+  );
+  assert(
+    !/currentProgress|targetProgress|isUnlocked/.test(ownProfileSource),
+    'kendi profili başarı ilerlemesi okuyor/hesaplıyor',
   );
   assert(
     !/currentProgress|targetProgress/.test(componentSource),
@@ -753,7 +772,7 @@ check('17. Kendi profilinde İKİNCİ bir Supabase achievement sorgusu YOK', () 
   assert(
     ownProfileSource.includes('hasAchievementsError') &&
       ownProfileSource.includes('isAchievementsLoading') &&
-      ownProfileSource.includes('achievements,'),
+      ownProfileSource.includes('profileShowcaseEntries'),
     'mevcut context değerleri kullanılmıyor',
   );
   // Bileşen de kendi başına veri çekmez.
@@ -827,9 +846,15 @@ check('19. Vitrin EN FAZLA üç öğe render eder ve tasarım sınırlarına uya
     !/<ProfileAchievementShowcase[\s\S]{0,400}onPress/.test(friendProfileSource),
     'arkadaş vitrini salt okunur değil',
   );
+  /**
+   * Vitrine dokunmak ARTIK seçim ekranını açar (`/rank-showcase`); rank
+   * ekranına doğrudan gitmez. Arkadaş vitrini salt okunur kalır.
+   */
   assert(
-    /<ProfileAchievementShowcase[\s\S]{0,400}router\.push\('\/rank'\)/.test(ownProfileSource),
-    'kendi vitrini /rank ekranına gitmiyor',
+    /<ProfileAchievementShowcase[\s\S]{0,700}router\.push\('\/rank-showcase'\)/.test(
+      ownProfileSource,
+    ),
+    'kendi vitrini seçim ekranını açmıyor',
   );
   // Metinler locale’den; bileşende sabit kullanıcı metni yok.
   for (const key of ['showcase', 'title', 'empty']) {

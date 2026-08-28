@@ -200,6 +200,16 @@ function AppNavigation() {
             name="rank-guide"
             options={{ headerBackTitle: t('ranks.navTitle'), title: t('ranks.guide.navTitle') }}
           />
+          {/* Rozet vitrini seçimi de kök Stack'te açılır: native başlık
+              sayesinde geri düğmesi ve iOS geri kaydırma hareketi aynen
+              çalışır, alt sekme çubuğuna YENİ SEKME EKLENMEZ. */}
+          <Stack.Screen
+            name="rank-showcase"
+            options={{
+              headerBackTitle: t('tabs.profile'),
+              title: t('ranks.achievements.showcase.editTitle'),
+            }}
+          />
           {/* Arkadaşlık ekranları kök Stack'te açılır: alt sekme çubuğu
               görünmez, native geri hareketi korunur.
 

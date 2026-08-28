@@ -92,9 +92,11 @@ export default function ProfileScreen() {
    * ve overlay koordinasyonu olduğu gibi kalır.
    */
   const {
-    achievements,
     hasAchievementsError,
+    hasShowcaseSelectionError,
     isAchievementsLoading,
+    isShowcaseSelectionReady,
+    profileShowcaseEntries,
     season: rankSeason,
   } = useRanks();
   /**
@@ -396,15 +398,6 @@ export default function ProfileScreen() {
   ).size;
   const disciplineStreak = calculateDisciplineStreak(disciplineStatuses);
 
-  /**
-   * Vitrine YALNIZCA açılmış rozetler girer. İlerleme, hedef ve kilitli
-   * rozetler burada hiç kullanılmaz; istemci hiçbir başarı koşulu hesaplamaz.
-   * Sıralama ve üçlü sınırı bileşen uygular.
-   */
-  const ownShowcaseEntries = achievements
-    .filter((achievement) => achievement.isUnlocked)
-    .map((achievement) => ({ key: achievement.key, unlockedAt: achievement.unlockedAt }));
-
   return (
     /*
       Banner ekranın EN ÜSTÜNDEN başlasın diye üst safe-area kenarı bilinçli
@@ -517,10 +510,13 @@ export default function ProfileScreen() {
                 vitrin sessizce gizlenir ve profil çalışmaya devam eder. */}
             <ProfileAchievementShowcase
               accentColor={profileAccent.color}
-              entries={ownShowcaseEntries}
-              hasError={hasAchievementsError}
-              isLoading={isAchievementsLoading}
-              onPress={() => router.push('/rank')}
+              entries={profileShowcaseEntries}
+              hasError={hasAchievementsError || hasShowcaseSelectionError}
+              /* Seçim hazır olmadan otomatik vitrinmiş gibi YANLIŞ rozet
+                 gösterilmez: hazır olana kadar yükleniyor durumunda kalır. */
+              isLoading={isAchievementsLoading || !isShowcaseSelectionReady}
+              onPress={() => router.push('/rank-showcase')}
+              preserveOrder
             />
 
           </MotionSection>

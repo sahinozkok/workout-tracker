@@ -214,3 +214,58 @@ export type SeasonAchievementShowcaseEntry = {
   /** Sunucudan gelen açılma anı; okunamıyorsa `undefined`. */
   unlockedAt?: string;
 };
+
+/**
+ * Kullanıcının güncel sezon vitrin seçimi.
+ *
+ * Boş liste = OTOMATİK mod (son kazanılan en fazla üç rozet). Dolu liste,
+ * kullanıcının seçtiği SIRAYI taşır ve profildeki gösterim sırasıdır.
+ * Seçim tamamen kozmetiktir: RP, XP, level veya gül üretmez.
+ */
+export type SeasonShowcaseSelection = SeasonAchievementKey[];
+
+/**
+ * Sunucudan gelen BAŞARILI seçim cevabı.
+ *
+ * `seasonIndex` bilinçli olarak taşınır: "otomatik mod" ile "henüz
+ * yüklenmedi" ancak böyle ayırt edilebilir ve sezon değişiminde geç gelen bir
+ * cevabın YENİ sezona yazılması engellenebilir. `undefined` = cevap
+ * kullanılamaz (oturum yok veya bozuk yanıt).
+ */
+export type SeasonShowcaseSelectionResult = {
+  seasonIndex: number;
+  /** Kullanıcı özel seçim yaptı mı? `false` → otomatik mod. */
+  isCustom: boolean;
+  /** Özel seçimde slot sırası; otomatik modda boş. */
+  keys: SeasonShowcaseSelection;
+};
+
+/**
+ * Vitrin seçimi KAYDETME sonucu.
+ *
+ * `applied` DIŞINDAKİ her durum BAŞARISIZLIKTIR: seçim güncel sezona
+ * uygulanmamıştır. Çağıran bu durumda ekranı KAPATMAZ, taslağı korur ve
+ * mevcut kaydetme hatası davranışını gösterir.
+ *
+ * Ayrı bir sonuç tipi bilinçli tercihtir: sunucu çağrısı BAŞARILI olsa bile
+ * cevap eski sezona veya artık sahip olunmayan bir hesaba ait olabilir ve o
+ * cevap state'e yazılmaz. Bu ayrım `void` bir dönüşle taşınamazdı.
+ */
+export type SeasonShowcaseSelectionSaveResult =
+  | {
+      /** Cevap güncel kullanıcıya ve güncel sezona ait; state'e YAZILDI. */
+      status: 'applied';
+      /** Seçimin gerçekten uygulandığı sezon. */
+      seasonIndex: number;
+      /** Uygulanan sıra; boş liste otomatik moddur. */
+      keys: SeasonShowcaseSelection;
+    }
+  | {
+      /**
+       * `season-changed` → cevap ESKİ sezona ait: yazılmadı, yeni sezonun
+       * seçimi yeniden yükleniyor.
+       * `account-changed` → cevap artık sahip olunmayan hesaba ait.
+       * `unavailable` → oturum yok veya sunucu cevabı kullanılamaz.
+       */
+      status: 'season-changed' | 'account-changed' | 'unavailable';
+    };

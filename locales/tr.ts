@@ -782,6 +782,18 @@ export const tr = {
       showcase: {
         title: 'SEZON ROZETLERİ',
         empty: 'Bu sezon henüz rozet kazanmadın.',
+        /** Seçim ekranı. */
+        editTitle: 'Rozet vitrini',
+        editLead:
+          'Profilinde gösterilecek en fazla {count} sezon rozeti seç. Dokunma sırası gösterim sırası olur.',
+        save: 'Kaydet',
+        useAutomatic: 'Son kazanılanları otomatik göster',
+        saveFailed: 'Seçim kaydedilemedi. Seçimin duruyor, tekrar deneyebilirsin.',
+        loadFailed: 'Rozetler şu an yüklenemedi.',
+        retry: 'Tekrar dene',
+        toggleHint: 'Rozeti vitrine ekler veya çıkarır.',
+        selectedA11y: '{name}: seçili, {position}. sırada.',
+        unselectedA11y: '{name}: seçili değil.',
       },
       /** Yeni rozet açıldığında gösterilen kısa kutlama. */
       celebration: {

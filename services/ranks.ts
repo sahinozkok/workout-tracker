@@ -6,6 +6,7 @@ import {
   parseSeasonAchievements,
   RANK_EVENT_LIMIT,
   resolveRankEventLabel,
+  SeasonAchievementKey,
   SeasonAchievementRow,
 } from '@/constants/rank-experience';
 import { RankId, RANK_IDS } from '@/constants/ranks';
@@ -19,6 +20,7 @@ import {
   RankWeekFocus,
   SeasonAchievement,
   SeasonAchievementShowcaseEntry,
+  SeasonShowcaseSelectionResult,
 } from '@/types/ranks';
 
 /**
@@ -365,4 +367,90 @@ export async function fetchFriendAchievementShowcase(
   }
 
   return entries;
+}
+
+type ShowcaseSelectionRow = {
+  season_index?: unknown;
+  is_custom?: unknown;
+  achievement_key?: unknown;
+  slot_position?: unknown;
+};
+
+/**
+ * Sunucudan gelen seçim yanıtını daraltır.
+ *
+ * SÖZLEŞME — her başarılı çağrı `season_index` taşır; otomatik modda tek satır
+ * (`is_custom = false`, anahtar/slot `null`) gelir. Sıfır satır YALNIZCA
+ * oturum yokken oluşur ve `undefined` döner: çağıran bunu "cevap
+ * kullanılamaz" olarak yorumlar ve state'e YAZMAZ.
+ *
+ * Sıralamanın otoritesi sunucudur (`order by slot_position`); burada yalnızca
+ * savunma amaçlı ikinci bir sıralama yapılır ki bozuk bir yanıt gösterim
+ * sırasını rastgeleleştirmesin. Bilinmeyen anahtar sessizce düşer.
+ */
+function parseShowcaseSelection(
+  rows: ShowcaseSelectionRow[] | null,
+): SeasonShowcaseSelectionResult | undefined {
+  const list = rows ?? [];
+  if (list.length === 0) return undefined;
+
+  const seasonIndex = list.find(
+    (row) => typeof row.season_index === 'number' && Number.isFinite(row.season_index),
+  )?.season_index as number | undefined;
+  // Sezon kimliği olmayan yanıt kullanılamaz: hangi sezona ait olduğu bilinmez.
+  if (seasonIndex === undefined) return undefined;
+
+  const parsed: { key: SeasonAchievementKey; slot: number }[] = [];
+
+  for (const row of list) {
+    const key = parseSeasonAchievementKey(row.achievement_key);
+    if (!key || parsed.some((entry) => entry.key === key)) continue;
+
+    const slot =
+      typeof row.slot_position === 'number' && Number.isFinite(row.slot_position)
+        ? row.slot_position
+        : Number.MAX_SAFE_INTEGER;
+    parsed.push({ key, slot });
+  }
+
+  const keys = parsed.sort((left, right) => left.slot - right.slot).map((entry) => entry.key);
+
+  return {
+    // `is_custom` sunucudan gelir; anahtar listesi boşsa yine de otomatik mod.
+    isCustom: keys.length > 0 && list.some((row) => row.is_custom === true),
+    keys,
+    seasonIndex,
+  };
+}
+
+/**
+ * Aktif kullanıcının güncel sezon vitrin seçimi.
+ *
+ * İstemci kullanıcı kimliği veya sezon GÖNDERMEZ: RPC'nin parametresi yoktur
+ * ve sezonu sunucu belirler. Boş liste "otomatik mod" demektir.
+ */
+export async function fetchMyShowcaseSelection(): Promise<
+  SeasonShowcaseSelectionResult | undefined
+> {
+  const { data, error } = await supabase.rpc('get_my_season_showcase_selection');
+  if (error) throw error;
+  return parseShowcaseSelection(data as ShowcaseSelectionRow[] | null);
+}
+
+/**
+ * Seçimi kaydeder. Boş dizi özel seçimi siler ve otomatik moda döner.
+ *
+ * Bütün doğrulamalar (0–3 eleman, benzersizlik, katalog üyeliği, rozetin
+ * gerçekten AÇILMIŞ olması) SUNUCUDA yapılır; bu katman kullanıcı kimliği veya
+ * sezon göndermez. Yanıt kaydedilen son hâldir, bu yüzden ikinci bir okuma
+ * sorgusuna gerek kalmaz. Hata fırlatılırsa çağıran önceki seçimi korur.
+ */
+export async function saveMyShowcaseSelection(
+  keys: readonly SeasonAchievementKey[],
+): Promise<SeasonShowcaseSelectionResult | undefined> {
+  const { data, error } = await supabase.rpc('set_my_season_showcase_selection', {
+    achievement_keys: [...keys],
+  });
+  if (error) throw error;
+  return parseShowcaseSelection(data as ShowcaseSelectionRow[] | null);
 }

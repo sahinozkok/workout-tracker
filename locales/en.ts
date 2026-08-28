@@ -779,6 +779,17 @@ export const en: TranslationSchema = {
       showcase: {
         title: 'SEASON BADGES',
         empty: 'No badges earned this season yet.',
+        editTitle: 'Badge showcase',
+        editLead:
+          'Pick up to {count} season badges to show on your profile. The order you tap them is the order they appear in.',
+        save: 'Save',
+        useAutomatic: 'Show latest earned automatically',
+        saveFailed: 'Could not save your selection. It is still here, so you can try again.',
+        loadFailed: 'Badges could not be loaded right now.',
+        retry: 'Try again',
+        toggleHint: 'Adds the badge to your showcase or removes it.',
+        selectedA11y: '{name}: selected, position {position}.',
+        unselectedA11y: '{name}: not selected.',
       },
       celebration: {
         title: 'ACHIEVEMENT UNLOCKED',

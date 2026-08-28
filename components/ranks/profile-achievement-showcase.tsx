@@ -70,6 +70,15 @@ type ProfileAchievementShowcaseProps = {
   isLoading?: boolean;
   /** Verilirse vitrine dokunmak bu eylemi çalıştırır (kendi profili). */
   onPress?: () => void;
+  /**
+   * `true` → verilen sıra KORUNUR (yalnızca üçe kırpılır).
+   *
+   * Özel seçimde sıra kullanıcının kendi tercihidir; arkadaş profilinde ise
+   * sıranın otoritesi sunucudur (`slot_position`). İkisinde de istemcinin
+   * yeniden sıralaması yanlış olurdu. Otomatik modda `false` kalır ve mevcut
+   * "en yeni önce" davranışı sürer.
+   */
+  preserveOrder?: boolean;
 };
 
 export function ProfileAchievementShowcase({
@@ -78,6 +87,7 @@ export function ProfileAchievementShowcase({
   hasError = false,
   isLoading = false,
   onPress,
+  preserveOrder = false,
 }: ProfileAchievementShowcaseProps) {
   const { colors, isDark } = useAppTheme();
   const { t } = useTranslation();
@@ -86,7 +96,9 @@ export function ProfileAchievementShowcase({
   // Hata: büyük hata kartı veya retry YOK — vitrin sessizce gizlenir.
   if (hasError) return null;
 
-  const visible = selectShowcaseEntries(entries);
+  const visible = preserveOrder
+    ? entries.slice(0, PROFILE_SHOWCASE_LIMIT)
+    : selectShowcaseEntries(entries);
 
   const body = isLoading ? (
     <View style={styles.state}>
