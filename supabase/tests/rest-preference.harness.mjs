@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const screen = readFileSync(join(root, 'app/program/[id]/day/[dayId]/add-exercise.tsx'), 'utf8');
 const programList = readFileSync(join(root, 'components/program-list.tsx'), 'utf8');
+const exerciseList = readFileSync(join(root, 'components/program-exercise-list.tsx'), 'utf8');
 
 let pass = 0;
 let fail = 0;
@@ -35,18 +36,98 @@ function check(name, actual, expected) {
 const contains = (name, haystack, needle) => check(name, haystack.includes(needle), true);
 
 // ---------------------------------------------------------------------------
+// A. Sürüklenen satır ölçeği
+//
+// GEÇMİŞ — bu bölüm eskiden ASİMETRİ bekliyordu: program listesi
+// `activeScale={1}`, egzersiz listesi ise çıplak `<ScaleDecorator>`. O iddia
+// `2a24abe` ile yazıldığında doğruydu. `434b290` aynı taşma çözümünü egzersiz
+// listesine de getirdi ("Program listesindeki çözümün aynısı") ama iddia
+// güncellenmedi; harness o günden beri, DÜZELTİLMİŞ kaynağı hata sayarak
+// düşüyordu.
+//
+// Yeni sözleşme simetriktir ve daha güçlüdür: İKİ listede de her
+// `ScaleDecorator` açılışı `activeScale={1}` taşımalı ve çıplak/varsayılan
+// biçim geri GELMEMELİ. Ölçek büyütmesi sürüklenen satırı yatayda genişletip
+// uzun adlarda kenarlardan taşırdığı için ikisi de bilinçli.
+// ---------------------------------------------------------------------------
+
+/** Bir dosyadaki bütün `<ScaleDecorator ...>` AÇILIŞ etiketleri. */
+const decoratorOpenings = (sourceCode) => sourceCode.match(/<ScaleDecorator\b[^>]*>/g) ?? [];
+
+/**
+ * Dosya ölçeksiz decorator sözleşmesine uyuyor mu? Saf fonksiyondur.
+ *
+ * En az bir açılış BULUNMALI (yoksa iddia sessizce vacuous olurdu) ve
+ * açılışların HEPSİ `activeScale={1}` taşımalıdır.
+ */
+const usesUnscaledDecorator = (sourceCode) => {
+  const openings = decoratorOpenings(sourceCode);
+  if (openings.length === 0) return false;
+  return openings.every((tag) => tag === '<ScaleDecorator activeScale={1}>');
+};
+
+/** Taşmayı gizleyen kaçamak çözümler (negatif margin / sabit ekran genişliği). */
+const hidesOverflow = (sourceCode) =>
+  /margin(Left|Right|Horizontal)?:\s*-|width:\s*Dimensions/.test(sourceCode);
+
 console.log('=== A. Sürüklenen satır ölçeği ===');
-contains('program listesi ölçek üretmiyor', programList, '<ScaleDecorator activeScale={1}>');
+check('program listesi ölçek üretmiyor', usesUnscaledDecorator(programList), true);
+check('egzersiz listesi ölçek üretmiyor', usesUnscaledDecorator(exerciseList), true);
+// Açılış sayısı da sabitlenir: yeni bir decorator sessizce eklenirse fark edilir.
+check('program listesinde tek decorator açılışı', decoratorOpenings(programList).length, 1);
+check('egzersiz listesinde tek decorator açılışı', decoratorOpenings(exerciseList).length, 1);
 check(
-  'ölçeksiz decorator yalnızca program listesinde',
-  readFileSync(join(root, 'components/program-exercise-list.tsx'), 'utf8').includes('<ScaleDecorator>'),
-  true,
-);
-check(
-  'satırı kesen keyfî negatif margin / sabit genişlik yok',
-  /margin(Left|Right|Horizontal)?:\s*-|width:\s*Dimensions/.test(programList),
+  'çıplak/varsayılan decorator program listesine geri gelmedi',
+  programList.includes('<ScaleDecorator>'),
   false,
 );
+check(
+  'çıplak/varsayılan decorator egzersiz listesine geri gelmedi',
+  exerciseList.includes('<ScaleDecorator>'),
+  false,
+);
+check(
+  'program listesinde satırı kesen negatif margin / sabit genişlik yok',
+  hidesOverflow(programList),
+  false,
+);
+check(
+  'egzersiz listesinde satırı kesen negatif margin / sabit genişlik yok',
+  hidesOverflow(exerciseList),
+  false,
+);
+
+// --- MUTATION: iddialar gerçekten AYIRT EDİCİ mi? ---
+//
+// Aynı saf fonksiyonlar, düzeltme ÖNCESİ biçimleri taşıyan sahte kaynaklara
+// uygulanır. Geçerlerse yukarıdaki kontroller vacuous olurdu.
+{
+  const legacyBare = '  return (\n    <ScaleDecorator>\n      <Row />\n    </ScaleDecorator>\n  );';
+  const legacyDefaultProp =
+    '  return (\n    <ScaleDecorator activeScale={1.1}>\n      <Row />\n    </ScaleDecorator>\n  );';
+  const mixed =
+    '<ScaleDecorator activeScale={1}>\n<Row />\n</ScaleDecorator>\n<ScaleDecorator>\n<Row />\n</ScaleDecorator>';
+
+  check('A-MUT) çıplak decorator sözleşmeyi DÜŞÜRÜR', usesUnscaledDecorator(legacyBare), false);
+  check(
+    'A-MUT) varsayılan ölçekli decorator sözleşmeyi DÜŞÜRÜR',
+    usesUnscaledDecorator(legacyDefaultProp),
+    false,
+  );
+  check('A-MUT) tek bir çıplak açılış bile yeterli (karışık dosya)', usesUnscaledDecorator(mixed), false);
+  check('A-MUT) decorator hiç yoksa sözleşme geçmez (vacuous koruması)', usesUnscaledDecorator(''), false);
+  check('A-MUT) çıplak biçim gerçekten yakalanıyor', legacyBare.includes('<ScaleDecorator>'), true);
+  check(
+    'A-MUT) negatif margin gerçekten yakalanıyor',
+    hidesOverflow('row: { marginHorizontal: -12 },'),
+    true,
+  );
+  check(
+    'A-MUT) sabit ekran genişliği gerçekten yakalanıyor',
+    hidesOverflow('row: { width: Dimensions.get(\'window\').width },'),
+    true,
+  );
+}
 
 console.log('\n=== A2. Dinlenme tercihi kuralları ===');
 contains('varsayılan 180 sn', screen, "const DEFAULT_REST_SECONDS = '180';");
