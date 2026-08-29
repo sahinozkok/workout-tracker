@@ -462,7 +462,23 @@ export default function CoachScreen() {
         )}
 
         {!isLoading && messages.length > 0 && (
-          <View style={styles.quickRow}>
+          /**
+           * Satır GERÇEKTEN yataydır. Eskiden düz bir `View`'du ve
+           * `flexDirection` verilmediği için RN varsayılanı olan `column` ile
+           * çalışıyordu: chip'ler alt alta diziliyor, tam genişlikte bir blok
+           * kaplıyordu. Yatay `ScrollView` hem doğru yönü verir hem de uzun
+           * sorularda kırpma yerine kaydırma sağlar.
+           *
+           * Kapsayıcının KENDİ ZEMİNİ YOKTUR: satırın chip dışında kalan
+           * bölümü ekranın normal arka planında kalır. Zemin, sınır ve dokunma
+           * alanı yalnızca chip'e aittir.
+           */
+          <ScrollView
+            contentContainerStyle={styles.quickRowContent}
+            horizontal
+            keyboardShouldPersistTaps="handled"
+            showsHorizontalScrollIndicator={false}
+            style={styles.quickRow}>
             {tList('coach.quickQuestions').map((question) => (
               <Pressable
                 accessibilityRole="button"
@@ -477,7 +493,7 @@ export default function CoachScreen() {
                 <Text style={styles.quickChipText}>{question}</Text>
               </Pressable>
             ))}
-          </View>
+          </ScrollView>
         )}
 
         <View style={styles.composer}>
@@ -1003,19 +1019,46 @@ function createStyles(colors: ThemeColors, chatAccent: string) {
       textAlign: 'center',
     },
     welcomeList: { alignItems: 'flex-start', alignSelf: 'stretch', gap: 8, marginTop: 8 },
-    quickRow: { gap: 8, paddingBottom: 4, paddingHorizontal: Layout.screenPadding, paddingTop: 4 },
+    /**
+     * `flexGrow: 0` — yatay ScrollView'ın dikeyde kalan alanı yutmasını
+     * engeller; satır yalnızca chip yüksekliği kadar yer kaplar. Kapsayıcıya
+     * bilinçli olarak `backgroundColor` VERİLMEZ.
+     */
+    quickRow: { flexGrow: 0 },
+    quickRowContent: {
+      alignItems: 'center',
+      gap: 8,
+      paddingBottom: 4,
+      paddingHorizontal: Layout.screenPadding,
+      paddingTop: 4,
+    },
     quickChip: {
-      alignSelf: 'flex-start',
+      /**
+       * Chip artık kendi zeminine sahip: yalnızca sınırla çizildiğinde ekran
+       * arka planından ayrışmıyor ve dokunulabilir bir kontrol gibi
+       * okunmuyordu. `colors.card` iki temada da ekran arka planından
+       * ayrışan, tasarım sisteminin mevcut yüzey rengidir.
+       */
+      backgroundColor: colors.card,
       borderColor: chatAccent,
       borderRadius: Layout.radiusPill,
       borderWidth: StyleSheet.hairlineWidth,
       justifyContent: 'center',
-      minHeight: 34,
+      // Tasarım sisteminin dokunma hedefi alt sınırı; eski 34 pt altındaydı.
+      minHeight: Layout.minTouchSize,
       paddingHorizontal: 14,
       paddingVertical: 7,
     },
     quickChipDisabled: { opacity: 0.5 },
-    quickChipText: { color: chatAccent, fontSize: 13, fontWeight: '500' },
+    /**
+     * Metin rengi vurgu renginden nötr metin rengine alındı: ölçülen kontrast
+     * açık temada #007AFF/#FFFFFF = 4.02 ile WCAG AA normal metin eşiğinin
+     * (4.50) ALTINDAYDI. `colors.text` chip zemininde 18.82 (açık) ve 15.02
+     * (koyu) verir. Vurgu rengi chip'in SINIRINDA korunur, yani kontrol
+     * kimliği değişmez. (Aynı ekrandaki `sheetChipText` de nötr metin +
+     * vurgulu sınır kalıbını kullanır.)
+     */
+    quickChipText: { color: colors.text, fontSize: 13, fontWeight: '500' },
     errorBar: {
       alignItems: 'center',
       flexDirection: 'row',

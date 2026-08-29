@@ -267,7 +267,22 @@ function createStyles(colors: ThemeColors) {
     startButtonText: { color: colors.background, fontSize: 15, fontWeight: '600' },
     startButtonTextDone: { color: colors.textSecondary },
     secondaryLink: { alignSelf: 'flex-start', marginTop: 14, minHeight: 32, justifyContent: 'center' },
-    secondaryLinkText: { color: colors.primary, fontSize: 15, fontWeight: '500' },
+    /**
+     * Dinlenme günü "Günü aç" bağlantısı. Renk `colors.primary`'den (iOS sistem
+     * mavisi #007AFF / #0A84FF) ana sayfanın kendi hiyerarşisindeki nötr metin
+     * rengine alındı: kart içindeki diğer bütün içerik `colors.text` ve
+     * `colors.textSecondary` kullanırken tek mavi öğe buydu.
+     *
+     * Kontrast da düzelir: kart zemininde (#F2F2F7 / #131315) ölçülen oran
+     * mavi için 3.60 (açık) ile WCAG AA normal metin eşiğinin ALTINDAYDI;
+     * `colors.text` 18.82 (açık) ve 15.02 (koyu) verir.
+     *
+     * `fontWeight: '500'` korunur — bağlantı, `cardMeta` gövde metninden
+     * ağırlıkla ayrışmaya devam eder. Genel `primary` rengine ve başka
+     * ekranlardaki bağlantı stillerine (ör. `app/(auth)/confirm.tsx` kendi
+     * ayrı StyleSheet'ini kullanır) DOKUNULMAZ.
+     */
+    secondaryLinkText: { color: colors.text, fontSize: 15, fontWeight: '500' },
     primaryButton: {
       alignItems: 'center',
       backgroundColor: colors.primary,
