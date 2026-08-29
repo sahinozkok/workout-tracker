@@ -42,6 +42,7 @@ import { getFriendProfile } from '@/services/friends';
 import {
   FRIEND_MESSAGE_MAX_LENGTH,
   getFriendMessages,
+  markFriendMessagesRead,
   isFriendMessageRejectedContent,
   isFriendMessageRateLimited,
   isNotFriendsError,
@@ -58,6 +59,7 @@ import {
 import { FriendProfile } from '@/types/friends';
 import { FriendMessage, FriendMessageCursor } from '@/types/messages';
 import { SafetyReportCategory } from '@/types/safety';
+import { setActiveConversation } from '@/utils/friend-message-alerts';
 import {
   belongsToConversation,
   mergeFriendMessages,
@@ -159,6 +161,25 @@ export default function ChatScreen() {
     });
   }, []);
 
+  /**
+   * Konuşmayı OKUNDU işaretler.
+   *
+   * Sahiplik anahtarı yakalanır: eski konuşmanın veya eski hesabın geç
+   * tamamlanan çağrısı yeni konuşmanın okuma durumuna YAZAMAZ. Hata sessizce
+   * yutulur — okundu işaretlemesi mesaj gönderme/alma akışını BOZMAZ.
+   */
+  const markRead = useCallback(async () => {
+    if (!counterpartId) return;
+    const owner = conversationRef.current;
+    try {
+      await markFriendMessagesRead(counterpartId);
+    } catch {
+      // Sunucu reddederse nokta bir sonraki güvenilir yenilemede düzelir.
+      return;
+    }
+    if (!isMountedRef.current || owner !== conversationRef.current) return;
+  }, [counterpartId]);
+
   const applyIncoming = useCallback(
     (incoming: FriendMessage[]) => {
       setMessages((current) => mergeFriendMessages(current, incoming));
@@ -206,6 +227,8 @@ export default function ChatScreen() {
       // İlk yükleme en alttan başlar.
       shouldScrollToEndRef.current = true;
       scheduleExpirySweep();
+      // Görünür mesajlar yüklendi → konuşma okundu sayılır.
+      void markRead();
     } catch (error) {
       if (isStale()) return;
       /**
@@ -223,11 +246,18 @@ export default function ChatScreen() {
       }
       setScreenState('error');
     }
-  }, [counterpartId, scheduleExpirySweep, viewerId]);
+  }, [counterpartId, markRead, scheduleExpirySweep, viewerId]);
 
   useFocusEffect(
     useCallback(() => {
       isMountedRef.current = true;
+      /**
+       * AKTİF KONUŞMA KAYDI — global banner bunu SENKRON okur.
+       *
+       * Bu sohbet açıkken aynı kişiden gelen mesaj üst banner GÖSTERMEZ;
+       * mesaj görünür sayılır ve okundu ilerletilir.
+       */
+      setActiveConversation(counterpartId);
 
       /**
        * KONUŞMA DEĞİŞTİ Mİ? Anahtar SENKRON olarak burada güncellenir; bu
@@ -281,6 +311,13 @@ export default function ChatScreen() {
                 // Canlı mesaj geldi: en alta kaydırılır.
                 shouldScrollToEndRef.current = true;
                 applyIncoming([message]);
+                /**
+                 * Ekran ODAKTA ve mesaj görünür: okundu ilerletilir. Odakta
+                 * olmayan veya arka plandaki ekran bunu çalıştırmaz çünkü bu
+                 * callback yalnızca `useFocusEffect` içinde yaşayan abonelikten
+                 * gelir ve blur'da kanal kapatılır.
+                 */
+                if (message.senderId !== viewerId) void markRead();
               },
               viewerId,
             })
@@ -288,6 +325,8 @@ export default function ChatScreen() {
 
       return () => {
         isMountedRef.current = false;
+        // Ekran odağı bıraktı: artık aktif konuşma yok, banner tekrar çalışır.
+        setActiveConversation(undefined);
         appState.remove();
         subscription?.unsubscribe();
         if (expiryTimerRef.current !== undefined) {
@@ -295,7 +334,7 @@ export default function ChatScreen() {
           expiryTimerRef.current = undefined;
         }
       };
-    }, [applyIncoming, conversationKey, counterpartId, load, scheduleExpirySweep, viewerId]),
+    }, [applyIncoming, conversationKey, counterpartId, load, markRead, scheduleExpirySweep, viewerId]),
   );
 
   const loadOlder = useCallback(async () => {

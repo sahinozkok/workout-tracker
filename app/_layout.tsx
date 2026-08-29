@@ -6,6 +6,7 @@ import 'react-native-reanimated';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
+import { FriendMessageAlerts } from '@/components/friends/message-alert-banner';
 import { FloatingMascot } from '@/components/mascot/floating-mascot';
 import { AchievementUnlockCelebrationLayer } from '@/components/ranks/achievement-unlock-celebration';
 import { RankUpCelebrationLayer } from '@/components/ranks/rank-up-celebration';
@@ -293,6 +294,13 @@ function AppNavigation() {
         `RankProvider`/`MascotProvider` de mount olmadığı için context okuması
         güvenlidir.
       */}
+      {/*
+        UYGULAMA İÇİ MESAJ BANNER'I — rank/Rosea katmanlarından ÖNCE çizilir.
+        Böylece kutlamalar ve maskot banner'ın ÜSTÜNDE kalır; mevcut overlay
+        sahiplik sistemine hiç dokunulmaz. Yalnızca gerçek oturumda ve kurtarma
+        dışında mount edilir, bu yüzden hesap değişiminde kendiliğinden sıfırlanır.
+      */}
+      {Boolean(session) && !isPasswordRecovery && <FriendMessageAlerts />}
       {Boolean(session) && !isPasswordRecovery && <RankUpCelebrationLayer />}
       {/*
         Sezon sonu özeti kutlamayla AYNI katman ailesindedir ve ondan SONRA

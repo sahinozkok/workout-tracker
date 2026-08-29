@@ -80,6 +80,14 @@ export type FriendConversationSummary = {
   lastMessageContent?: string;
   lastMessageAt?: string;
   lastMessageSenderId?: string;
+  /**
+   * Bu arkadaştan OKUNMAMIŞ mesaj var mı?
+   *
+   * Yalnızca boolean: sayı taşınmaz. Kullanıcının kendi gönderdiği mesajlar,
+   * süresi dolmuş mesajlar ve artık arkadaş olunmayan kişiler `true` üretmez.
+   * Karşı tarafa "görüldü" bilgisi HİÇBİR yoldan sızmaz.
+   */
+  hasUnread: boolean;
 };
 
 /**

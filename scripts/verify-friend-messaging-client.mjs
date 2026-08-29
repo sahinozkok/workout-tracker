@@ -616,10 +616,29 @@ check('17. Kanal adları çakışmaz ve abonelik GLOBAL değildir', () => {
 
   // Global abonelik kurulmaz: yalnızca mesajlaşma ekranları abone olur.
   assert(!layoutSource.includes('subscribeToFriendMessages'), 'kök layout global kanal kuruyor');
-  assert(
-    !friendsScreen.includes('subscribeToFriendMessages'),
-    'arkadaşlar ekranı kalıcı kanal kuruyor',
-  );
+  /**
+   * Arkadaşlar ekranı okunmamış noktası için abone olabilir ama abonelik
+   * KALICI OLAMAZ: yalnızca `useFocusEffect` içinde yaşamalı ve cleanup'ta
+   * kesin olarak kapatılmalıdır. Değişmez aynı — global kanal yok.
+   */
+  if (friendsScreen.includes('subscribeToFriendMessages')) {
+    const focusBlock = friendsScreen.slice(
+      friendsScreen.indexOf('useFocusEffect('),
+      friendsScreen.indexOf('// Arama:'),
+    );
+    assert(
+      focusBlock.includes('subscribeToFriendMessages('),
+      'arkadaşlar ekranı aboneliği odak yaşam döngüsü dışında',
+    );
+    assert(
+      focusBlock.includes('subscription?.unsubscribe();'),
+      'arkadaşlar ekranı aboneliği cleanup’ta kapatılmıyor',
+    );
+    assert(
+      friendsScreen.includes("channelKey: 'friends-unread'"),
+      'arkadaşlar ekranı ayrı kanal anahtarı kullanmıyor',
+    );
+  }
 });
 
 // ---------------------------------------------------------------------------

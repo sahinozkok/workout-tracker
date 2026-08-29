@@ -84,6 +84,7 @@ type ConversationRow = {
   last_message_content?: unknown;
   last_message_at?: unknown;
   last_message_sender_id?: unknown;
+  has_unread?: unknown;
 };
 
 function parseUuid(value: unknown): string | undefined {
@@ -251,6 +252,8 @@ export async function listFriendConversations(): Promise<FriendConversationSumma
       return {
         avatarUrl: toOptional(row.avatar_url),
         displayName,
+        // Yalnızca sunucunun açıkça `true` dediği satır okunmamış sayılır.
+        hasUnread: row.has_unread === true,
         lastMessageAt: hasLastMessage ? lastMessageAt : undefined,
         lastMessageContent: hasLastMessage ? lastMessageContent : undefined,
         lastMessageSenderId: hasLastMessage ? lastMessageSenderId : undefined,
@@ -284,17 +287,37 @@ export type FriendMessageSubscription = {
   unsubscribe: () => void;
 };
 
+/**
+ * Realtime kanalının bağlanma durumu.
+ *
+ * `SUBSCRIBED` DIŞINDAKİ her durum BAŞARISIZLIKTIR ve sessizce başarı
+ * sayılamaz: RLS reddi, publication eksikliği, süresi geçmiş token veya ağ
+ * kopması bu yolla yüzeye çıkar.
+ */
+export type FriendMessageChannelStatus =
+  | 'SUBSCRIBED'
+  | 'CHANNEL_ERROR'
+  | 'TIMED_OUT'
+  | 'CLOSED';
+
 /** Kanal adlarının çakışmasını önleyen süreç içi sayaç. */
 let channelSequence = 0;
 
 export function subscribeToFriendMessages({
   channelKey,
   onMessage,
+  onStatus,
   viewerId,
 }: {
   /** Ekranı ayırt eden kısa etiket (ör. `conversations`, `chat`). */
   channelKey: string;
   onMessage: (message: FriendMessage) => void;
+  /**
+   * Kanal durumu — `SUBSCRIBED` gelmezse abonelik ÇALIŞMIYOR demektir.
+   * Çağıran bunu görmezden gelmemeli; sessiz başarı varsayımı bu yüzden
+   * kaldırılmıştır.
+   */
+  onStatus?: (status: FriendMessageChannelStatus) => void;
   /** Oturumdaki kullanıcı; ilgisiz satırlar yukarı verilmez. */
   viewerId: string;
 }): FriendMessageSubscription {
@@ -314,7 +337,10 @@ export function subscribeToFriendMessages({
         onMessage(message);
       },
     )
-    .subscribe();
+    .subscribe((status) => {
+      // Durum YUKARI VERİLİR: bağlanamayan kanal sessizce başarı sayılmaz.
+      onStatus?.(status as FriendMessageChannelStatus);
+    });
 
   let isRemoved = false;
   return {
@@ -324,6 +350,38 @@ export function subscribeToFriendMessages({
       void supabase.removeChannel(channel);
     },
   };
+}
+
+/**
+ * Konuşmayı OKUNDU işaretler.
+ *
+ * Sunucu `auth.uid()` dışında hiçbir kullanıcı adına yazmaz ve zaman damgasını
+ * kendisi üretir; istemci `user_id` veya zaman GÖNDEREMEZ. İdempotenttir:
+ * tekrar çağrı yeni satır oluşturmaz, yalnızca okuma anını ileri alır.
+ *
+ * Hata çağırana fırlatılır ama mesaj gönderme/alma akışını BOZMAMALIDIR;
+ * çağıran bunu sessizce yutabilir.
+ */
+export async function markFriendMessagesRead(friendId: string): Promise<void> {
+  if (!parseUuid(friendId)) throw new Error('invalid_target');
+
+  const { error } = await supabase.rpc('mark_friend_messages_read', { friend_id: friendId });
+  if (error) throw error;
+}
+
+/**
+ * OKUNMAMIŞ mesajı olan arkadaşların kimlikleri.
+ *
+ * Sayı YOKTUR: ürün yalnızca boolean bir nokta gösterir. Bozuk kimlikler
+ * düşürülür.
+ */
+export async function listFriendUnread(): Promise<string[]> {
+  const { data, error } = await supabase.rpc('list_friend_unread');
+  if (error) throw error;
+
+  return ((data ?? []) as { friend_id?: unknown }[])
+    .map((row) => parseUuid(row.friend_id))
+    .filter((id): id is string => id !== undefined);
 }
 
 /** Sunucunun spam sınırı reddi mi? Ham hata metni ekrana basılmaz. */

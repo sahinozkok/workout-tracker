@@ -32,6 +32,7 @@ import { FriendsTabs, FriendsTabKey } from '@/components/friends/friends-tabs';
 import { FriendsMetrics, useFriendsPalette } from '@/components/friends/friends-theme';
 import { MotionListItem, useListEntrance } from '@/components/motion-list-item';
 import { MotionSwap } from '@/components/motion-section';
+import { useAuth } from '@/context/auth-context';
 import { useTranslation } from '@/context/language-context';
 import {
   cancelFriendRequest,
@@ -44,7 +45,13 @@ import {
   searchProfiles,
   sendFriendRequest,
 } from '@/services/friends';
+import { listFriendUnread, subscribeToFriendMessages } from '@/services/messages';
 import { FriendRequest, FriendSearchResult, FriendSummary } from '@/types/friends';
+import {
+  getActiveConversation,
+  withoutUnread,
+  withUnreadFromMessage,
+} from '@/utils/friend-message-alerts';
 
 const SEARCH_DEBOUNCE_MS = 350;
 
@@ -72,6 +79,13 @@ export function FriendsScreen({ autoFocusSearch = false }: FriendsScreenProps) {
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearchError, setHasSearchError] = useState(false);
   const [retryVersion, setRetryVersion] = useState(0);
+  /**
+   * OKUNMAMIŞ mesajı olan arkadaşların kimlikleri — yalnızca boolean nokta.
+   * Sayı tutulmaz ve karşı tarafa hiçbir bilgi gitmez.
+   */
+  const [unreadIds, setUnreadIds] = useState<ReadonlySet<string>>(new Set());
+  /** Okunmamış sorgusu başarısız oldu mu? Sessiz "boş liste" yerine ayırt edilir. */
+  const [hasUnreadError, setHasUnreadError] = useState(false);
 
   /** Senkron kilit: aynı event döngüsündeki ikinci çağrıyı kesin engeller. */
   const pendingActionRef = useRef<string>(undefined);
@@ -80,6 +94,8 @@ export function FriendsScreen({ autoFocusSearch = false }: FriendsScreenProps) {
   /** Aynı koruma arama için; eski sorgunun cevabı yenisini ezemez. */
   const requestIdRef = useRef(0);
   const isMountedRef = useRef(true);
+  /** Okunmamış cevabının ait olduğu hesap; eski cevap yeni hesaba yazamaz. */
+  const viewerRef = useRef<string>(undefined);
   const searchInputRef = useRef<TextInput>(null);
 
   const trimmed = query.trim();
@@ -90,10 +106,36 @@ export function FriendsScreen({ autoFocusSearch = false }: FriendsScreenProps) {
     loadIdRef.current = loadId;
     setHasError(false);
     try {
-      const [nextFriends, nextRequests] = await Promise.all([listFriends(), listFriendRequests()]);
+      const owner = viewerRef.current;
+      /**
+       * Okunmamış listesi AYRI ve dar bir çağrıdır: `listFriends()` davranışı
+       * DEĞİŞMEZ ve bu çağrının hatası arkadaş listesini düşürmez.
+       *
+       * Ancak hata SESSİZCE BOŞ LİSTEYE ÇEVRİLMEZ: `catch(() => [])` gerçek
+       * RPC/şema-önbelleği/izin hatasını "okunmamış yok" gibi gösterip noktanın
+       * neden çıkmadığını görünmez kılıyordu. Sonuç artık ayırt edilir bir
+       * `undefined` ile taşınır; hata durumunda ÖNCEKİ nokta durumu korunur ve
+       * geliştirmede görünür kılınır.
+       */
+      const [nextFriends, nextRequests, nextUnread] = await Promise.all([
+        listFriends(),
+        listFriendRequests(),
+        listFriendUnread().then(
+          (ids) => ({ ids, ok: true as const }),
+          (error) => ({ error, ok: false as const }),
+        ),
+      ]);
       if (!isMountedRef.current || loadIdRef.current !== loadId) return;
+      if (owner !== viewerRef.current) return;
       setFriends(nextFriends);
       setRequests(nextRequests);
+      if (nextUnread.ok) {
+        setUnreadIds(new Set(nextUnread.ids));
+        setHasUnreadError(false);
+      } else {
+        // Nokta durumu KORUNUR; bir sonraki başarılı yükleme düzeltir.
+        setHasUnreadError(true);
+      }
     } catch {
       if (isMountedRef.current && loadIdRef.current === loadId) setHasError(true);
     } finally {
@@ -101,14 +143,40 @@ export function FriendsScreen({ autoFocusSearch = false }: FriendsScreenProps) {
     }
   }, []);
 
+  const { user } = useAuth();
+  const viewerId = user?.id;
+
   useFocusEffect(
     useCallback(() => {
       isMountedRef.current = true;
+      viewerRef.current = viewerId;
       void load();
+
+      /**
+       * Arkadaş listesi AÇIKKEN gelen mesaj noktayı ANINDA açar.
+       *
+       * Abonelik yalnızca bu ekran odaklıyken yaşar ve blur/unmount'ta kesin
+       * olarak kapatılır. Kullanıcının kendi gönderdiği mesaj ve açık sohbetin
+       * mesajı nokta üretmez.
+       */
+      const subscription = viewerId
+        ? subscribeToFriendMessages({
+            channelKey: 'friends-unread',
+            onMessage: (message) => {
+              if (!isMountedRef.current || viewerRef.current !== viewerId) return;
+              setUnreadIds((current) =>
+                withUnreadFromMessage(current, message, viewerId, getActiveConversation()),
+              );
+            },
+            viewerId,
+          })
+        : undefined;
+
       return () => {
         isMountedRef.current = false;
+        subscription?.unsubscribe();
       };
-    }, [load]),
+    }, [load, viewerId]),
   );
 
   // Arama: en az iki karakter + debounce + yarış koruması.
@@ -363,6 +431,11 @@ export function FriendsScreen({ autoFocusSearch = false }: FriendsScreenProps) {
           <Text style={styles.sectionLabel}>
             {t('friends.sectionFriends', { count: friends.length })}
           </Text>
+          {/* Geliştirme teşhisi: okunmamış sorgusu düştüyse sessiz kalınmaz.
+              Token/e-posta taşımaz, yayın derlemesinde render edilmez. */}
+          {__DEV__ && hasUnreadError && (
+            <Text style={styles.unreadErrorNote}>unread rpc failed</Text>
+          )}
           {friends.map((friend, index) => (
             <MotionListItem delay={friendsEntrance.getDelay(index)} key={friend.friendshipId}>
               <FriendPersonRow
@@ -372,23 +445,35 @@ export function FriendsScreen({ autoFocusSearch = false }: FriendsScreenProps) {
                         görünür: arama sonuçları, istekler ve öneriler bu
                         butonu almaz. */}
                     <Pressable
-                      accessibilityLabel={t('messages.openChat', { name: friend.displayName })}
+                      accessibilityLabel={
+                        unreadIds.has(friend.id)
+                          ? `${t('messages.openChat', { name: friend.displayName })} · ${t('messages.unreadDotA11y')}`
+                          : t('messages.openChat', { name: friend.displayName })
+                      }
                       accessibilityRole="button"
                       /* 36 pt genişlik + 8 pt sol hitSlop = 44 pt; yükseklik
                          zaten 44 pt. Üç noktanın hitSlop'una taşmaz. */
                       hitSlop={{ bottom: 0, left: 8, right: 0, top: 0 }}
-                      onPress={() =>
+                      onPress={() => {
+                        // İYİMSER: nokta hemen kalkar. Okundu RPC'si başarısız
+                        // olursa sonraki güvenilir yenileme doğru durumu geri
+                        // getirir.
+                        setUnreadIds((current) => withoutUnread(current, friend.id));
                         router.push({
                           pathname: '/messages/[userId]',
                           params: { userId: friend.id },
-                        })
-                      }
+                        });
+                      }}
                       style={({ pressed }) => [styles.messageButton, pressed && styles.pressed]}>
                       <Ionicons
                         color={palette.textSecondary}
                         name="chatbubble-outline"
                         size={18}
                       />
+                      {/* Okunmamış noktası — SAYI YOK, yalnızca varlık.
+                          Mutlak konumlanır, ikonun düzenini ve 44 pt dokunma
+                          alanını bozmaz. */}
+                      {unreadIds.has(friend.id) && <View style={styles.unreadDot} />}
                     </Pressable>
                     <Pressable
                       accessibilityLabel={t('friends.remove')}
@@ -691,6 +776,23 @@ function createStyles(palette: ReturnType<typeof useFriendsPalette>) {
       height: 36,
       justifyContent: 'center',
       width: 28,
+    },
+    /** Geliştirme teşhisi; yayın derlemesinde hiç kullanılmaz. */
+    unreadErrorNote: {
+      color: palette.danger,
+      fontSize: 11,
+      paddingBottom: 4,
+      paddingHorizontal: FriendsMetrics.screenPadding,
+    },
+    /** Okunmamış noktası: ikonun sağ üstünde, düzeni etkilemeyen mutlak konum. */
+    unreadDot: {
+      backgroundColor: palette.accent,
+      borderRadius: 4,
+      height: 8,
+      position: 'absolute',
+      right: 4,
+      top: 10,
+      width: 8,
     },
     /** Sohbet balonu: 44 pt yükseklik, sol hitSlop ile 44 pt genişlik. */
     messageButton: {

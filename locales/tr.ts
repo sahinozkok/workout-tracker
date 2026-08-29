@@ -693,6 +693,11 @@ export const tr = {
     notFriendsBody: 'Mesajlaşmak için tekrar arkadaş olmanız gerekir.',
     retry: 'Tekrar dene',
     unknownUser: 'Bilinmeyen kullanıcı',
+    /** Uygulama İÇİ üst bildirim ve okunmamış noktası. */
+    alertPreview: '{name}: {preview}',
+    alertFallback: 'Yeni mesaj',
+    alertOpenA11y: '{name} kişisinden yeni mesaj. Sohbeti açmak için dokun.',
+    unreadDotA11y: 'Okunmamış mesaj var',
     sentA11y: 'Sen, {time}: {content}',
     receivedA11y: '{name}, {time}: {content}',
   },
