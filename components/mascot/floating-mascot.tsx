@@ -2789,9 +2789,12 @@ export function FloatingMascot() {
       const next: ActiveReaction = { runId: reactionRunRef.current, type };
       activeReactionRef.current = next;
       setActiveReaction(next);
-      // `rank-up` de bir kutlamadır: aynı kutlama duruşunu ve hareket dizisini
-      // kullanır, ama kendi balonunu AÇMAZ (metni kutlama katmanı gösterir).
-      const isCelebration = type === 'workout-complete' || type === 'rank-up';
+      // `rank-up` ve `achievement-unlock` de birer kutlamadır: aynı kutlama
+      // duruşunu ve hareket dizisini kullanırlar, ama kendi balonlarını AÇMAZLAR
+      // (metni ilgili kutlama katmanı gösterir). Süre, animasyon ve partikül
+      // davranışı `workout-complete` ile birebir aynıdır.
+      const isCelebration =
+        type === 'workout-complete' || type === 'rank-up' || type === 'achievement-unlock';
       setState(isCelebration ? 'celebrating' : 'happy');
 
       if (type === 'workout-complete') {
@@ -2992,7 +2995,9 @@ export function FloatingMascot() {
         ? LOVE_REACTION_DURATION
         : reduceMotion
           ? REDUCED_REACTION_DURATION
-          : activeReaction.type === 'workout-complete' || activeReaction.type === 'rank-up'
+          : activeReaction.type === 'workout-complete' ||
+              activeReaction.type === 'rank-up' ||
+              activeReaction.type === 'achievement-unlock'
             ? WORKOUT_REACTION_DURATION
             : SET_REACTION_DURATION;
 

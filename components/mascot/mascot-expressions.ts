@@ -295,6 +295,10 @@ const REACTION_EXPRESSION: Record<MascotReactionType, MascotExpression> = {
   'workout-complete': 'celebrating',
   // Rank yükselmesi de bir kutlamadır; mevcut kutlama karesi yeniden kullanılır.
   'rank-up': 'celebrating',
+  // Rozet açılışı AYRI bir olaydır ama bu turda bilinçli olarak aynı kutlama
+  // karesini kullanır: yeni asset veya animasyon tasarlanmadı. Ayrım tepki
+  // TİPİNDE ve önceliktedir, görselde değil.
+  'achievement-unlock': 'celebrating',
 };
 
 /**

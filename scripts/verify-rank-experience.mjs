@@ -1051,9 +1051,29 @@ check('30. Rosea tepkisi: mevcut context API’si, kutlama başına tek olay', (
   );
   const mascotTypes = source('types/mascot.ts');
   assert(mascotTypes.includes("'rank-up'"), 'rank-up olayı type-safe biçimde tanımlanmamış');
+  /**
+   * ÖNCELİK — eskiden `rank-up` ve `workout-complete` ikisi de 2'ydi ve bu
+   * assertion o EŞİTLİĞİ doğru davranış diye sabitliyordu. Antrenman bitişi
+   * puan kazandırdığı için rank yükselmesi tipik olarak antrenman kutlaması
+   * SÜRERKEN gelir; eşit öncelik devralmadığından rank tepkisi sessizce
+   * düşüyordu. Artık kesin sıralama aranıyor.
+   */
+  const priorityOf = (type) => {
+    const match = mascotTypes.match(new RegExp(`'${type}':\\s*(\\d+)`));
+    assert(match, `${type} önceliği tabloda yok`);
+    return Number(match[1]);
+  };
   assert(
-    /'rank-up':\s*2/.test(mascotTypes),
-    'rank-up önceliği workout kutlamasıyla eşit değil (kutlamalar birbirini bölebilir)',
+    priorityOf('rank-up') > priorityOf('workout-complete'),
+    'rank-up antrenman kutlamasını devralamıyor (rank tepkisi yutulur)',
+  );
+  assert(
+    priorityOf('rank-up') > priorityOf('achievement-unlock'),
+    'rank-up rozet kutlamasından yüksek değil',
+  );
+  assert(
+    priorityOf('achievement-unlock') > priorityOf('workout-complete'),
+    'rozet antrenman kutlamasını devralamıyor',
   );
   // Rosea zorla geri getirilmez: olay maskot kapalıyken sağlayıcıda düşürülür.
   assert(
@@ -1763,7 +1783,23 @@ check('56. Faz 3 UYGULANMIŞ migration’ları DEĞİŞTİRMEDİ', () => {
    * sonraki fazların eklediği YENİ migration dosyaları bu harness'ın kapsamı
    * dışındadır, DEĞİŞTİRİLMİŞ bir migration ise hâlâ testi düşürür.
    */
-  const migrations = execFileSync('git', ['status', '--porcelain', 'supabase'], {
+  /**
+   * KAPSAM `supabase/migrations`'tır — eskiden `supabase` dizininin TAMAMINA
+   * bakıyordu ve test harness'ı (`supabase/tests/*.harness.mjs`) düzenlemek
+   * bile "migration değiştirilmiş" hatası veriyordu. İddia kendi adına ve
+   * yorumuna daraltıldı; uygulanmış migration koruması aynen sürüyor.
+   */
+  const tracked = execFileSync('git', ['ls-files', 'supabase/migrations'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+  })
+    .split('\n')
+    .filter(Boolean);
+  // Yol yanlış olursa iddia sessizce vacuous olurdu; izlenen migration
+  // bulunduğu KANITLANIR.
+  assert(tracked.length > 0, 'supabase/migrations izlenmiyor — kontrol vacuous');
+
+  const migrations = execFileSync('git', ['status', '--porcelain', 'supabase/migrations'], {
     cwd: ROOT,
     encoding: 'utf8',
   });

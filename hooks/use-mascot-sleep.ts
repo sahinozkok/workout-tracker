@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 
+import { isMascotForegroundState } from '@/utils/mascot-app-state';
+
 /**
  * Uykuya dalma bekleme aralığı. Süre render sırasında değil, yalnızca effect
  * çalışırken bir kez hesaplanır.
@@ -72,7 +74,7 @@ export function useMascotSleep({ canSleep }: Options) {
 
   // Ateşlenme anında güncel değerleri senkron okumak için.
   const canSleepRef = useRef(canSleep);
-  const isAppActiveRef = useRef(AppState.currentState === 'active');
+  const isAppActiveRef = useRef(isMascotForegroundState(AppState.currentState));
   const isMountedRef = useRef(true);
 
   const [isAppActive, setIsAppActive] = useState(isAppActiveRef.current);
@@ -116,7 +118,7 @@ export function useMascotSleep({ canSleep }: Options) {
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (next: AppStateStatus) => {
-      const nextIsActive = next === 'active';
+      const nextIsActive = isMascotForegroundState(next);
       // Önce senkron ref, sonra React state: aynı anda ateşlenen bir
       // zamanlayıcı bile güncel aktiflik durumunu görür.
       isAppActiveRef.current = nextIsActive;

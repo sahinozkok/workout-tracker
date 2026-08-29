@@ -853,14 +853,49 @@ check('21. Mevcut kutlama/baseline davranışları DEĞİŞMEZ', () => {
   for (const forbidden of ['achievementCelebration', 'claimRankOverlay', 'dismissAchievement']) {
     assert(!screenCode.includes(forbidden), `seçim ekranı kutlamaya dokunuyor: ${forbidden}`);
   }
-  // Kutlama harness'ları hâlâ geçiyor olmalı (ayrı script); burada yalnızca
-  // ilgili kaynakların değişmediği doğrulanır.
-  const celebrationChanged = execFileSync(
-    'git',
-    ['status', '--porcelain', 'components/ranks/achievement-unlock-celebration.tsx'],
-    { cwd: ROOT, encoding: 'utf8' },
+  /**
+   * Kutlama katmanının DEĞİŞMEZLERİ.
+   *
+   * Burada eskiden `git status` ile dosyanın hiç değişmediği aranıyordu. Bu,
+   * vitrin-seçimi fazına ait bir "bu dosyaya dokunma" dondurmasıydı ve o faz
+   * kapandı; sonraki fazların katmanı meşru biçimde düzenlemesi (ör. Rosea
+   * tepki tipinin ayrıştırılması) testi haksız yere düşürüyordu.
+   *
+   * Yerine, vitrin fazının GERÇEKTEN önemsediği sözleşme doğrulanır: kutlama
+   * başına tek onay, tek Rosea tepkisi, ve overlay claim/release ikilisinin
+   * korunması. Bu, dosya dondurmasından daha anlamlıdır — meşru düzenlemeye
+   * izin verir, gerçek regresyonu yakalar.
+   */
+  const celebrationSource = readFileSync(
+    join(ROOT, 'components/ranks/achievement-unlock-celebration.tsx'),
+    'utf8',
   );
-  assertEqual(celebrationChanged.trim(), '', 'kutlama katmanı değiştirilmiş');
+  assertEqual(
+    (celebrationSource.match(/acknowledgeAchievementCelebrationShown\(/g) ?? []).length,
+    1,
+    'kutlama onayı birden fazla yerden çağrılıyor',
+  );
+  assertEqual(
+    (celebrationSource.match(/triggerReaction\('/g) ?? []).length,
+    1,
+    'kutlama başına birden fazla Rosea tepkisi tetikleniyor',
+  );
+  assert(
+    /const OVERLAY_OWNER[^\n]*=\s*'achievement'/.test(celebrationSource),
+    'kutlama katmanının overlay sahibi `achievement` değil',
+  );
+  assert(
+    celebrationSource.includes('claimRankOverlay(OVERLAY_OWNER)'),
+    'kutlama katmanı overlay sahipliğini almıyor',
+  );
+  assert(
+    celebrationSource.includes('releaseRankOverlay(OVERLAY_OWNER)'),
+    'kutlama katmanı overlay sahipliğini bırakmıyor',
+  );
+  assert(
+    celebrationSource.includes('layoutAcknowledgedRef.current === current'),
+    'tekrarlanan layout koruması kaldırılmış',
+  );
 });
 
 check('22. TR/EN bütün yeni anahtarlar EŞLEŞİR', () => {

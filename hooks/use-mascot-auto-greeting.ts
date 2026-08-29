@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 
+import { isMascotForegroundState } from '@/utils/mascot-app-state';
+
 /**
  * Otomatik selamlamanın planlanma aralığı. Süre render sırasında değil,
  * yalnızca effect çalışırken bir kez hesaplanır.
@@ -49,7 +51,7 @@ export function useMascotAutoGreeting({ canGreet, onGreet }: Options) {
    * durumuna geçerken zamanlayıcı aynı anda ateşlenirse yalnızca state'e
    * bakmak yetmez.
    */
-  const isAppActiveRef = useRef(AppState.currentState === 'active');
+  const isAppActiveRef = useRef(isMascotForegroundState(AppState.currentState));
 
   const [isAppActive, setIsAppActive] = useState(isAppActiveRef.current);
 
@@ -63,7 +65,7 @@ export function useMascotAutoGreeting({ canGreet, onGreet }: Options) {
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (next: AppStateStatus) => {
-      const nextIsActive = next === 'active';
+      const nextIsActive = isMascotForegroundState(next);
       // Önce senkron ref, sonra React state: aynı anda ateşlenen bir zamanlayıcı
       // bile güncel aktiflik durumunu görür.
       isAppActiveRef.current = nextIsActive;

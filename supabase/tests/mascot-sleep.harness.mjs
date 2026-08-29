@@ -11,12 +11,48 @@
  * Çalıştırma:  node supabase/tests/mascot-sleep.harness.mjs
  */
 
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (relative) => readFileSync(join(root, relative), 'utf8');
+
+/**
+ * `utils/mascot-app-state.ts` GERÇEKTEN derlenir ve GERÇEK fonksiyon
+ * çalıştırılır — ön plan kararı burada taklit edilmez.
+ */
+const outDir = mkdtempSync(join(tmpdir(), 'rosea-mascot-app-state-'));
+let isMascotForegroundState;
+try {
+  execFileSync(
+    'npx',
+    [
+      'tsc',
+      join(root, 'utils/mascot-app-state.ts'),
+      '--outDir',
+      outDir,
+      '--target',
+      'es2020',
+      '--module',
+      'esnext',
+      '--moduleResolution',
+      'bundler',
+      '--strict',
+    ],
+    { cwd: root, stdio: 'pipe' },
+  );
+  ({ isMascotForegroundState } = await import(
+    pathToFileURL(join(outDir, 'mascot-app-state.js')).href
+  ));
+} catch (error) {
+  console.error(
+    'utils/mascot-app-state.ts derlenemedi:\n' + (error.stdout?.toString() ?? error.message),
+  );
+  process.exit(1);
+}
 
 const sleepHook = read('hooks/use-mascot-sleep.ts');
 const mascot = read('components/mascot/floating-mascot.tsx');
@@ -52,7 +88,27 @@ contains('geçiş zamanlayıcısı AYRI effect\'te', sleepHook, 'const nextPhase
 contains('ateşlenme anında koşullar yeniden doğrulanıyor', sleepHook, 'if (!canSleepRef.current || !isAppActiveRef.current || !isMountedRef.current)');
 contains('unmount cleanup var', sleepHook, 'isMountedRef.current = false;');
 contains('AppState aboneliği kaldırılıyor', sleepHook, 'return () => subscription.remove();');
-contains('AppState ilk değeri senkron okunuyor', sleepHook, "useRef(AppState.currentState === 'active')");
+contains(
+  'AppState ilk değeri senkron okunuyor',
+  sleepHook,
+  'useRef(isMascotForegroundState(AppState.currentState))',
+);
+check(
+  'eski `=== \'active\'` başlangıç kalıbı KALMADI',
+  /useRef\(AppState\.currentState === 'active'\)/.test(sleepHook),
+  false,
+);
+contains('geçiş kararı da aynı yardımcıdan geçiyor', sleepHook, 'const nextIsActive = isMascotForegroundState(next);');
+contains(
+  'yardımcı maskot kapsamlı modülden geliyor (banner modülüne bağımlılık yok)',
+  sleepHook,
+  "import { isMascotForegroundState } from '@/utils/mascot-app-state';",
+);
+check(
+  'uyku hook\'u mesaj banner\'ı yardımcısını İÇE AKTARMIYOR',
+  /friend-message-alerts/.test(sleepHook),
+  false,
+);
 contains('canSleep aktif workout\'u içeriyor', mascot, '!hasActiveWorkout');
 contains('aktif workout yalnızca BUGÜN + running/paused', mascot, "session.status === 'running' || session.status === 'paused'");
 contains('isHidden klavyeye bağlı (uykuyu engelleyen üçüncü koşul)', mascot, 'const isHidden = !enabled || !isReady || isKeyboardVisible;');
@@ -320,13 +376,14 @@ console.log('\n=== B7. AppState ve unmount ===');
   m.advance(SLEEP_MIN_DELAY + SLEEP_DROWSY_DURATION + SLEEP_SETTLE_DURATION);
   check('B7) öne dönünce yeniden uyudu', m.phase, 'asleep');
 
-  // İlk açılışta AppState aktif değilse zamanlayıcı hiç kurulmaz.
-  const cold = createMachine({ isAppActive: false });
-  cold.start();
-  cold.advance(SLEEP_MIN_DELAY * 3);
-  check('B7) AppState aktif değilken zamanlayıcı kurulmuyor', cold.mainTimerArmCount, 0);
-  cold.set({ isAppActive: true });
-  check('B7) aktif olunca kuruluyor', cold.mainTimerArmCount, 1);
+  // KANITLANMIŞ arka planda (background/inactive) zamanlayıcı hiç kurulmaz.
+  // Soğuk açılışın BİLİNMEYEN başlangıç değeri ayrı bir durumdur → B9.
+  const background = createMachine({ isAppActive: false });
+  background.start();
+  background.advance(SLEEP_MIN_DELAY * 3);
+  check('B7) kanıtlanmış arka planda zamanlayıcı kurulmuyor', background.mainTimerArmCount, 0);
+  background.set({ isAppActive: true });
+  check('B7) aktif olunca kuruluyor', background.mainTimerArmCount, 1);
 
   const u = createMachine();
   u.start();
@@ -351,6 +408,95 @@ console.log('\n=== B8. Drowsy/settling cleanup kendi zamanlayıcısını iptal e
   check('B8) asleep', m.phase, 'asleep');
   check('B8) asleep sonrası geçiş zamanlayıcısı yok', m.transitionTimer, undefined);
 }
+
+// ---------------------------------------------------------------------------
+// B9. SOĞUK AÇILIŞ — AppState başlangıç değeri kilidi
+// ---------------------------------------------------------------------------
+//
+// KÖK NEDEN: `AppState.currentState` modül singleton'ı import anında kurulur;
+// asenkron düzeltme yayını Rosea listener'ını kurmadan önce geçer ve `change`
+// yalnızca GERÇEK geçişlerde ateşlenir. Başlangıç değeri `active` değilse eski
+// `=== 'active'` karşılaştırması `false`'a KİLİTLENİYORDU.
+console.log('\n=== B9. Soğuk açılış AppState başlangıç değeri ===');
+{
+  /** Hook'un başlangıç satırının birebir karşılığı. */
+  const bootMachine = (rawAppState, derive) =>
+    createMachine({ isAppActive: derive(rawAppState) });
+
+  /** Gerçek yardımcı: yalnızca KANITLANMIŞ arka plan ön plan dışıdır. */
+  const fixed = isMascotForegroundState;
+  /** Düzeltmeden önceki model. Mutation testi bunu kullanır. */
+  const broken = (state) => state === 'active';
+
+  // --- Saf yardımcının kendisi ---
+  check('B9) null → ön plan', fixed(null), true);
+  check('B9) undefined → ön plan', fixed(undefined), true);
+  check('B9) unknown → ön plan', fixed('unknown'), true);
+  check('B9) active → ön plan', fixed('active'), true);
+  check('B9) extension → ön plan', fixed('extension'), true);
+  check('B9) background → ön plan DEĞİL', fixed('background'), false);
+  check('B9) inactive → ön plan DEĞİL', fixed('inactive'), false);
+
+  // --- Uyku zamanlayıcısı gerçekten kuruluyor mu ---
+  for (const boot of [null, undefined, 'unknown', 'active']) {
+    const m = bootMachine(boot, fixed);
+    m.start();
+    m.advance(SLEEP_MIN_DELAY + SLEEP_DROWSY_DURATION + SLEEP_SETTLE_DURATION);
+    check(`B9) ${String(boot)} açılışında Rosea uyuyabiliyor`, m.phase, 'asleep');
+    check(`B9) ${String(boot)} açılışında zamanlayıcı kuruldu`, m.mainTimerArmCount, 1);
+  }
+
+  // --- Kanıtlanmış arka planda çalışmamalı ---
+  for (const boot of ['background', 'inactive']) {
+    const m = bootMachine(boot, fixed);
+    m.start();
+    m.advance(SLEEP_MIN_DELAY * 3);
+    check(`B9) ${boot} açılışında zamanlayıcı kurulmuyor`, m.mainTimerArmCount, 0);
+    check(`B9) ${boot} açılışında uyanık kalıyor`, m.phase, 'awake');
+  }
+
+  // --- Gerçek geçiş davranışı KORUNUYOR ---
+  {
+    const m = bootMachine('unknown', fixed);
+    m.start();
+    m.advance(SLEEP_MIN_DELAY + SLEEP_DROWSY_DURATION + SLEEP_SETTLE_DURATION);
+    check('B9) geçiş öncesi uyudu', m.phase, 'asleep');
+    m.set({ isAppActive: fixed('background') });
+    check('B9) background geçişi uyandırıyor', m.phase, 'awake');
+    m.set({ isAppActive: fixed('inactive') });
+    check('B9) inactive geçişi de uyanık tutuyor', m.phase, 'awake');
+    m.set({ isAppActive: fixed('active') });
+    m.advance(SLEEP_MIN_DELAY + SLEEP_DROWSY_DURATION + SLEEP_SETTLE_DURATION);
+    check('B9) active geçişi yeniden planlıyor', m.phase, 'asleep');
+  }
+
+  // --- MUTATION: eski modele dönülürse soğuk açılış GERÇEKTEN düşer ---
+  for (const boot of [null, undefined, 'unknown']) {
+    const m = bootMachine(boot, broken);
+    m.start();
+    m.advance(SLEEP_MIN_DELAY * 3);
+    check(
+      `B9-MUT) eski \`=== 'active'\` modeli ${String(boot)} açılışında uyuyamıyor`,
+      m.phase,
+      'awake',
+    );
+    check(
+      `B9-MUT) eski model ${String(boot)} açılışında zamanlayıcı kurmuyor`,
+      m.mainTimerArmCount,
+      0,
+    );
+  }
+  // Eski model yalnızca 'active' başlangıcında doğru davranıyordu — bu yüzden
+  // geliştirmede (Metro sıcak yeniden yükleme) hata hiç görünmedi.
+  {
+    const m = bootMachine('active', broken);
+    m.start();
+    m.advance(SLEEP_MIN_DELAY + SLEEP_DROWSY_DURATION + SLEEP_SETTLE_DURATION);
+    check("B9-MUT) eski model yalnızca 'active' açılışında çalışıyordu", m.phase, 'asleep');
+  }
+}
+
+rmSync(outDir, { recursive: true, force: true });
 
 console.log(`\n${fail === 0 ? 'TÜMÜ GEÇTİ' : 'BAŞARISIZ VAR'} — ${pass} geçti, ${fail} kaldı`);
 process.exit(fail === 0 ? 0 : 1);

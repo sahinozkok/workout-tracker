@@ -5,8 +5,16 @@ export type MascotState = 'idle' | 'dragging' | 'happy' | 'thinking' | 'celebrat
  * Tek seferlik maskot olayları. `set-complete` ve `workout-complete` ekranlardan
  * gelir; `loved` yalnızca maskota çift dokunulduğunda yerel olarak tetiklenir.
  * `rank-up`, sezon rankı yükseldiğinde kutlama katmanından **bir kez** gelir.
+ * `achievement-unlock` ise başarı rozeti açıldığında rozet katmanından **bir
+ * kez** gelir; rank yükselmesinden AYRI bir olaydır, böylece ikisi bağımsız
+ * tetiklenebilir ve bağımsız test edilebilir.
  */
-export type MascotReactionType = 'set-complete' | 'workout-complete' | 'loved' | 'rank-up';
+export type MascotReactionType =
+  | 'set-complete'
+  | 'workout-complete'
+  | 'loved'
+  | 'rank-up'
+  | 'achievement-unlock';
 
 /**
  * Tek seferlik tepki. `id` artan olduğu için React yeniden render olduğunda
@@ -19,18 +27,32 @@ export type MascotReaction = {
 
 /**
  * Çakışma önceliği (büyükten küçüğe):
- * dragging > workout-complete = rank-up > set-complete > loved > thinking > idle
+ * dragging > rank-up > achievement-unlock > workout-complete > set-complete >
+ * loved > thinking > idle
+ *
+ * Devralma kuralı KESİN OLARAK "yalnızca daha yüksek": eşit öncelikli bir olay
+ * süren tepkiyi bölemez, daha düşük öncelikli olay ise hiçbir koşulda kesemez.
+ *
+ * NEDEN ARTIK EŞİT DEĞİLLER — `rank-up` ve `workout-complete` daha önce ikisi
+ * de 2'ydi. Antrenmanı bitirmek puan kazandırdığı için rank yükselmesi tipik
+ * olarak antrenman kutlaması SÜRERKEN (1220 ms içinde) gelir; eşit öncelik
+ * devralmadığından rank tepkisi sessizce düşüyordu. Tam ekran kutlama katmanı
+ * yine açıldığı için hata görünmüyordu, ama Rosea uygulamanın en büyük anına
+ * hiç tepki vermiyordu. Sıralama artık ayrık: rank yükselmesi antrenman
+ * kutlamasını devralır, tersi olmaz.
+ *
+ * `achievement-unlock` rank ile antrenman arasındadır: rozet, antrenman
+ * kutlamasını devralabilir ama bir rank yükselmesini bölemez. Bu, tam ekran
+ * katmanların `RANK_OVERLAY_PRIORITY` sırasıyla (rank-up > season-recap >
+ * achievement) tutarlıdır.
  *
  * `loved` en düşük tepki önceliğidir: süren bir kutlamayı veya set sevinmesini
  * asla bölemez, buna karşılık antrenman olayları sevme tepkisini devralabilir.
- *
- * `rank-up` bilinçli olarak `workout-complete` ile EŞİT önceliktedir: eşit
- * öncelik devralmadığı için antrenman kutlaması sürerken ikinci bir kutlama
- * animasyonu/partikülü oluşmaz ve tersi de doğrudur.
  */
 export const MASCOT_REACTION_PRIORITY: Record<MascotReactionType, number> = {
+  'rank-up': 4,
+  'achievement-unlock': 3,
   'workout-complete': 2,
-  'rank-up': 2,
   'set-complete': 1,
   loved: 0,
 };

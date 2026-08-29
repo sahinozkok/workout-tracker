@@ -281,7 +281,8 @@ function createSession(device, options = {}) {
     if (layoutAcknowledged === shownAchievement) return;
     layoutAcknowledged = shownAchievement;
     acknowledgeShown(shownAchievement);
-    mascotReactions.push('rank-up');
+    // Rozet kutlaması KENDİ tepki tipini kullanır; rank'ten ayırt edilebilir.
+    mascotReactions.push('achievement-unlock');
   }
 
   function dismissAchievement() {
@@ -802,13 +803,24 @@ check('15. Kaynak: onay YALNIZCA layout yolundan, polling YOK', () => {
     celebrationSource.includes('layoutAcknowledgedRef.current === current'),
     'tekrarlanan layout için koruma yok',
   );
-  // Rosea: kutlama başına tek tepki, mevcut olay yeniden kullanılıyor.
+  // Rosea: kutlama başına tek tepki, rozete ÖZEL tepki tipiyle.
+  //
+  // Bu assertion eskiden `rank-up`'ın yeniden kullanılmasını doğru davranış
+  // diye sabitliyordu. Aynı tipi paylaşmak iki kutlamayı ayırt edilemez
+  // yapıyor ve eşit öncelik yüzünden birbirlerini düşürmelerine yol açıyordu.
   assertEqual(
     (celebrationSource.match(/triggerReaction\('/g) ?? []).length,
     1,
     'Rosea tepkisi birden fazla kez tetikleniyor',
   );
-  assert(celebrationSource.includes("triggerReaction('rank-up')"), 'yeni Rosea olayı üretilmiş');
+  assert(
+    celebrationSource.includes("triggerReaction('achievement-unlock')"),
+    'rozet katmanı kendi Rosea olayını kullanmıyor',
+  );
+  assert(
+    !celebrationSource.includes("triggerReaction('rank-up')"),
+    'rozet katmanı hâlâ rank-up olayını yeniden kullanıyor',
+  );
 
   // Context: kutlama kaydı tespit yolunda YAZILMAZ (yalnızca baseline).
   const reconcileBody = contextSource.slice(

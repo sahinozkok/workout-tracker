@@ -133,6 +133,11 @@ export function AchievementUnlockCelebrationLayer() {
    * Rosea tepkisi de kutlama başına **bir kez**, aynı gösterim başlangıcında
    * tetiklenir. `triggerReaction` maskot kapalıysa (tatilde) olayı kendisi
    * düşürür; Rosea zorla geri getirilmez ve mevcut animasyonlarına dokunulmaz.
+   *
+   * Olay tipi rank yükselmesinden AYRIDIR (`achievement-unlock`). Daha önce
+   * `rank-up` yeniden kullanılıyordu; bu, iki kutlamayı ayırt edilemez yapıyor
+   * ve eşit öncelik yüzünden birbirlerini düşürmelerine yol açıyordu. Görsel
+   * kutlama karesi aynı kalır, yalnızca tip ve öncelik ayrışır.
    */
   const handleCardLayout = useCallback(() => {
     const current = shown;
@@ -141,7 +146,7 @@ export function AchievementUnlockCelebrationLayer() {
     layoutAcknowledgedRef.current = current;
 
     void acknowledgeAchievementCelebrationShown(current);
-    triggerReaction('rank-up');
+    triggerReaction('achievement-unlock');
   }, [acknowledgeAchievementCelebrationShown, shown, triggerReaction]);
 
   /** Kapanış animasyonu bittiğinde çalışır; JS tarafında tek temizlik noktası. */
