@@ -9,9 +9,11 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
+      "bundleIdentifier": "com.sahinozkok.rosea",
       "supportsTablet": true
     },
     "android": {
+      "package": "com.sahinozkok.rosea",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -53,6 +55,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "b1c228fb-fa94-4bb3-9436-d6c79e692208"
+      }
+    },
+    "owner": "sahinnn"
   }
 }

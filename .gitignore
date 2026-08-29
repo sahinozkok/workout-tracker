@@ -47,3 +47,5 @@ app-example
 .env
 .env.*
 !.env.example
+# Supabase local temp state
+supabase/.temp/
