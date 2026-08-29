@@ -1,5 +1,5 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack } from 'expo-router';
+import { router, Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import 'react-native-reanimated';
@@ -107,7 +107,34 @@ function LanguageSync() {
 }
 
 function AppNavigation() {
-  const { isLoading, isPasswordRecovery, session } = useAuth();
+  const {
+    acknowledgeRecoveryRedirect,
+    isLoading,
+    isPasswordRecovery,
+    pendingRecoveryRedirect,
+    session,
+  } = useAuth();
+
+  /**
+   * ŞİFRE DEĞİŞİMİ SONRASI GİRİŞ EKRANINA YÖNLENDİRME.
+   *
+   * Yönlendirme `ResetPasswordScreen`'de YAPILAMAZ: kurtarma bayrağı düştüğü
+   * anda `UserScopedApp` sağlayıcılı ağaca geçer ve o ekran unmount olur.
+   * Sinyal `AuthProvider`'da (bu ağacın ÜSTÜNDE) yaşadığı için yeniden mount
+   * edilen bu bileşen onu görür.
+   *
+   * Yönlendirme YALNIZCA `/login` guard'ı gerçekten açıldıktan sonra yapılır
+   * (`!session && !isPasswordRecovery`); guard'lar GEVŞETİLMEZ. Sinyal
+   * `router.replace`'ten ÖNCE tüketilir, böylece efekt yeniden çalışsa bile
+   * tek bir yönlendirme olur.
+   */
+  useEffect(() => {
+    if (!pendingRecoveryRedirect) return;
+    if (isLoading || isPasswordRecovery || session) return;
+
+    acknowledgeRecoveryRedirect();
+    router.replace('/login');
+  }, [acknowledgeRecoveryRedirect, isLoading, isPasswordRecovery, pendingRecoveryRedirect, session]);
   const { t } = useTranslation();
   const { colors, isDark } = useAppTheme();
   const baseNavigationTheme = isDark ? DarkTheme : DefaultTheme;
@@ -153,14 +180,6 @@ function AppNavigation() {
             yalnızca yeni şifre ekranını görür. */}
         <Stack.Protected guard={!session && !isPasswordRecovery}>
           <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-        </Stack.Protected>
-        {/* Şifre kurtarma ekranı `(auth)` grubunun dışında, kök Stack'tedir:
-            `setSession()` geçici bir oturum açtığı için auth grubunda olsaydı
-            guard kullanıcıyı sekmelere düşürebilirdi. Bağlantı oturum
-            yokken de açılabilmeli, bu yüzden koşul iki durumu birden kapsar.
-            Kök Stack ekranı olduğu için alt sekme çubuğu görünmez. */}
-        <Stack.Protected guard={!session || isPasswordRecovery}>
-          <Stack.Screen name="reset-password" options={{ headerShown: false }} />
         </Stack.Protected>
         <Stack.Protected guard={Boolean(session) && !isPasswordRecovery}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
@@ -234,7 +253,27 @@ function AppNavigation() {
               aynen çalışır. */}
           <Stack.Screen name="messages/index" options={{ headerShown: false }} />
           <Stack.Screen name="messages/[userId]" options={{ headerShown: false }} />
+          {/* Engellenen kullanıcılar Ayarlar'dan açılan kök Stack ekranıdır;
+              alt sekme çubuğu görünmez ve kendi sade başlığını çizer. */}
+          <Stack.Screen name="blocked-users" options={{ headerShown: false }} />
         </Stack.Protected>
+        {/* ŞİFRE KURTARMA EKRANI — koşulsuz kayıtlı ama LİSTENİN SONUNDA.
+            KOŞULSUZ: kullanıcı başka bir hesapla oturum açmış olsa bile
+            e-posta bağlantısı bu ekranı açabilmelidir; guard'lı olsaydı ekran
+            mount olamaz, recovery token'ını doğrulayamaz ve mevcut oturum
+            kullanıcıyı doğrudan sekmelere taşırdı.
+            SIRALAMA BİLİNÇLİDİR — bu kayıt `(auth)` ve oturum korumalı grubun
+            SONRASINDADIR. Guard'ı kapanan ekran navigator listesinden tamamen
+            çıkarılır ve React Navigation odaklı route silindiğinde
+            `routeNames[0]`e düşer (kök Stack'te `initialRouteName` yoktur).
+            Bu kayıt `(tabs)`tan ÖNCE olsaydı normal giriş sonrası fallback
+            token'sız reset ekranı olur ve login ile reset arasında döngü
+            oluşurdu. Sonda olduğu için fallback sırası doğrudur:
+            oturum yok → `(auth)`, oturum var → `(tabs)`, kurtarma → bu ekran.
+            Ekranın kendisi yalnızca doğrulanmış `type=recovery` callback'i veya
+            kalıcı recovery bayrağı varsa formu açar; çıplak `/reset-password`
+            yolu yetmez. Kök Stack ekranı olduğu için alt sekme çubuğu görünmez. */}
+        <Stack.Screen name="reset-password" options={{ headerShown: false }} />
       </Stack>
       {/*
         Maskot Stack'ten sonra kardeş olarak çizilir: her ekranın üzerinde kalır

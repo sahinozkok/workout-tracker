@@ -162,11 +162,18 @@ export default function ResetPasswordScreen() {
         return;
       }
 
-      if (!isMountedRef.current) return;
+      /**
+       * BAŞARILI: YÖNLENDİRME BU EKRANDA YAPILMAZ.
+       *
+       * `completePasswordRecovery` dönmeden önce kurtarma bayrağını kapatır;
+       * o anda `UserScopedApp` sağlayıcılı ağaca geçer ve BU EKRAN UNMOUNT
+       * OLUR. Buradaki bir `router.replace` hiç çalışmaz, ekran yeniden mount
+       * olup "geçersiz bağlantı" gösterirdi. Yönlendirme, `AuthProvider`'daki
+       * tek kullanımlık sinyalle `AppNavigation` tarafından yapılır.
+       */
       setPassword('');
       setPasswordRepeat('');
       Alert.alert(t('auth.resetDoneTitle'), t('auth.resetDoneBody'));
-      router.replace('/login');
     } catch {
       Alert.alert(t('auth.connectionFailed'), t('auth.connectionFailedBody'));
     } finally {

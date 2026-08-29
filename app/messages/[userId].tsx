@@ -19,6 +19,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   AppState,
   KeyboardAvoidingView,
   Platform,
@@ -33,6 +34,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { FriendAvatar } from '@/components/friends/friend-avatar';
 import { FriendsMetrics, FriendsPalette, useFriendsPalette } from '@/components/friends/friends-theme';
+import { ReportSheet } from '@/components/friends/report-sheet';
 import { MotionPressable } from '@/components/motion-pressable';
 import { useAuth } from '@/context/auth-context';
 import { useTranslation } from '@/context/language-context';
@@ -40,13 +42,22 @@ import { getFriendProfile } from '@/services/friends';
 import {
   FRIEND_MESSAGE_MAX_LENGTH,
   getFriendMessages,
+  isFriendMessageRejectedContent,
   isFriendMessageRateLimited,
   isNotFriendsError,
   sendFriendMessage,
   subscribeToFriendMessages,
 } from '@/services/messages';
+import {
+  blockUser,
+  isMessageNoLongerReportable,
+  isReportRateLimited,
+  reportFriendMessage,
+  reportUser,
+} from '@/services/safety';
 import { FriendProfile } from '@/types/friends';
 import { FriendMessage, FriendMessageCursor } from '@/types/messages';
+import { SafetyReportCategory } from '@/types/safety';
 import {
   belongsToConversation,
   mergeFriendMessages,
@@ -61,7 +72,8 @@ import { createIdempotencyKey } from '@/utils/idempotency-key';
 const EXPIRY_TIMER_SLACK_MS = 50;
 
 type ScreenState = 'loading' | 'ready' | 'error' | 'not-friends';
-type SendError = 'failed' | 'rate-limited';
+type SendError = 'failed' | 'rate-limited' | 'rejected-content';
+type ReportTarget = { kind: 'message'; messageId: string } | { kind: 'user' };
 
 export default function ChatScreen() {
   const palette = useFriendsPalette();
@@ -83,6 +95,9 @@ export default function ChatScreen() {
   const [draft, setDraft] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<SendError>();
+  const [reportTarget, setReportTarget] = useState<ReportTarget>();
+  const [isReportPending, setIsReportPending] = useState(false);
+  const [isBlockPending, setIsBlockPending] = useState(false);
 
   const isMountedRef = useRef(true);
   /** Yalnızca EN SON yükleme cevabı uygulanır. */
@@ -101,6 +116,10 @@ export default function ChatScreen() {
   const sendingRef = useRef(false);
   /** Aynı kilit sayfalama için; çift dokunuş iki sayfa isteği başlatamaz. */
   const loadingOlderRef = useRef(false);
+  /** Şikâyet gönderiminde aynı karede ikinci RPC'yi önler. */
+  const reportPendingRef = useRef(false);
+  /** Geri alınamaz engelleme işleminde çift RPC'yi önler. */
+  const blockPendingRef = useRef(false);
   /** Başarısız taslağın anahtarı; aynı içerik retry'ında KORUNUR. */
   const pendingSendRef = useRef<PendingSend>(undefined);
   /** Tek "en yakın sona erme" zamanlayıcısı. */
@@ -230,6 +249,11 @@ export default function ChatScreen() {
         setIsLoadingOlder(false);
         setIsSending(false);
         setSendError(undefined);
+        setReportTarget(undefined);
+        setIsReportPending(false);
+        reportPendingRef.current = false;
+        setIsBlockPending(false);
+        blockPendingRef.current = false;
         setDraft('');
         setScreenState('loading');
       }
@@ -364,7 +388,13 @@ export default function ChatScreen() {
         return;
       }
 
-      setSendError(isFriendMessageRateLimited(error) ? 'rate-limited' : 'failed');
+      setSendError(
+        isFriendMessageRateLimited(error)
+          ? 'rate-limited'
+          : isFriendMessageRejectedContent(error)
+            ? 'rejected-content'
+            : 'failed',
+      );
     } finally {
       /**
        * Gönderim kilidi de aynı kurala tabidir: A'nın geç biten gönderimi
@@ -383,6 +413,89 @@ export default function ChatScreen() {
     !isSending &&
     trimmedDraft.length > 0 &&
     trimmedDraft.length <= FRIEND_MESSAGE_MAX_LENGTH;
+  const isSafetyPending = isReportPending || isBlockPending;
+
+  function openSafetyMenu() {
+    if (!profile || !counterpartId || isSafetyPending) return;
+    Alert.alert(t('safety.menuTitle'), profile.displayName, [
+      { text: t('safety.reportUser'), onPress: () => setReportTarget({ kind: 'user' }) },
+      { text: t('safety.blockUser'), onPress: confirmBlock, style: 'destructive' },
+      { text: t('common.cancel'), style: 'cancel' },
+    ]);
+  }
+
+  function confirmBlock() {
+    if (!profile || !counterpartId || isSafetyPending) return;
+    const displayName = profile.displayName;
+    Alert.alert(t('safety.blockTitle'), t('safety.blockBody', { name: displayName }), [
+      { text: t('common.cancel'), style: 'cancel' },
+      {
+        text: t('safety.blockUser'),
+        style: 'destructive',
+        onPress: () => void executeBlock(displayName),
+      },
+    ]);
+  }
+
+  async function executeBlock(displayName: string) {
+    if (!counterpartId || blockPendingRef.current) return;
+    blockPendingRef.current = true;
+    setIsBlockPending(true);
+    const owner = conversationRef.current;
+    try {
+      await blockUser(counterpartId);
+      if (!isMountedRef.current || owner !== conversationRef.current) return;
+
+      setProfile(undefined);
+      setMessages([]);
+      setCursor(undefined);
+      setHasMore(false);
+      setReportTarget(undefined);
+      router.replace('/messages');
+      Alert.alert(
+        t('safety.blockSuccessTitle'),
+        t('safety.blockSuccessBody', { name: displayName }),
+      );
+    } catch {
+      if (!isMountedRef.current || owner !== conversationRef.current) return;
+      Alert.alert(t('safety.actionFailed'), t('common.networkError'));
+    } finally {
+      if (owner === conversationRef.current) {
+        blockPendingRef.current = false;
+        if (isMountedRef.current) setIsBlockPending(false);
+      }
+    }
+  }
+
+  async function submitReport(category: SafetyReportCategory, details?: string) {
+    if (!counterpartId || !reportTarget || reportPendingRef.current) return;
+    reportPendingRef.current = true;
+    setIsReportPending(true);
+    const owner = conversationRef.current;
+    try {
+      if (reportTarget.kind === 'message') {
+        await reportFriendMessage(reportTarget.messageId, category, details);
+      } else {
+        await reportUser(counterpartId, category, details);
+      }
+      if (!isMountedRef.current || owner !== conversationRef.current) return;
+      setReportTarget(undefined);
+      Alert.alert(t('safety.reportSentTitle'), t('safety.reportSentBody'));
+    } catch (error) {
+      if (!isMountedRef.current || owner !== conversationRef.current) return;
+      const body = isReportRateLimited(error)
+        ? t('safety.reportRateLimited')
+        : isMessageNoLongerReportable(error)
+          ? t('safety.messageUnavailable')
+          : t('common.networkError');
+      Alert.alert(t('safety.reportFailed'), body);
+    } finally {
+      if (owner === conversationRef.current) {
+        reportPendingRef.current = false;
+        if (isMountedRef.current) setIsReportPending(false);
+      }
+    }
+  }
 
   function formatTime(value: string) {
     const date = new Date(value);
@@ -405,12 +518,20 @@ export default function ChatScreen() {
         accessible
         key={message.id}
         style={[styles.bubbleRow, isOwn ? styles.bubbleRowOwn : styles.bubbleRowOther]}>
-        <View style={[styles.bubble, isOwn ? styles.bubbleOwn : styles.bubbleOther]}>
+        <Pressable
+          delayLongPress={350}
+          disabled={isOwn}
+          onLongPress={() => setReportTarget({ kind: 'message', messageId: message.id })}
+          style={({ pressed }) => [
+            styles.bubble,
+            isOwn ? styles.bubbleOwn : styles.bubbleOther,
+            pressed && !isOwn && styles.bubblePressed,
+          ]}>
           <Text selectable style={[styles.bubbleText, isOwn && styles.bubbleTextOwn]}>
             {message.content}
           </Text>
           <Text style={[styles.bubbleTime, isOwn && styles.bubbleTimeOwn]}>{time}</Text>
-        </View>
+        </Pressable>
       </View>
     );
   }
@@ -503,7 +624,23 @@ export default function ChatScreen() {
           </Text>
         </View>
 
-        <View style={styles.headerButton} />
+        {profile ? (
+          <Pressable
+            accessibilityLabel={t('safety.menuTitle')}
+            accessibilityRole="button"
+            disabled={isSafetyPending}
+            hitSlop={8}
+            onPress={openSafetyMenu}
+            style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}>
+            {isSafetyPending ? (
+              <ActivityIndicator color={palette.textSecondary} size="small" />
+            ) : (
+              <Ionicons color={palette.textSecondary} name="ellipsis-horizontal" size={22} />
+            )}
+          </Pressable>
+        ) : (
+          <View style={styles.headerButton} />
+        )}
       </View>
 
       <KeyboardAvoidingView
@@ -536,7 +673,9 @@ export default function ChatScreen() {
                 <Text style={styles.sendErrorText}>
                   {sendError === 'rate-limited'
                     ? t('messages.rateLimited')
-                    : t('messages.sendFailed')}
+                    : sendError === 'rejected-content'
+                      ? t('messages.rejectedContent')
+                      : t('messages.sendFailed')}
                 </Text>
                 <Pressable
                   accessibilityRole="button"
@@ -576,6 +715,15 @@ export default function ChatScreen() {
           </View>
         )}
       </KeyboardAvoidingView>
+      <ReportSheet
+        isSubmitting={isReportPending}
+        onClose={() => {
+          if (!isReportPending) setReportTarget(undefined);
+        }}
+        onSubmit={(category, details) => void submitReport(category, details)}
+        target={reportTarget?.kind ?? 'user'}
+        visible={reportTarget !== undefined}
+      />
     </View>
   );
 }
@@ -639,6 +787,7 @@ function createStyles(palette: FriendsPalette) {
     bubbleTextOwn: { color: palette.onAccent },
     bubbleTime: { color: palette.textTertiary, fontSize: 11, textAlign: 'right' },
     bubbleTimeOwn: { color: palette.onAccent, opacity: 0.75 },
+    bubblePressed: { opacity: 0.72 },
 
     stateBox: { alignItems: 'center', gap: 8, paddingTop: 48 },
     stateTitle: { color: palette.text, fontSize: 15, fontWeight: '600', textAlign: 'center' },

@@ -45,6 +45,10 @@ export const FRIEND_MESSAGE_RATE_LIMITED = 'message_rate_limited';
  * Gönderme RPC'si ve geçmiş RPC'si arkadaşlık kalkmışsa bu metinle düşer.
  */
 export const FRIEND_MESSAGE_NOT_FRIENDS = 'not_friends';
+/** Engelleme varlığının yönünü sızdırmayan ilişki reddi. */
+export const FRIEND_MESSAGE_RELATIONSHIP_UNAVAILABLE = 'relationship_unavailable';
+/** Sunucu taraflı güvenlik filtresinin içerik reddi. */
+export const FRIEND_MESSAGE_REJECTED_CONTENT = 'message_rejected_content';
 
 /**
  * Bilinmeyen bir hata nesnesinden `message` alanını GÜVENLİ okur.
@@ -335,5 +339,14 @@ export function isFriendMessageRateLimited(error: unknown): boolean {
  * yanlışlıkla "arkadaş değil" sayılamaz.
  */
 export function isNotFriendsError(error: unknown): boolean {
-  return readErrorMessage(error).includes(FRIEND_MESSAGE_NOT_FRIENDS);
+  const message = readErrorMessage(error);
+  return (
+    message.includes(FRIEND_MESSAGE_NOT_FRIENDS) ||
+    message.includes(FRIEND_MESSAGE_RELATIONSHIP_UNAVAILABLE)
+  );
+}
+
+/** Sunucu taraflı içerik filtresi reddi mi? */
+export function isFriendMessageRejectedContent(error: unknown): boolean {
+  return readErrorMessage(error).includes(FRIEND_MESSAGE_REJECTED_CONTENT);
 }

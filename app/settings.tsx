@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -294,6 +295,23 @@ export default function SettingsScreen() {
             value={mascotEnabled}
           />
         </View>
+
+        <View style={styles.divider} />
+
+        <Pressable
+          accessibilityLabel={t('safety.blockedUsers')}
+          accessibilityRole="button"
+          onPress={() => router.push('/blocked-users')}
+          style={({ pressed }) => [styles.settingRow, styles.featureRow, pressed && styles.pressed]}>
+          <View style={styles.settingIcon}>
+            <Ionicons name="ban-outline" size={19} color={settingsAccent} />
+          </View>
+          <View style={styles.settingText}>
+            <Text style={styles.settingTitle}>{t('safety.blockedUsers')}</Text>
+            <Text style={styles.caption}>{t('safety.blockedUsersCaption')}</Text>
+          </View>
+          <Ionicons color={colors.textTertiary} name="chevron-forward" size={18} />
+        </Pressable>
 
         <View style={styles.divider} />
 

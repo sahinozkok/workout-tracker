@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
+import { describePasswordRecoveryRedirect } from '@/lib/auth-redirect';
 import { useTranslation } from '@/context/language-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
 
@@ -39,6 +40,17 @@ export default function ForgotPasswordScreen() {
   // State güncellemesi asenkron olduğu için aynı karede gelen ikinci dokunuş
   // `isSubmitting` henüz `true` olmadan geçebilirdi; ref anında kilitler.
   const isSubmittingRef = useRef(false);
+
+  /**
+   * GELİŞTİRME TEŞHİSİ — yalnızca `__DEV__`.
+   *
+   * Uygulamanın Supabase'e gönderdiği callback adresini gösterir. Expo Go
+   * host'u (`<LAN-IP>:<port>`) her açılışta değişebildiği için Supabase
+   * Redirect URL listesine hangi adresin eklenmesi gerektiği ancak böyle
+   * doğrulanabilir. Token, e-posta veya anahtar İÇERMEZ ve yayın derlemesinde
+   * hiç render edilmez.
+   */
+  const recoveryRedirect = __DEV__ ? describePasswordRecoveryRedirect() : undefined;
 
   async function handleSubmit() {
     if (isSubmittingRef.current) return;
@@ -113,6 +125,13 @@ export default function ForgotPasswordScreen() {
             <Text style={styles.eyebrow}>{t('auth.brand')}</Text>
             <Text style={styles.title}>{t('auth.forgotTitle')}</Text>
             <Text style={styles.subtitle}>{t('auth.forgotSubtitle')}</Text>
+            {/* Yalnızca geliştirmede: Supabase'e gönderilen callback adresi.
+                Token/e-posta taşımaz, yayın derlemesinde render edilmez. */}
+            {Boolean(recoveryRedirect) && (
+              <Text selectable style={styles.devRedirect}>
+                {`${recoveryRedirect?.environment} · ${recoveryRedirect?.url ?? '—'}`}
+              </Text>
+            )}
           </View>
 
           <View style={styles.formCard}>
@@ -177,6 +196,12 @@ function createStyles(colors: ThemeColors) {
     heading: { marginBottom: 26 },
     eyebrow: { color: colors.textSecondary, ...Type.eyebrow },
     title: { color: colors.text, ...Type.pageTitle, marginTop: 8 },
+    /** Geliştirme teşhisi; yayın derlemesinde hiç kullanılmaz. */
+    devRedirect: {
+      color: colors.textTertiary,
+      fontSize: 11,
+      marginTop: 4,
+    },
     subtitle: { color: colors.textSecondary, ...Type.caption, lineHeight: 19, marginTop: 8 },
     formCard: { gap: 18 },
     fieldGroup: { gap: 8 },

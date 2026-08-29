@@ -170,15 +170,132 @@ function readFailure(
 export const PASSWORD_RECOVERY_PATH = 'reset-password';
 
 /**
- * `resetPasswordForEmail` için ortama uygun `redirectTo`:
- *   - Web geliştirme: `http://localhost:8081/reset-password`
- *   - Web yayın:      `https://<domain>/reset-password`
+ * Kurtarma callback'inin ÜRETİLDİĞİ ortam.
+ *
+ * Yalnızca teşhis ve doğrulama içindir; hiçbir karar bu değere göre
+ * HARD-CODE edilmez — adresin kendisi her zaman çalışma zamanında
+ * `Linking.createURL` tarafından üretilir.
+ */
+export type PasswordRecoveryEnvironment =
+  | 'expo-go-web'
+  | 'native-build'
+  | 'web'
+  | 'unavailable';
+
+/** Kurtarma callback adresinin ortamıyla birlikte açık sonucu. */
+export type PasswordRecoveryRedirect =
+  | { status: 'ok'; url: string; environment: Exclude<PasswordRecoveryEnvironment, 'unavailable'> }
+  | { status: 'unavailable' };
+
+/**
+ * `exp://` DIŞINDAKİ adreslerin ortamını ADRESİN KENDİSİNDEN çıkarır.
+ *
+ * LAN IP'si ve port BİLİNÇLİ olarak okunmaz: yalnızca şema kullanılır.
+ */
+function classifyRecoveryRedirect(url: string): Exclude<PasswordRecoveryEnvironment, 'unavailable'> {
+  if (url.startsWith('http://') || url.startsWith('https://')) return 'web';
+  return 'native-build';
+}
+
+/**
+ * EXPO GO CALLBACK'İNİ LAN WEB ADRESİNE ÇEVİRİR.
+ *
+ * NEDEN: Supabase `exp://` yönlendirmesini e-postaya TAŞIMAZ — izin listesinde
+ * birebir bulunsa bile `redirect_to` düşürülür ve proje Site URL'ine geri
+ * dönülür. Ölçülen davranış budur. Metro aynı host ve portta uygulamanın web
+ * sürümünü de sunduğu için `http://<host>:<port>/reset-password` adresi
+ * telefondan gerçekten açılır ve kurtarma ekranını gösterir.
+ *
+ * Dönüşüm YALNIZCA biçim üzerinden yapılır; host ve port `createURL`'in
+ * ürettiği adresten okunur, hiçbir IP veya port SABİTLENMEZ:
+ *
+ *   `exp://192.168.68.100:8081/--/reset-password`
+ *   → `http://192.168.68.100:8081/reset-password`
+ *   `exps://…` → `https://…`
+ *
+ * Expo Go ayracı (`/--/`) web yolunda BULUNMAZ.
+ *
+ * GÜVENLİK: Supabase token'ları URL FRAGMENT'inde (`#access_token=…`) döndürür.
+ * Fragment tarayıcı tarafından HTTP isteğine EKLENMEZ, bu yüzden token'lar
+ * Metro sunucusuna hiçbir zaman gitmez ve yalnızca istemcide kalır.
+ *
+ * Adres çözümlenemezse `undefined` döner; çağıran bunu "gönderilemez" sayar.
+ */
+function toExpoGoWebCallback(url: string): string | undefined {
+  const scheme = /^exps?:\/\//.exec(url)?.[0];
+  if (!scheme) return undefined;
+
+  const rest = url.slice(scheme.length);
+  const slashIndex = rest.indexOf('/');
+  // `host[:port]` — çalışma zamanı adresinden türer.
+  const host = slashIndex === -1 ? rest : rest.slice(0, slashIndex);
+  if (!host) return undefined;
+
+  const rawPath = (slashIndex === -1 ? '' : rest.slice(slashIndex)).replace(/^\/--(?=\/|$)/, '');
+  const path = rawPath && rawPath !== '/' ? rawPath : `/${PASSWORD_RECOVERY_PATH}`;
+
+  return `${url.startsWith('exps://') ? 'https' : 'http'}://${host}${path}`;
+}
+
+/**
+ * `resetPasswordForEmail` için ortama uygun `redirectTo`.
+ *
+ *   - Expo Go:        `http://<LAN-host>:<port>/reset-password` (aşağıya bakın)
  *   - Native build:   `workouttracker://reset-password`
- *   - Expo Go:        `exp://<ip>:8081/--/reset-password`
+ *   - Web:            `<origin>/reset-password`
+ *
+ * ADRES HER ZAMAN ÇALIŞMA ZAMANINDA ÜRETİLİR. Expo Go host'u (`<LAN-IP>:<port>`)
+ * her açılışta değişebildiği için hiçbir IP veya port bu dosyada SABİTLENMEZ;
+ * `Linking.createURL` değeri Expo manifestindeki `hostUri`den okur.
+ *
+ * `status: 'unavailable'` YALNIZCA `createURL` kullanılabilir bir adres
+ * üretemediğinde döner (web statik dışa aktarımında `window` yoktur). Bu durum
+ * çağıran tarafından AÇIKÇA ele alınmalıdır: adres olmadan istek gönderilirse
+ * Supabase sessizce Site URL'e düşer ve e-posta yanlış yere yönlenir.
+ */
+export function resolvePasswordRecoveryRedirect(): PasswordRecoveryRedirect {
+  const url = Linking.createURL(PASSWORD_RECOVERY_PATH);
+  if (!url) return { status: 'unavailable' };
+
+  if (url.startsWith('exp://') || url.startsWith('exps://')) {
+    const webUrl = toExpoGoWebCallback(url);
+    /**
+     * Dönüştürülemeyen `exp://` adresi GÖNDERİLMEZ: Supabase onu e-postaya
+     * taşımaz, sessizce Site URL'e düşer ve kullanıcı yanlış adrese gider.
+     */
+    if (!webUrl) return { status: 'unavailable' };
+    return { environment: 'expo-go-web', status: 'ok', url: webUrl };
+  }
+
+  return { environment: classifyRecoveryRedirect(url), status: 'ok', url };
+}
+
+/**
+ * Geriye dönük yardımcı: yalnızca adres.
+ *
+ * Yeni kod `resolvePasswordRecoveryRedirect()` kullanmalıdır; bu sarmalayıcı
+ * sessiz `undefined` davranışını GİZLEMEZ, çağıran onu ayırt edebilsin diye
+ * durum bilgisini koruyan sürüme yönlendirir.
  */
 export function getPasswordRecoveryRedirectUrl(): string | undefined {
-  const url = Linking.createURL(PASSWORD_RECOVERY_PATH);
-  return url ? url : undefined;
+  const resolved = resolvePasswordRecoveryRedirect();
+  return resolved.status === 'ok' ? resolved.url : undefined;
+}
+
+/**
+ * GELİŞTİRME TEŞHİSİ — Supabase Redirect URL listesine girilecek adres.
+ *
+ * Token, e-posta adresi veya anahtar İÇERMEZ; yalnızca uygulamanın gerçekten
+ * gönderdiği callback adresini ve ortamını taşır. Expo Go host'u değiştiğinde
+ * hangi adresin izin listesine eklenmesi gerektiği ancak böyle görülebilir.
+ */
+export function describePasswordRecoveryRedirect(): {
+  environment: PasswordRecoveryEnvironment;
+  url?: string;
+} {
+  const resolved = resolvePasswordRecoveryRedirect();
+  if (resolved.status !== 'ok') return { environment: 'unavailable' };
+  return { environment: resolved.environment, url: resolved.url };
 }
 
 /**

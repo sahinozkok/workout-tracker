@@ -11,7 +11,7 @@ import {
   useState,
 } from 'react';
 
-import { getEmailConfirmRedirectUrl, getPasswordRecoveryRedirectUrl } from '@/lib/auth-redirect';
+import { getEmailConfirmRedirectUrl, resolvePasswordRecoveryRedirect } from '@/lib/auth-redirect';
 import { supabase } from '@/lib/supabase';
 
 type AuthResult = { error?: string };
@@ -34,6 +34,20 @@ type AuthContextValue = {
   startPasswordRecovery: (accessToken: string, refreshToken: string) => Promise<AuthResult>;
   completePasswordRecovery: (newPassword: string) => Promise<AuthResult>;
   cancelPasswordRecovery: () => Promise<AuthResult>;
+  /**
+   * ŞİFRE BAŞARIYLA DEĞİŞTİ → giriş ekranına yönlendir.
+   *
+   * Sinyal BİLİNÇLİ olarak burada, `AuthProvider` içinde durur: kurtarma
+   * bayrağı düştüğü anda `UserScopedApp` sağlayıcılı ağaca geçer ve
+   * `AppNavigation` ile `ResetPasswordScreen` UNMOUNT olur. Yönlendirmeyi o
+   * ekranda yapmak imkânsızdır — `AuthProvider` ise `UserScopedApp`'in
+   * ÜSTÜNDE olduğu için bu geçişte yaşamaya devam eder.
+   *
+   * YALNIZCA BELLEKTE tutulur: AsyncStorage'a veya Supabase'e yazılmaz.
+   */
+  pendingRecoveryRedirect: boolean;
+  /** Yönlendirme yapıldı: sinyal tüketilir ve bir daha çalışmaz. */
+  acknowledgeRecoveryRedirect: () => void;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -84,6 +98,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [session, setSession] = useState<Session | null>(null);
   const [isSessionLoading, setIsSessionLoading] = useState(true);
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
+  /**
+   * Tek kullanımlık, yalnızca bellekte tutulan "kurtarma tamamlandı" sinyali.
+   * Kalıcı depoya YAZILMAZ; uygulama yeniden açılırsa yeniden doğmaz.
+   */
+  const [pendingRecoveryRedirect, setPendingRecoveryRedirect] = useState(false);
   // Bayrak okunmadan yönlendirme yapılmaz; aksi hâlde kurtarma sırasında
   // uygulama yeniden açıldığında sekmeler bir an görünebilirdi.
   const [isRecoveryFlagLoaded, setIsRecoveryFlagLoaded] = useState(false);
@@ -190,6 +209,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
     return !localError;
   }, []);
 
+  const acknowledgeRecoveryRedirect = useCallback(() => setPendingRecoveryRedirect(false), []);
+
   const clearRecoveryState = useCallback(async () => {
     setIsPasswordRecovery(false);
     await writeRecoveryPending(false);
@@ -219,11 +240,22 @@ export function AuthProvider({ children }: PropsWithChildren) {
    * gösterir. E-posta adresi ve hata nesnesi loglanmaz.
    */
   const requestPasswordReset = useCallback(async (email: string): Promise<AuthResult> => {
-    const redirectTo = getPasswordRecoveryRedirectUrl();
-    const { error } = await supabase.auth.resetPasswordForEmail(
-      email,
-      redirectTo ? { redirectTo } : {},
-    );
+    const redirect = resolvePasswordRecoveryRedirect();
+
+    /**
+     * ADRESSİZ İSTEK GÖNDERİLMEZ.
+     *
+     * `redirect_to` olmadan Supabase SESSİZCE proje Site URL'ine düşer ve
+     * e-posta uygulamanın hiç açamayacağı bir adrese yönlenir — üstelik istek
+     * "başarılı" göründüğü için sorun hiçbir yerde yüzeye çıkmaz. Bu yüzden
+     * adres üretilemiyorsa istek hiç yapılmaz ve çağırana kontrollü bir hata
+     * bildirilir.
+     */
+    if (redirect.status !== 'ok') return { error: 'recovery_redirect_unavailable' };
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: redirect.url,
+    });
     return error ? { error: error.message } : {};
   }, []);
 
@@ -240,6 +272,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const startPasswordRecovery = useCallback(
     async (accessToken: string, refreshToken: string): Promise<AuthResult> => {
       isStartingRecoveryRef.current = true;
+      // Yeni bir kurtarma başlıyor: önceki tamamlanma sinyali GEÇERSİZDİR.
+      setPendingRecoveryRedirect(false);
       setIsPasswordRecovery(true);
 
       try {
@@ -292,6 +326,17 @@ export function AuthProvider({ children }: PropsWithChildren) {
       const didEnd = await endRecoverySession();
       if (!didEnd) return { error: 'recovery_signout_failed' };
 
+      /**
+       * Sinyal, kurtarma bayrağı düşmeden HEMEN ÖNCE kurulur.
+       *
+       * `clearRecoveryState()` `isPasswordRecovery`'yi kapatır ve o anda
+       * `UserScopedApp` ağacı değişip bu ekranı unmount eder. İki güncelleme
+       * aynı turda toplandığı için YENİ ağaç ilk render'ında sinyali zaten
+       * görür ve yönlendirmeyi yapar; arada geçersiz ekran gösterilmez.
+       *
+       * Sinyal YALNIZCA `updateUser` ve oturum kapatma BAŞARILIYSA kurulur.
+       */
+      setPendingRecoveryRedirect(true);
       await clearRecoveryState();
       return {};
     },
@@ -309,6 +354,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   const signIn = useCallback(async (email: string, password: string): Promise<AuthResult> => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
+    // Hesap değişti: bekleyen kurtarma yönlendirmesi ARTIK GEÇERSİZDİR.
+    if (!error) setPendingRecoveryRedirect(false);
     return error ? { error: error.message } : {};
   }, []);
 
@@ -342,10 +389,12 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   const value = useMemo<AuthContextValue>(
     () => ({
+      acknowledgeRecoveryRedirect,
       cancelPasswordRecovery,
       completePasswordRecovery,
       isLoading: isSessionLoading || !isRecoveryFlagLoaded,
       isPasswordRecovery,
+      pendingRecoveryRedirect,
       requestPasswordReset,
       session,
       signIn,
@@ -355,11 +404,13 @@ export function AuthProvider({ children }: PropsWithChildren) {
       user: session?.user ?? null,
     }),
     [
+      acknowledgeRecoveryRedirect,
       cancelPasswordRecovery,
       completePasswordRecovery,
       isPasswordRecovery,
       isRecoveryFlagLoaded,
       isSessionLoading,
+      pendingRecoveryRedirect,
       requestPasswordReset,
       session,
       signIn,
