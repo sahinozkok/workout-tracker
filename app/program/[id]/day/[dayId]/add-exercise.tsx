@@ -26,7 +26,21 @@ import { useWorkout } from '@/context/workout-context';
 import { EXERCISES, EXERCISE_MUSCLE_GROUPS, getProgramExerciseName } from '@/data/exercises';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import { useFeatureColor } from '@/hooks/use-feature-colors';
-import { WorkoutVisual } from '@/types/workout';
+import {
+  DistributiveOmit,
+  NewProgramExercise,
+  WorkoutTrackingMode,
+  WorkoutVisual,
+} from '@/types/workout';
+import {
+  parseKilometersToMeters,
+  parseMinutesToSeconds,
+  TARGET_DISTANCE_METERS_MAX,
+  TARGET_DISTANCE_METERS_MIN,
+  TARGET_DURATION_SECONDS_MAX,
+  TARGET_DURATION_SECONDS_MIN,
+} from '@/utils/activity-input';
+import { TrackingModeSelector } from '@/components/tracking-mode-selector';
 import { getEquipmentLabel, getMuscleGroupLabel } from '@/utils/exercise-labels';
 import { DEFAULT_EXERCISE_VISUAL } from '@/utils/workout-visual';
 
@@ -76,6 +90,9 @@ export default function AddExerciseScreen() {
   const [selectedMuscleGroup, setSelectedMuscleGroup] = useState(EXERCISE_MUSCLE_GROUPS[0]);
   // Seçim sırası korunur; kullanıcı hangi sırayla seçtiyse o sırayla eklenir.
   const [selectedExerciseIds, setSelectedExerciseIds] = useState<string[]>([]);
+  const [trackingMode, setTrackingMode] = useState<WorkoutTrackingMode>('sets_reps');
+  const [targetDurationMinutes, setTargetDurationMinutes] = useState('30');
+  const [targetDistanceKm, setTargetDistanceKm] = useState('5');
   const [targetSets, setTargetSets] = useState('3');
   const [targetReps, setTargetReps] = useState('8-10');
   const [restSeconds, setRestSeconds] = useState(DEFAULT_REST_SECONDS);
@@ -204,23 +221,60 @@ export default function AddExerciseScreen() {
       return;
     }
 
-    const parsedSets = Number(targetSets);
+    /**
+     * DOĞRULAMA türe göre DALLANIR ve her dal kendi `NewProgramExercise`
+     * varyantını üretir. Ayrık birleşim sayesinde eksik alan bırakmak derleme
+     * hatasıdır; kardiyoda strength alanları hiç var olmaz.
+     */
     const parsedRestSeconds = Number(restSeconds);
-    const trimmedReps = targetReps.trim();
+    let draft: DistributiveOmit<NewProgramExercise, 'customExerciseName' | 'exerciseId' | 'visual'>;
 
-    if (!Number.isInteger(parsedSets) || parsedSets < 1 || parsedSets > 20) {
-      Alert.alert(t('addExercise.setsInvalidTitle'), t('addExercise.setsInvalidBody'));
-      return;
-    }
+    if (trackingMode === 'sets_reps') {
+      const parsedSets = Number(targetSets);
+      const trimmedReps = targetReps.trim();
 
-    if (!/^\d{1,2}(-\d{1,2})?$/.test(trimmedReps)) {
-      Alert.alert(t('addExercise.repsInvalidTitle'), t('addExercise.repsInvalidBody'));
-      return;
-    }
+      if (!Number.isInteger(parsedSets) || parsedSets < 1 || parsedSets > 20) {
+        Alert.alert(t('addExercise.setsInvalidTitle'), t('addExercise.setsInvalidBody'));
+        return;
+      }
 
-    if (!Number.isInteger(parsedRestSeconds) || parsedRestSeconds < 0 || parsedRestSeconds > 600) {
-      Alert.alert(t('addExercise.restInvalidTitle'), t('addExercise.restInvalidBody'));
-      return;
+      if (!/^\d{1,2}(-\d{1,2})?$/.test(trimmedReps)) {
+        Alert.alert(t('addExercise.repsInvalidTitle'), t('addExercise.repsInvalidBody'));
+        return;
+      }
+
+      if (!Number.isInteger(parsedRestSeconds) || parsedRestSeconds < 0 || parsedRestSeconds > 600) {
+        Alert.alert(t('addExercise.restInvalidTitle'), t('addExercise.restInvalidBody'));
+        return;
+      }
+
+      draft = {
+        trackingMode: 'sets_reps',
+        restSeconds: parsedRestSeconds,
+        targetReps: trimmedReps,
+        targetSets: parsedSets,
+      };
+    } else if (trackingMode === 'duration') {
+      const parsed = parseMinutesToSeconds(targetDurationMinutes, {
+        max: TARGET_DURATION_SECONDS_MAX,
+        min: TARGET_DURATION_SECONDS_MIN,
+      });
+      if (!parsed.ok) {
+        Alert.alert(t('addExercise.durationInvalidTitle'), t('addExercise.durationInvalidBody'));
+        return;
+      }
+      // Kardiyoda set arası dinlenme kavramı YOKTUR: `restSeconds` daima 0.
+      draft = { trackingMode: 'duration', restSeconds: 0, targetDurationSeconds: parsed.value };
+    } else {
+      const parsed = parseKilometersToMeters(targetDistanceKm, {
+        max: TARGET_DISTANCE_METERS_MAX,
+        min: TARGET_DISTANCE_METERS_MIN,
+      });
+      if (!parsed.ok) {
+        Alert.alert(t('addExercise.distanceInvalidTitle'), t('addExercise.distanceInvalidBody'));
+        return;
+      }
+      draft = { trackingMode: 'distance', restSeconds: 0, targetDistanceMeters: parsed.value };
     }
 
     // Mevcut duplicate kuralına saygı: zaten ekli olanlar atlanır.
@@ -245,15 +299,11 @@ export default function AddExerciseScreen() {
       for (const item of pending) {
         try {
           await addExerciseToDay(programId, workoutDay.id, {
+            ...draft,
             customExerciseName: item.exerciseId ? undefined : item.name,
             exerciseId: item.exerciseId,
-            // Bu ekran YALNIZCA strength üretir; tür açıkça yazılır.
-            trackingMode: 'sets_reps',
-            restSeconds: parsedRestSeconds,
-            targetReps: trimmedReps,
-            targetSets: parsedSets,
             visual: exerciseVisual,
-          });
+          } as NewProgramExercise);
         } catch {
           failed.push(item.name);
         }
@@ -264,7 +314,9 @@ export default function AddExerciseScreen() {
        * yazılır. Doğrulama hatasında bu noktaya hiç gelinmez; tamamen başarısız
        * bir denemede de (`failed.length === pending.length`) tercih değişmez.
        */
-      if (userId && failed.length < pending.length) {
+      // Dinlenme tercihi YALNIZCA strength eklemesinden öğrenilir; kardiyoda
+      // `restSeconds` daima 0 olduğu için tercih bozulmamalı.
+      if (userId && trackingMode === 'sets_reps' && failed.length < pending.length) {
         try {
           // `await`: ekran `router.back()` ile kapanmadan önce yazma tamamlanır.
           // Fire-and-forget bırakıldığında yazma yarıda kalabiliyordu.
@@ -414,30 +466,72 @@ export default function AddExerciseScreen() {
                 : customExerciseName || t('addExercise.nameRequiredBody')}
             </Text>
 
-            <View style={styles.targetFields}>
-              <TargetInput
-                label={t('addExercise.sets')}
-                onChangeText={setTargetSets}
-                value={targetSets}
+            <View style={styles.trackingModeBlock}>
+              <TrackingModeSelector
                 colors={colors}
-                isDark={isDark}
-              />
-              <TargetInput
-                keyboardType="default"
-                label={t('addExercise.reps')}
-                onChangeText={setTargetReps}
-                value={targetReps}
-                colors={colors}
-                isDark={isDark}
-              />
-              <TargetInput
-                label={t('addExercise.rest')}
-                onChangeText={handleRestSecondsChange}
-                value={restSeconds}
-                colors={colors}
-                isDark={isDark}
+                labels={{
+                  distance: t('addExercise.trackingModeDistance'),
+                  duration: t('addExercise.trackingModeDuration'),
+                  sets_reps: t('addExercise.trackingModeSetsReps'),
+                }}
+                onChange={setTrackingMode}
+                title={t('addExercise.trackingMode')}
+                value={trackingMode}
               />
             </View>
+
+            {/* Hedef alanları türe göre değişir; kardiyoda set/tekrar/dinlenme YOKTUR. */}
+            {trackingMode === 'sets_reps' && (
+              <View style={styles.targetFields}>
+                <TargetInput
+                  label={t('addExercise.sets')}
+                  onChangeText={setTargetSets}
+                  value={targetSets}
+                  colors={colors}
+                  isDark={isDark}
+                />
+                <TargetInput
+                  keyboardType="default"
+                  label={t('addExercise.reps')}
+                  onChangeText={setTargetReps}
+                  value={targetReps}
+                  colors={colors}
+                  isDark={isDark}
+                />
+                <TargetInput
+                  label={t('addExercise.rest')}
+                  onChangeText={handleRestSecondsChange}
+                  value={restSeconds}
+                  colors={colors}
+                  isDark={isDark}
+                />
+              </View>
+            )}
+
+            {trackingMode === 'duration' && (
+              <View style={styles.targetFields}>
+                <TargetInput
+                  label={t('addExercise.targetDuration')}
+                  onChangeText={setTargetDurationMinutes}
+                  value={targetDurationMinutes}
+                  colors={colors}
+                  isDark={isDark}
+                />
+              </View>
+            )}
+
+            {trackingMode === 'distance' && (
+              <View style={styles.targetFields}>
+                <TargetInput
+                  keyboardType="decimal-pad"
+                  label={t('addExercise.targetDistance')}
+                  onChangeText={setTargetDistanceKm}
+                  value={targetDistanceKm}
+                  colors={colors}
+                  isDark={isDark}
+                />
+              </View>
+            )}
           </View>
 
           <View style={styles.formSection}>
@@ -490,7 +584,7 @@ export default function AddExerciseScreen() {
 type TargetInputProps = {
   colors: ThemeColors;
   isDark: boolean;
-  keyboardType?: 'default' | 'number-pad';
+  keyboardType?: 'default' | 'number-pad' | 'decimal-pad';
   label: string;
   onChangeText: (value: string) => void;
   value: string;
@@ -593,6 +687,7 @@ function createStyles(colors: ThemeColors, feature: { accent: string; onAccent: 
     sectionTitle: { color: colors.text, ...Type.sectionTitle },
     sectionDescription: { color: colors.textSecondary, ...Type.caption },
     // Üç alan "Egzersizi düzenle" ile aynı sistemden gelir.
+    trackingModeBlock: { marginBottom: 16 },
     targetFields: { flexDirection: 'row', gap: 12, marginTop: 14 },
     targetField: { flex: 1, gap: Form.fieldGap },
     targetLabel: { color: colors.textSecondary, ...Type.eyebrow },

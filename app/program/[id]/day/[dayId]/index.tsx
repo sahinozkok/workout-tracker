@@ -38,11 +38,61 @@ import {
   WorkoutSetPerformance,
   WorkoutSetRecord,
   WorkoutVisual,
+  isCardioExercise,
   isStrengthExercise,
+  ActivityPerformance,
+  CardioProgramExercise,
   StrengthProgramExercise,
+  WorkoutTrackingMode,
 } from '@/types/workout';
+import {
+  ACTIVITY_DISTANCE_METERS_MAX,
+  ACTIVITY_DISTANCE_METERS_MIN,
+  ACTIVITY_DURATION_SECONDS_MAX,
+  ACTIVITY_DURATION_SECONDS_MIN,
+  formatMetersAsKilometers,
+  parseKilometersToMeters,
+  parseMinutesToSeconds,
+  parseOptionalKilometersToMeters,
+  parseOptionalRpe,
+  TARGET_DISTANCE_METERS_MAX,
+  TARGET_DISTANCE_METERS_MIN,
+  TARGET_DURATION_SECONDS_MAX,
+  TARGET_DURATION_SECONDS_MIN,
+} from '@/utils/activity-input';
+import { TrackingModeSelector } from '@/components/tracking-mode-selector';
+import {
+  ActivityTimerState,
+  createActivityTimer,
+  formatActivityOvertime,
+  formatActivityTimerValue,
+  getActivityNotificationDelaySeconds,
+  getActivityTimerProgress,
+  getActivityTimerStorageKey,
+  pauseActivityTimer,
+  resumeActivityTimer,
+} from '@/utils/activity-timer';
+import {
+  attachActivityNotificationId,
+  findSessionActivityTimers,
+  loadActivityTimer,
+  removeActivityTimer,
+  saveActivityTimer,
+} from '@/utils/activity-timer-storage';
+import {
+  cancelActivityTargetNotification,
+  scheduleActivityTargetNotification,
+} from '@/utils/activity-notifications';
 import { toDateKey } from '@/utils/discipline';
-import { completesWorkoutAfterSet } from '@/utils/workout-tracking';
+import {
+  getActivityProgressKey,
+  completesWorkoutAfterActivity,
+  completesWorkoutAfterSet,
+  derivePaceSecondsPerKm,
+  exerciseTargetUnits,
+  resolveDayProgress,
+  resolveExerciseProgress,
+} from '@/utils/workout-tracking';
 import { getActiveSetLabelNumber } from '@/utils/workout-sets';
 import {
   cancelRestNotification,
@@ -74,6 +124,9 @@ export default function WorkoutDayScreen() {
   const { triggerReaction } = useMascot();
   const {
     activityTotals,
+    workoutActivityRecords,
+    saveActivityRecord,
+    deleteActivityRecord,
     completeSet,
     completedSetCounts,
     activeProgramId,
@@ -143,6 +196,19 @@ export default function WorkoutDayScreen() {
   const [dayIsOffDraft, setDayIsOffDraft] = useState(false);
   const [editingExerciseId, setEditingExerciseId] = useState<string | null>(null);
   const [editingExerciseName, setEditingExerciseName] = useState('');
+  const [editingTrackingMode, setEditingTrackingMode] = useState<WorkoutTrackingMode>('sets_reps');
+  /**
+   * Kardiyoda ölçülen SÜRE artık elle girilmez: kronometreden gelir.
+   * Mesafe ve RPE bitirme adımında girilir.
+   */
+  const [activityTimer, setActivityTimer] = useState<ActivityTimerState>();
+  const [isFinishingActivity, setIsFinishingActivity] = useState(false);
+  const [activityDistanceInput, setActivityDistanceInput] = useState('');
+  const [activityRpeInput, setActivityRpeInput] = useState('');
+  const [activityError, setActivityError] = useState<string>();
+  const [isActivityPending, setIsActivityPending] = useState(false);
+  const [targetDurationDraft, setTargetDurationDraft] = useState('');
+  const [targetDistanceDraft, setTargetDistanceDraft] = useState('');
   const [exerciseVisualDraft, setExerciseVisualDraft] = useState<WorkoutVisual>(DEFAULT_EXERCISE_VISUAL);
   const [targetSetsDraft, setTargetSetsDraft] = useState('3');
   const [targetRepsDraft, setTargetRepsDraft] = useState('8-10');
@@ -178,10 +244,62 @@ export default function WorkoutDayScreen() {
    * varsayar. Daraltma TEK noktada yapılır, aşağıdaki her kullanım bundan
    * beslenir. Kardiyo için arayüz bu fazda BİLİNÇLİ olarak yoktur.
    */
+  /**
+   * Günün BÜTÜN egzersizleri — seçim listesi, ilerleme ve otomatik bitiş bunu
+   * kullanır. Set akışına giren daraltılmış küme aşağıdaki `dayExercises`'tir.
+   */
+  const allDayExercises = useMemo(() => day?.exercises ?? [], [day?.exercises]);
   const dayExercises = useMemo(
-    () => (day?.exercises ?? []).filter(isStrengthExercise),
-    [day?.exercises],
+    () => allDayExercises.filter(isStrengthExercise),
+    [allDayExercises],
   );
+  /** Seçili kardiyo egzersizi; doluyken set paneli yerine aktivite paneli çıkar. */
+  const activeCardioExercise = useMemo<CardioProgramExercise | undefined>(() => {
+    const selected = allDayExercises.find((exercise) => exercise.id === selectedExerciseId);
+    return selected && isCardioExercise(selected) ? selected : undefined;
+  }, [allDayExercises, selectedExerciseId]);
+
+  const activeCardioExerciseName = activeCardioExercise
+    ? getProgramExerciseName(activeCardioExercise.exerciseId, activeCardioExercise.customExerciseName)
+    : '';
+  /**
+   * Bu oturumda AYNI egzersiz için zaten kayıt var mı? Varsa panel onun
+   * değerleriyle açılır ve kaydetme UPDATE'e döner; ikinci satır oluşmaz.
+   */
+  const existingActivityRecord = useMemo(
+    () =>
+      activeCardioExercise && workoutSession
+        ? workoutActivityRecords.find(
+            (record) =>
+              record.sessionId === workoutSession.id &&
+              record.programExerciseId === activeCardioExercise.id,
+          )
+        : undefined,
+    [activeCardioExercise, workoutActivityRecords, workoutSession],
+  );
+
+  /**
+   * Kronometre ilerlemesi. `clockNow` saniyede bir tazelendiği için değer
+   * güncel kalır; kaynak yine gerçek saat farkıdır.
+   */
+  const activityProgress = activityTimer
+    ? getActivityTimerProgress(activityTimer, clockNow)
+    : undefined;
+  const activityTimerAccessibilityText = activityProgress
+    ? `${formatActivityTimerValue(activityProgress.elapsedSeconds)} · ${
+        activityProgress.status === 'running'
+          ? t('day.activityRunningState')
+          : t('day.activityPausedState')
+      }${activityProgress.isTargetReached ? ` · ${t('day.targetReached')}` : ''}`
+    : formatActivityTimerValue(0);
+
+  /** Kaydedilmiş tempo — mesafe ve süreden TÜRETİLİR, saklanmaz. */
+  const activePaceSecondsPerKm = existingActivityRecord
+    ? derivePaceSecondsPerKm(
+        existingActivityRecord.distanceMeters,
+        existingActivityRecord.durationSeconds,
+      )
+    : undefined;
   // Program sırasındaki ilk tamamlanmamış egzersiz.
   const currentExerciseId = dayExercises.find(
     (exercise) => (completedSetCounts[getSetProgressKey(todayKey, exercise.id)] ?? 0) < exercise.targetSets,
@@ -232,10 +350,17 @@ export default function WorkoutDayScreen() {
   useEffect(() => {
     if (!selectedExerciseId) return;
 
+    /**
+     * Kardiyo seçimi bu otomatik ilerleme kuralının DIŞINDADIR: kural hedefe
+     * ulaşan SET egzersizinden sıradakine geçmek içindir. Seçim yalnızca
+     * egzersiz günden tamamen kalktığında bırakılır.
+     */
     const selectedExercise = dayExercises.find((exercise) => exercise.id === selectedExerciseId);
     if (!selectedExercise) {
-      setSelectedExerciseId(undefined);
-      setIsManualSelection(false);
+      if (!allDayExercises.some((exercise) => exercise.id === selectedExerciseId)) {
+        setSelectedExerciseId(undefined);
+        setIsManualSelection(false);
+      }
       return;
     }
 
@@ -248,7 +373,7 @@ export default function WorkoutDayScreen() {
       setSelectedExerciseId(undefined);
       setIsManualSelection(false);
     }
-  }, [completedSetCounts, dayExercises, isManualSelection, selectedExerciseId, todayKey]);
+  }, [allDayExercises, completedSetCounts, dayExercises, isManualSelection, selectedExerciseId, todayKey]);
 
   /**
    * Giriş alanları YALNIZCA egzersiz değiştiğinde önerilen değerlerle tazelenir.
@@ -276,6 +401,54 @@ export default function WorkoutDayScreen() {
     setRepetitionsInput(suggestedRepetitions?.toString() ?? '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeExercise?.id]);
+
+  /**
+   * Kardiyo alanları YALNIZCA egzersiz veya mevcut kayıt değiştiğinde tazelenir.
+   * Kayıt varsa değerleriyle, yoksa boş açılır — kullanıcının yazdığı değer
+   * kaydetme sırasında EZİLMEZ.
+   */
+  useEffect(() => {
+    if (!activeCardioExercise) return;
+    setActivityError(undefined);
+    setIsFinishingActivity(false);
+
+    // Mesafe ve RPE, varsa kayıtlı değerlerle açılır; süre kronometreden gelir.
+    setActivityDistanceInput(
+      existingActivityRecord?.distanceMeters === undefined
+        ? ''
+        : formatMetersAsKilometers(existingActivityRecord.distanceMeters),
+    );
+    setActivityRpeInput(
+      existingActivityRecord?.rpe === undefined ? '' : String(existingActivityRecord.rpe),
+    );
+  }, [activeCardioExercise, existingActivityRecord]);
+
+  /**
+   * KRONOMETRE GERİ YÜKLEME.
+   *
+   * Uygulama kapatılıp açılsa da ölçüm kaybolmaz: kayıt AsyncStorage'dan
+   * okunur ve geçen süre `startedAt` farkından yeniden hesaplanır. Kayıt yoksa
+   * kronometre temizlenir; başka egzersizin ölçümü buraya taşınmaz.
+   */
+  useEffect(() => {
+    if (!activeCardioExercise || !workoutSession) {
+      setActivityTimer(undefined);
+      return;
+    }
+
+    let isCurrent = true;
+    const storageKey = getActivityTimerStorageKey(workoutSession.id, activeCardioExercise.id);
+
+    void loadActivityTimer(storageKey).then((restored) => {
+      if (!isCurrent) return;
+      setActivityTimer(restored);
+      if (restored) setClockNow(Date.now());
+    });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [activeCardioExercise, workoutSession]);
 
 
   useEffect(() => {
@@ -380,12 +553,14 @@ export default function WorkoutDayScreen() {
   const isActiveProgram = program.id === activeProgramId;
   const canTrackToday = isScheduledToday && isActiveProgram;
   const totalTargetSets = dayExercises.reduce((total, exercise) => total + exercise.targetSets, 0);
-  const totalCompletedSets = dayExercises.reduce(
-    (total, exercise) =>
-      total +
-      Math.min(completedSetCounts[getSetProgressKey(todayKey, exercise.id)] ?? 0, exercise.targetSets),
-    0,
-  );
+  const hasCardioExercises = allDayExercises.some(isCardioExercise);
+  const dayProgress = resolveDayProgress({
+    activityTotals,
+    completedSetCounts,
+    dateKey: todayKey,
+    exercises: allDayExercises,
+    getSetProgressKey,
+  });
   // Aynı programın aynı günü için geçmiş tamamlanmış antrenmanların ortalaması
   // (bugünkü oturum hariç).
   const previousSessions = workoutSessions.filter(
@@ -401,8 +576,9 @@ export default function WorkoutDayScreen() {
           previousSessions.length,
       )
     : undefined;
-  const isWorkoutComplete = totalTargetSets > 0 && totalCompletedSets === totalTargetSets;
-  const hasProgress = totalCompletedSets > 0;
+  const isWorkoutComplete =
+    dayProgress.targetUnits > 0 && dayProgress.doneUnits >= dayProgress.targetUnits;
+  const hasProgress = dayProgress.hasProgress;
   // Antrenman başlamadan önce gün, referans tasarımdaki sade plan görünümünü
   // kullanır; antrenman başlayınca set giriş kartlarına geçilir.
   const isPlanMode = !workoutSession && !hasProgress;
@@ -411,6 +587,13 @@ export default function WorkoutDayScreen() {
   const canCompleteSets = canTrackToday && workoutSession?.status === 'running';
   const isCompleteSetDisabled =
     !canCompleteSets || Boolean(pendingExerciseId) || (isActiveExerciseComplete && !isExtraSetMode);
+
+  /**
+   * Kardiyoda "tamamlandı → kilitle" kuralı YOKTUR: kullanıcı kaydını her zaman
+   * düzeltebilmelidir. Düğme yalnızca oturum uygun değilken veya istek
+   * uçarken kapanır.
+   */
+  const isActivityDisabled = !canCompleteSets || isActivityPending;
 
   const activeDropSetDrafts = activeExercise ? (dropSetDrafts[activeExercise.id] ?? []) : [];
 
@@ -522,9 +705,18 @@ export default function WorkoutDayScreen() {
       if (workoutSession.status === 'running') {
         await pauseWorkout(workoutSession.id);
         void clearRestTimer();
+        /**
+         * Antrenman duraklatılınca ÇALIŞAN aktivite ölçümü de duraklar; aksi
+         * hâlde kullanıcı ara verirken kronometre sessizce sayardı.
+         */
+        await pauseActivityMeasurement();
         return;
       }
 
+      /**
+       * Antrenman devam ettirilince aktivite ölçümü KENDİLİĞİNDEN başlamaz;
+       * kullanıcı açıkça `Devam et` demelidir.
+       */
       await resumeWorkout(workoutSession.id);
     } catch (error) {
       showWorkoutError(t('day.workoutStateFailed'), error, t);
@@ -533,13 +725,349 @@ export default function WorkoutDayScreen() {
     }
   }
 
-  async function handleExerciseSelection(exerciseId: string, isComplete: boolean) {
+  /** Kronometreyi hem ekrana hem depoya yazar; depo tek doğruluk kaynağıdır. */
+  async function persistActivityTimer(timer: ActivityTimerState) {
+    setActivityTimer(timer);
+    await saveActivityTimer(
+      getActivityTimerStorageKey(timer.sessionId, timer.programExerciseId),
+      timer,
+    );
+  }
+
+  /**
+   * Hedef süre bildirimini planlar ve kimliğini kayda İLİŞTİRİR.
+   *
+   * Yalnız `duration` türünde ve yalnız hedef HENÜZ DOLMAMIŞSA planlanır.
+   * İzin reddedilirse `undefined` döner; kronometre normal çalışmaya devam eder.
+   * `attachActivityNotificationId` aynı `timerId` hâlâ kayıtlı değilse `false`
+   * döner ve bildirim hemen iptal edilir — geç gelen planlama yeni ölçüme
+   * bulaşmaz.
+   */
+  async function scheduleActivityTarget(timer: ActivityTimerState) {
+    const delaySeconds = getActivityNotificationDelaySeconds(timer, Date.now());
+    if (delaySeconds === undefined) return;
+
+    const notificationId = await scheduleActivityTargetNotification(
+      delaySeconds,
+      {
+        body: t('day.activityTargetNotificationBody', { name: timer.exerciseName }),
+        title: timer.exerciseName,
+      },
+      { programExerciseId: timer.programExerciseId, sessionId: timer.sessionId },
+    ).catch(() => undefined);
+    if (!notificationId) return;
+
+    const storageKey = getActivityTimerStorageKey(timer.sessionId, timer.programExerciseId);
+    const attached = await attachActivityNotificationId(
+      storageKey,
+      timer.timerId,
+      timer.startedAt,
+      notificationId,
+    );
+    if (!attached) {
+      void cancelActivityTargetNotification(notificationId);
+      return;
+    }
+    setActivityTimer((current) =>
+      current?.timerId === timer.timerId ? { ...current, notificationId } : current,
+    );
+  }
+
+  /**
+   * ÖLÇÜMÜ BAŞLAT.
+   *
+   * Aynı antrenman oturumunda BAŞKA bir kardiyo ölçümü açıksa kullanıcıya
+   * sorulur; çalışan ölçüm sessizce çöpe atılmaz.
+   */
+  async function startActivityMeasurement() {
+    if (!activeCardioExercise || !workoutSession || activityTimer) return;
+    setActivityError(undefined);
+
+    try {
+      const others = await findSessionActivityTimers(workoutSession.id, activeCardioExercise.id);
+      if (others.length > 0) {
+        const other = others[0];
+        Alert.alert(
+          t('day.runningActivityTitle'),
+          t('day.runningActivityBody', { name: other.timer.exerciseName }),
+          [
+            { text: t('common.cancel'), style: 'cancel' },
+            {
+              text: t('day.returnToActivity'),
+              onPress: () => {
+                setSelectedExerciseId(other.timer.programExerciseId);
+                setIsManualSelection(true);
+              },
+            },
+            {
+              text: t('day.cancelMeasurement'),
+              style: 'destructive',
+              onPress: () => {
+                void cancelActivityTargetNotification(other.timer.notificationId);
+                void removeActivityTimer(other.storageKey, other.timer.timerId);
+              },
+            },
+          ],
+        );
+        return;
+      }
+
+      const timer = createActivityTimer({
+        exerciseName: activeCardioExerciseName,
+        now: Date.now(),
+        programExerciseId: activeCardioExercise.id,
+        sessionId: workoutSession.id,
+        targetDurationSeconds:
+          activeCardioExercise.trackingMode === 'duration'
+            ? activeCardioExercise.targetDurationSeconds
+            : undefined,
+        trackingMode: activeCardioExercise.trackingMode,
+      });
+
+      setClockNow(Date.now());
+      await persistActivityTimer(timer);
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      void scheduleActivityTarget(timer);
+    } catch (error) {
+      showWorkoutError(t('day.activityStartFailed'), error, t);
+    }
+  }
+
+  /** Duraklat — süre donar, bekleyen hedef bildirimi İPTAL edilir. */
+  async function pauseActivityMeasurement() {
+    if (!activityTimer || activityTimer.status !== 'running') return;
+    const paused = pauseActivityTimer(activityTimer, Date.now());
+    void cancelActivityTargetNotification(activityTimer.notificationId);
+    void Haptics.selectionAsync();
+    await persistActivityTimer(paused);
+  }
+
+  /** Devam et — bildirim YALNIZ KALAN süre için yeniden planlanır. */
+  async function resumeActivityMeasurement() {
+    if (!activityTimer || activityTimer.status !== 'paused') return;
+    const resumed = resumeActivityTimer(activityTimer, Date.now());
+    setClockNow(Date.now());
+    void Haptics.selectionAsync();
+    await persistActivityTimer(resumed);
+    void scheduleActivityTarget(resumed);
+  }
+
+  /**
+   * ÖLÇÜMÜ İPTAL ET.
+   *
+   * Yalnız kronometreyi atar; daha önce KAYDEDİLMİŞ veritabanı kaydına
+   * DOKUNMAZ. "Yeniden ölç" sırasında vazgeçen kullanıcı eski kaydını korur.
+   */
+  function confirmCancelMeasurement() {
+    if (!activityTimer) return;
+    const timer = activityTimer;
+
+    Alert.alert(t('day.cancelMeasurement'), t('day.cancelMeasurementBody'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      {
+        text: t('day.cancelMeasurement'),
+        style: 'destructive',
+        onPress: () => {
+          void cancelActivityTargetNotification(timer.notificationId);
+          void removeActivityTimer(
+            getActivityTimerStorageKey(timer.sessionId, timer.programExerciseId),
+            timer.timerId,
+          );
+          setActivityTimer(undefined);
+          setIsFinishingActivity(false);
+          setActivityError(undefined);
+        },
+      },
+    ]);
+  }
+
+  /**
+   * BİTİR — ölçümü durdurur ve onay adımını açar.
+   *
+   * Bu adımda veritabanına HENÜZ YAZILMAZ; kullanıcı `Kaydet ve bitir` demeden
+   * kayıt oluşmaz. Hedefin dolması da aktiviteyi otomatik bitirmez.
+   */
+  async function finishActivityMeasurement() {
+    if (!activityTimer) return;
+    if (activityTimer.status === 'running') {
+      await pauseActivityMeasurement();
+    }
+    setIsFinishingActivity(true);
+  }
+
+  /**
+   * AKTİVİTE KAYDI — doğrula, kaydet, sonra ÖNGÖRÜLEN toplamla bitişe karar ver.
+   *
+   * Karar `activityTotals` state'ine DEĞİL, `saveActivityRecord`'un döndürdüğü
+   * öngörülen toplama dayanır: state bu render'da henüz güncellenmemiştir ve
+   * stale closure sessizce yanlış karar verirdi.
+   */
+  async function submitActivity() {
+    if (!activeCardioExercise || isActivityPending) return;
+
+    setActivityError(undefined);
+
+    /**
+     * SÜRE KRONOMETREDEN GELİR — elle girilemez.
+     *
+     * Ölçüm yoksa kayıt yapılmaz: bu, "kullanıcı bitirmeden DB'ye yazılmaz"
+     * kuralının istemci tarafındaki son kapısıdır.
+     */
+    if (!activityTimer) {
+      setActivityError(t('day.durationRequired'));
+      return;
+    }
+    const measuredSeconds = getActivityTimerProgress(activityTimer, Date.now()).elapsedSeconds;
+    if (
+      measuredSeconds < ACTIVITY_DURATION_SECONDS_MIN ||
+      measuredSeconds > ACTIVITY_DURATION_SECONDS_MAX
+    ) {
+      setActivityError(t('day.durationRange'));
+      return;
+    }
+    const duration = { ok: true as const, value: measuredSeconds };
+
+    /**
+     * Mesafe `distance` türünde ZORUNLU, `duration` türünde İSTEĞE BAĞLIDIR.
+     * Süre her iki türde de zorunludur (kolon `not null`).
+     */
+    const distanceBounds = {
+      max: ACTIVITY_DISTANCE_METERS_MAX,
+      min: ACTIVITY_DISTANCE_METERS_MIN,
+    };
+    const distance =
+      activeCardioExercise.trackingMode === 'distance'
+        ? parseKilometersToMeters(activityDistanceInput, distanceBounds)
+        : parseOptionalKilometersToMeters(activityDistanceInput, distanceBounds);
+    if (!distance.ok) {
+      setActivityError(
+        distance.reason === 'empty'
+          ? t('day.distanceRequired')
+          : distance.reason === 'range'
+            ? t('day.distanceRange')
+            : t('day.distanceInvalid'),
+      );
+      return;
+    }
+
+    const rpe = parseOptionalRpe(activityRpeInput);
+    if (!rpe.ok) {
+      setActivityError(t('day.rpeValidation'));
+      return;
+    }
+
+    const performance: ActivityPerformance = {
+      distanceMeters: distance.value,
+      durationSeconds: duration.value,
+      rpe: rpe.value,
+    };
+
+    setIsActivityPending(true);
+    const finishedTimer = activityTimer;
+    try {
+      const { activityTotals: projectedTotals } = await saveActivityRecord(
+        todayKey,
+        activeCardioExercise.id,
+        performance,
+      );
+
+      /**
+       * KRONOMETRE KAYDI YALNIZCA BAŞARILI YAZMADAN SONRA TEMİZLENİR.
+       *
+       * `saveActivityRecord` hata fırlatırsa buraya hiç gelinmez ve ölçüm hem
+       * ekranda hem depoda DURUR — kullanıcı ağ hatasında emeğini kaybetmez.
+       * Bekleyen hedef bildirimi de burada iptal edilir.
+       */
+      void cancelActivityTargetNotification(finishedTimer.notificationId);
+      await removeActivityTimer(
+        getActivityTimerStorageKey(finishedTimer.sessionId, finishedTimer.programExerciseId),
+        finishedTimer.timerId,
+      );
+      setActivityTimer(undefined);
+      setIsFinishingActivity(false);
+
+      /**
+       * Bitiş kararı BÜTÜN günün egzersizleri üzerinden, ortak saf çekirdekten
+       * verilir. Karışık günde yalnız strength ya da yalnız aktivite
+       * tamamlanması yetmez; yalnız kardiyo gününde hedef dolunca biter.
+       */
+      const completesWholeWorkout = completesWorkoutAfterActivity({
+        activityTotals: projectedTotals,
+        completedSetCounts,
+        dateKey: todayKey,
+        exercises: allDayExercises,
+        getSetProgressKey,
+      });
+
+      if (completesWholeWorkout) {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        if (workoutSession?.status === 'running') {
+          await finishWorkout(workoutSession.id);
+        }
+        void clearRestTimer();
+        return;
+      }
+
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch (error) {
+      showWorkoutError(t('day.activitySaveFailed'), error, t);
+    } finally {
+      setIsActivityPending(false);
+    }
+  }
+
+  /**
+   * KAYDI TEMİZLE — onay ister.
+   *
+   * Verilmiş ödüller GERİ ALINMAZ; bu, mevcut set undo davranışıyla birebir
+   * aynıdır (`undoCompletedSet` de defteri geri sarmaz) ve onay metninde
+   * kullanıcıya açıkça söylenir.
+   */
+  function confirmClearActivity() {
+    if (!activeCardioExercise || !existingActivityRecord) return;
+    const recordId = existingActivityRecord.id;
+
+    Alert.alert(
+      t('day.clearActivityTitle'),
+      t('day.clearActivityBody', { name: activeCardioExerciseName }),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('day.clearActivity'),
+          style: 'destructive',
+          onPress: () => {
+            setIsActivityPending(true);
+            void deleteActivityRecord(recordId)
+              .then(() => {
+                setActivityDistanceInput('');
+                setActivityRpeInput('');
+                setActivityError(undefined);
+              })
+              .catch((error) => showWorkoutError(t('day.activityDeleteFailed'), error, t))
+              .finally(() => setIsActivityPending(false));
+          },
+        },
+      ],
+    );
+  }
+
+  async function handleExerciseSelection(
+    exerciseId: string,
+    isComplete: boolean,
+    /**
+     * Kardiyo satırı, hedefi dolmamış olsa bile tamamlanmış oturumu devam
+     * ettirir: kullanıcı kaydını düzeltebilmelidir ve yazma yolu yalnızca
+     * `running` oturumda açıktır. Mevcut resume sözleşmesi yeniden kullanılır,
+     * yeni bir akış tasarlanmaz.
+     */
+    alwaysResume = false,
+  ) {
     setSelectedExerciseId(exerciseId);
     setIsManualSelection(isComplete);
 
     // Son planlı set antrenmanı otomatik bitirir. Kullanıcı tamamlanmış
     // bir egzersize yeniden dokunursa aynı oturumu ekstra set için devam ettir.
-    if (!isComplete || workoutSession?.status !== 'completed') return;
+    if ((!isComplete && !alwaysResume) || workoutSession?.status !== 'completed') return;
 
     setIsWorkoutActionPending(true);
     try {
@@ -566,6 +1094,42 @@ export default function WorkoutDayScreen() {
   }
 
   async function finishCurrentWorkout(sessionId: string) {
+    /**
+     * KAYDEDİLMEMİŞ ÖLÇÜM VARSA kullanıcı uyarılır; kronometre sessizce çöpe
+     * atılmaz. Üç seçenek de mevcut akışları yeniden kullanır.
+     */
+    if (activityTimer) {
+      Alert.alert(
+        t('day.runningActivityTitle'),
+        t('day.runningActivityBody', { name: activityTimer.exerciseName }),
+        [
+          {
+            text: t('day.returnToActivity'),
+            onPress: () => {
+              setSelectedExerciseId(activityTimer.programExerciseId);
+              setIsManualSelection(true);
+            },
+          },
+          { text: t('day.saveActivity'), onPress: () => void finishActivityMeasurement() },
+          {
+            text: t('day.cancelMeasurement'),
+            style: 'destructive',
+            onPress: () => {
+              void cancelActivityTargetNotification(activityTimer.notificationId);
+              void removeActivityTimer(
+                getActivityTimerStorageKey(activityTimer.sessionId, activityTimer.programExerciseId),
+                activityTimer.timerId,
+              );
+              setActivityTimer(undefined);
+              setIsFinishingActivity(false);
+              void finishCurrentWorkout(sessionId);
+            },
+          },
+        ],
+      );
+      return;
+    }
+
     setIsWorkoutActionPending(true);
     try {
       await finishWorkout(sessionId);
@@ -750,45 +1314,99 @@ export default function WorkoutDayScreen() {
    * Kardiyo satırı listede görünmeye devam eder ama bu fazda düzenlenemez;
    * sessizce yanlış alanları göstermek yerine açıkça hiçbir şey yapmaz.
    */
+  /**
+   * Düzenleyici KAYITLI türle açılır ve o türün hedef alanlarını doldurur.
+   * Tür seçici burada YALNIZCA okunur bir göstergedir: mevcut bir egzersizin
+   * türünü değiştirmek geçmiş kanıtı bozar ve sunucudaki
+   * `program_exercises_mode_guard` bunu zaten reddeder.
+   */
   function openExerciseEditor(exercise: ProgramExercise, exerciseName: string) {
-    if (!isStrengthExercise(exercise)) return;
     setEditingExerciseId(exercise.id);
     setEditingExerciseName(exerciseName);
+    setEditingTrackingMode(exercise.trackingMode);
     setExerciseVisualDraft(getExerciseVisual(exercise.visual));
-    setTargetSetsDraft(String(exercise.targetSets));
-    setTargetRepsDraft(exercise.targetReps);
-    setRestSecondsDraft(String(exercise.restSeconds));
+
+    if (exercise.trackingMode === 'sets_reps') {
+      setTargetSetsDraft(String(exercise.targetSets));
+      setTargetRepsDraft(exercise.targetReps);
+      setRestSecondsDraft(String(exercise.restSeconds));
+      return;
+    }
+    if (exercise.trackingMode === 'duration') {
+      setTargetDurationDraft(String(Math.round(exercise.targetDurationSeconds / 60)));
+      return;
+    }
+    setTargetDistanceDraft(formatMetersAsKilometers(exercise.targetDistanceMeters));
   }
 
   async function saveExerciseChanges() {
     if (!editingExerciseId) return;
 
-    const targetSets = Number(targetSetsDraft);
-    const restSeconds = Number(restSecondsDraft);
-    const targetReps = targetRepsDraft.trim();
+    /**
+     * Hedef AYNI MOD İÇİNDE düzenlenir. Yük `trackingMode`'u yalnızca hangi
+     * kolonların yazılacağını seçmek için taşır; UPDATE'e hiç konmaz.
+     */
+    let updates: Parameters<typeof updateExercise>[3];
 
-    if (!Number.isInteger(targetSets) || targetSets < 1 || targetSets > 20) {
-      Alert.alert(t('day.setsInvalidTitle'), t('day.setsInvalidBody'));
-      return;
-    }
+    if (editingTrackingMode === 'sets_reps') {
+      const targetSets = Number(targetSetsDraft);
+      const restSeconds = Number(restSecondsDraft);
+      const targetReps = targetRepsDraft.trim();
 
-    if (!/^\d{1,2}(-\d{1,2})?$/.test(targetReps)) {
-      Alert.alert(t('day.repsInvalidTitle'), t('day.repsInvalidBody'));
-      return;
-    }
+      if (!Number.isInteger(targetSets) || targetSets < 1 || targetSets > 20) {
+        Alert.alert(t('day.setsInvalidTitle'), t('day.setsInvalidBody'));
+        return;
+      }
 
-    if (!Number.isInteger(restSeconds) || restSeconds < 0 || restSeconds > 600) {
-      Alert.alert(t('day.restInvalidTitle'), t('day.restInvalidBody'));
-      return;
-    }
+      if (!/^\d{1,2}(-\d{1,2})?$/.test(targetReps)) {
+        Alert.alert(t('day.repsInvalidTitle'), t('day.repsInvalidBody'));
+        return;
+      }
 
-    try {
-      await updateExercise(selectedProgramId, selectedDayId, editingExerciseId, {
+      if (!Number.isInteger(restSeconds) || restSeconds < 0 || restSeconds > 600) {
+        Alert.alert(t('day.restInvalidTitle'), t('day.restInvalidBody'));
+        return;
+      }
+
+      updates = {
+        trackingMode: 'sets_reps',
         restSeconds,
         targetReps,
         targetSets,
         visual: exerciseVisualDraft,
+      };
+    } else if (editingTrackingMode === 'duration') {
+      const parsed = parseMinutesToSeconds(targetDurationDraft, {
+        max: TARGET_DURATION_SECONDS_MAX,
+        min: TARGET_DURATION_SECONDS_MIN,
       });
+      if (!parsed.ok) {
+        Alert.alert(t('addExercise.durationInvalidTitle'), t('addExercise.durationInvalidBody'));
+        return;
+      }
+      updates = {
+        trackingMode: 'duration',
+        targetDurationSeconds: parsed.value,
+        visual: exerciseVisualDraft,
+      };
+    } else {
+      const parsed = parseKilometersToMeters(targetDistanceDraft, {
+        max: TARGET_DISTANCE_METERS_MAX,
+        min: TARGET_DISTANCE_METERS_MIN,
+      });
+      if (!parsed.ok) {
+        Alert.alert(t('addExercise.distanceInvalidTitle'), t('addExercise.distanceInvalidBody'));
+        return;
+      }
+      updates = {
+        trackingMode: 'distance',
+        targetDistanceMeters: parsed.value,
+        visual: exerciseVisualDraft,
+      };
+    }
+
+    try {
+      await updateExercise(selectedProgramId, selectedDayId, editingExerciseId, updates);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setEditingExerciseId(null);
     } catch (error) {
@@ -855,7 +1473,9 @@ export default function WorkoutDayScreen() {
   const daySummaryRow = (
     <View style={styles.summaryRow}>
       <Text style={styles.summaryText}>
-        {t('day.summary', { exercises: day.exercises.length, sets: totalTargetSets })}
+        {hasCardioExercises
+          ? t('day.exerciseSummary', { exercises: day.exercises.length })
+          : t('day.summary', { exercises: day.exercises.length, sets: totalTargetSets })}
       </Text>
       {isPlanMode && !day.isOffDay && (
         <Pressable
@@ -1054,16 +1674,19 @@ export default function WorkoutDayScreen() {
 
             <Pressable
               accessibilityHint={t('a11y.toggleTimer')}
-              accessibilityLabel={t('day.setsProgress', {
-                completed: totalCompletedSets,
-                total: totalTargetSets,
+              accessibilityLabel={t('day.workoutProgress', {
+                completed: dayProgress.doneUnits,
+                total: dayProgress.targetUnits,
               })}
               accessibilityRole="button"
               disabled={!workoutSession || isWorkoutActionPending}
               onPress={() => void handleWorkoutToggle()}
               style={({ pressed }) => [styles.topBarCenter, pressed && styles.pressed]}>
               <Text style={styles.topBarStatus}>
-                {t('day.setsProgress', { completed: totalCompletedSets, total: totalTargetSets })} ·{' '}
+                {t('day.workoutProgress', {
+                  completed: dayProgress.doneUnits,
+                  total: dayProgress.targetUnits,
+                })} ·{' '}
                 {formatDuration(elapsedSeconds)}
                 {workoutSession?.status === 'paused' ? ` · ${t('day.resumeWorkout')}` : ''}
               </Text>
@@ -1083,7 +1706,13 @@ export default function WorkoutDayScreen() {
             <View
               style={[
                 styles.topBarProgressFill,
-                { width: `${totalTargetSets ? (totalCompletedSets / totalTargetSets) * 100 : 0}%` },
+                {
+                  width: `${
+                    dayProgress.targetUnits
+                      ? (dayProgress.doneUnits / dayProgress.targetUnits) * 100
+                      : 0
+                  }%`,
+                },
               ]}
             />
           </View>
@@ -1156,13 +1785,274 @@ export default function WorkoutDayScreen() {
               <View style={styles.successCard}>
                 <Ionicons name="checkmark-circle" size={20} color={colors.disciplineCompleted} />
                 <View style={styles.successText}>
-                  <Text style={styles.successTitle}>{t('day.allSetsDone')}</Text>
+                  <Text style={styles.successTitle}>{t('day.workoutComplete')}</Text>
                   <Text style={styles.successBody}>{t('day.allSetsDoneBody')}</Text>
                 </View>
               </View>
             )}
 
-            {activeExercise && (
+            {/*
+              KARDİYO PANELİ — set paneliyle AYNI konumda, aynı ritimde.
+              Set paneli hiç render edilmez: iki panel asla üst üste binmez.
+            */}
+            {activeCardioExercise && (
+              <View style={styles.activeSetBlock}>
+                <Text style={styles.activeSetLabel}>
+                  {activeCardioExercise.trackingMode === 'duration'
+                    ? t('day.targetDurationLabel', {
+                        minutes: Math.round(activeCardioExercise.targetDurationSeconds / 60),
+                      })
+                    : t('day.targetDistanceLabel', {
+                        km: formatMetersAsKilometers(activeCardioExercise.targetDistanceMeters),
+                      })}
+                </Text>
+                <Text numberOfLines={2} style={styles.activeExerciseName}>
+                  {activeCardioExerciseName}
+                </Text>
+
+                {/*
+                  KRONOMETRE — ekranın görsel odağı.
+                  Değer `setInterval` sayısından değil, `clockNow` ile gerçek
+                  saat farkından türetilir; arka planda geçen süre kaybolmaz.
+                */}
+                <View
+                  accessibilityLabel={t('day.activityTimerLabel', { name: activeCardioExerciseName })}
+                  accessibilityRole="timer"
+                  accessibilityValue={{ text: activityTimerAccessibilityText }}
+                  style={styles.activityTimerBlock}>
+                  <Text style={styles.activityTimerValue}>
+                    {formatActivityTimerValue(activityProgress?.elapsedSeconds ?? 0)}
+                  </Text>
+                  <Text style={styles.activityTimerCaption}>
+                    {activityProgress === undefined
+                      ? activeCardioExercise.trackingMode === 'duration'
+                        ? t('day.targetDurationLabel', {
+                            minutes: Math.round(activeCardioExercise.targetDurationSeconds / 60),
+                          })
+                        : t('day.targetDistanceLabel', {
+                            km: formatMetersAsKilometers(activeCardioExercise.targetDistanceMeters),
+                          })
+                      : activityProgress.isTargetReached
+                        ? `${t('day.targetReached')} · ${t('day.overtimeLabel')} ${formatActivityOvertime(activityProgress.overtimeSeconds)}`
+                        : activeCardioExercise.trackingMode === 'duration'
+                          ? `${t('day.targetRemaining')} ${formatActivityTimerValue(activityProgress.remainingSeconds)}`
+                          : activityProgress.status === 'paused'
+                            ? t('day.activityPausedState')
+                            : t('day.activityRunningState')}
+                  </Text>
+                  {activityProgress?.status === 'paused' && !activityProgress.isTargetReached && (
+                    <Text style={styles.activityTimerState}>{t('day.activityPausedState')}</Text>
+                  )}
+                </View>
+
+                {/* Kayıtlı ölçüm özeti — yeni ölçüm başlamadan önce görünür. */}
+                {!activityTimer && existingActivityRecord && (
+                  <Text style={styles.activityHint}>
+                    {t('day.savedActivitySummary')} ·{' '}
+                    {formatActivityTimerValue(existingActivityRecord.durationSeconds)}
+                    {existingActivityRecord.distanceMeters === undefined
+                      ? ''
+                      : ` · ${formatMetersAsKilometers(existingActivityRecord.distanceMeters)} ${t('day.kmUnit')}`}
+                  </Text>
+                )}
+
+                {/*
+                  BİTİRME ADIMI — yeni modal yığını YOK; aynı panelin içinde
+                  compact onay. Ölçülen süre yukarıdaki kronometrede görünür ve
+                  DEĞİŞTİRİLEMEZ; burada yalnız mesafe ve RPE girilir.
+                */}
+                {isFinishingActivity && (
+                  <>
+                <View style={styles.activityFieldRow}>
+                  <Text style={styles.activityFieldLabel}>
+                    {t('day.actualDistance')}
+                    {activeCardioExercise.trackingMode === 'duration'
+                      ? ` · ${t('day.optional')}`
+                      : ''}
+                  </Text>
+                  <TextInput
+                    accessibilityHint={t('day.kmUnit')}
+                    accessibilityLabel={t('day.actualDistance')}
+                    editable={canCompleteSets && !isActivityPending}
+                    keyboardType="decimal-pad"
+                    maxLength={7}
+                    onChangeText={setActivityDistanceInput}
+                    placeholder="—"
+                    placeholderTextColor={colors.textTertiary}
+                    selectTextOnFocus
+                    style={styles.activityFieldInput}
+                    value={activityDistanceInput}
+                  />
+                  <Text style={styles.activityFieldUnit}>{t('day.kmUnit')}</Text>
+                </View>
+
+                <View style={styles.activityFieldRow}>
+                  <Text style={styles.activityFieldLabel}>
+                    {t('day.rpe')} · {t('day.optional')}
+                  </Text>
+                  <TextInput
+                    accessibilityHint={t('day.rpeHint')}
+                    accessibilityLabel={t('day.rpe')}
+                    editable={canCompleteSets && !isActivityPending}
+                    keyboardType="decimal-pad"
+                    maxLength={4}
+                    onChangeText={setActivityRpeInput}
+                    placeholder="—"
+                    placeholderTextColor={colors.textTertiary}
+                    selectTextOnFocus
+                    style={styles.activityFieldInput}
+                    value={activityRpeInput}
+                  />
+                  <Text style={styles.activityFieldUnit} />
+                </View>
+
+                <Text style={styles.activityHint}>{t('day.rpeHint')}</Text>
+
+                {/* Tempo TÜRETİLİR; hiçbir yerde saklanmaz. */}
+                {activePaceSecondsPerKm !== undefined && (
+                  <Text style={styles.activityPace}>
+                    {t('day.paceLabel')} · {formatDuration(Math.round(activePaceSecondsPerKm))}{' '}
+                    {t('day.paceUnit')}
+                  </Text>
+                )}
+
+                {activityError && <Text style={styles.validationError}>{activityError}</Text>}
+
+                <MotionPressable
+                  accessibilityLabel={t('day.activityDoneLabel', { name: activeCardioExerciseName })}
+                  accessibilityRole="button"
+                  accessibilityState={{ busy: isActivityPending, disabled: isActivityDisabled }}
+                  disabled={isActivityDisabled}
+                  onPress={() => void submitActivity()}
+                  style={[
+                    styles.completeSetPill,
+                    isActivityDisabled && styles.completeSetPillDisabled,
+                  ]}>
+                  {isActivityPending ? (
+                    <ActivityIndicator color={colors.background} size="small" />
+                  ) : (
+                    <Text style={styles.completeSetPillText}>
+                      {canCompleteSets
+                        ? t('day.saveAndFinishActivity')
+                        : !workoutSession
+                          ? t('day.startFirst')
+                          : workoutSession.status === 'paused'
+                            ? t('day.workoutPaused')
+                            : t('day.availableOnScheduledDay')}
+                    </Text>
+                  )}
+                </MotionPressable>
+
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={isActivityPending}
+                  onPress={() => setIsFinishingActivity(false)}
+                  style={({ pressed }) => [styles.activitySecondaryButton, pressed && styles.pressed]}>
+                  <Text style={styles.activitySecondaryText}>{t('day.backToWorkout')}</Text>
+                </Pressable>
+                  </>
+                )}
+
+                {/*
+                  KRONOMETRE KONTROLLERİ — bitirme adımında gizlenir.
+                  `Duraklat`/`Devam et` ikincil çerçeveli, `Bitir` birincil dolu
+                  düğmedir; ikisi görsel olarak net ayrılır. Yıkıcı renk YALNIZ
+                  ölçüm iptalinde kullanılır.
+                */}
+                {!isFinishingActivity && (
+                  <>
+                    {activityError && <Text style={styles.validationError}>{activityError}</Text>}
+
+                    {!activityTimer ? (
+                      <MotionPressable
+                        accessibilityLabel={t('day.activityDoneLabel', { name: activeCardioExerciseName })}
+                        accessibilityRole="button"
+                        accessibilityState={{ disabled: isActivityDisabled }}
+                        disabled={isActivityDisabled}
+                        onPress={() => void startActivityMeasurement()}
+                        style={[
+                          styles.completeSetPill,
+                          isActivityDisabled && styles.completeSetPillDisabled,
+                        ]}>
+                        <Text style={styles.completeSetPillText}>
+                          {canCompleteSets
+                            ? existingActivityRecord
+                              ? t('day.remeasureActivity')
+                              : t('day.startActivity')
+                            : !workoutSession
+                              ? t('day.startFirst')
+                              : workoutSession.status === 'paused'
+                                ? t('day.workoutPaused')
+                                : t('day.availableOnScheduledDay')}
+                        </Text>
+                      </MotionPressable>
+                    ) : (
+                      <View style={styles.activityControls}>
+                        <Pressable
+                          accessibilityRole="button"
+                          disabled={isActivityPending}
+                          onPress={() =>
+                            void (activityTimer.status === 'running'
+                              ? pauseActivityMeasurement()
+                              : resumeActivityMeasurement())
+                          }
+                          style={({ pressed }) => [
+                            styles.activitySecondaryButton,
+                            pressed && styles.pressed,
+                          ]}>
+                          <Text
+                            adjustsFontSizeToFit
+                            minimumFontScale={0.9}
+                            numberOfLines={1}
+                            style={[styles.activitySecondaryText, styles.activityButtonText]}>
+                            {activityTimer.status === 'running'
+                              ? t('day.pauseActivity')
+                              : t('day.resumeActivity')}
+                          </Text>
+                        </Pressable>
+                        <MotionPressable
+                          accessibilityRole="button"
+                          disabled={isActivityPending}
+                          onPress={() => void finishActivityMeasurement()}
+                          style={[styles.completeSetPill, styles.activityPrimaryButton]}>
+                          <Text
+                            adjustsFontSizeToFit
+                            minimumFontScale={0.9}
+                            numberOfLines={1}
+                            style={[styles.completeSetPillText, styles.activityButtonText]}>
+                            {t('day.finishActivity')}
+                          </Text>
+                        </MotionPressable>
+                      </View>
+                    )}
+
+                    {activityTimer && (
+                      <Pressable
+                        accessibilityLabel={t('day.cancelMeasurement')}
+                        accessibilityRole="button"
+                        disabled={isActivityPending}
+                        onPress={confirmCancelMeasurement}
+                        style={({ pressed }) => [styles.clearActivityButton, pressed && styles.pressed]}>
+                        <Text style={styles.clearActivityText}>{t('day.cancelMeasurement')}</Text>
+                      </Pressable>
+                    )}
+                  </>
+                )}
+
+                {existingActivityRecord && !activityTimer && !isFinishingActivity && (
+                  <Pressable
+                    accessibilityLabel={t('day.clearActivity')}
+                    accessibilityRole="button"
+                    disabled={isActivityPending}
+                    onPress={confirmClearActivity}
+                    style={({ pressed }) => [styles.clearActivityButton, pressed && styles.pressed]}>
+                    <Text style={styles.clearActivityText}>{t('day.clearActivity')}</Text>
+                  </Pressable>
+                )}
+              </View>
+            )}
+
+            {!activeCardioExercise && activeExercise && (
               <View style={styles.activeSetBlock}>
                 <Text style={styles.activeSetLabel}>
                   {t('day.setOfTotal', {
@@ -1391,24 +2281,35 @@ export default function WorkoutDayScreen() {
               <View style={styles.panelGrabber} />
               <Text style={styles.panelTitle}>{t('day.allExercises')}</Text>
 
-              {dayExercises.map((exercise) => {
+              {/*
+                Liste günün BÜTÜN egzersizlerini gösterir; kardiyo satırları
+                gizlenmez. İlerleme metni türe göre değişir, tamamlanma kararı
+                ortak saf çekirdekten gelir.
+              */}
+              {allDayExercises.map((exercise) => {
                 const exerciseName = getProgramExerciseName(exercise.exerciseId, exercise.customExerciseName);
-                const completedSets = Math.min(
+                const exerciseProgress = resolveExerciseProgress(
+                  exercise,
                   completedSetCounts[getSetProgressKey(todayKey, exercise.id)] ?? 0,
-                  exercise.targetSets,
+                  activityTotals[getActivityProgressKey(todayKey, exercise.id)],
                 );
-                const isComplete = completedSets >= exercise.targetSets;
+                const isComplete = exerciseProgress.doneUnits >= exerciseProgress.targetUnits;
                 /**
-                 * Panelde GERÇEK set sayısı gösterilir: hedefi 3 olan bir
-                 * egzersize ekstra set eklenirse `4/3` görünür. Disiplin
-                 * sayacı (`completedSets`) hedefe clamp edilmeye devam eder.
+                 * Strength'te panelde GERÇEK set sayısı gösterilir: hedefi 3 olan
+                 * bir egzersize ekstra set eklenirse `4/3` görünür. Disiplin
+                 * sayacı hedefe clamp edilmeye devam eder. Kardiyoda birim
+                 * ikilidir; ilerleme `0/1` ya da `1/1` olarak okunur.
                  */
-                const recordedSets = workoutSets.filter(
-                  (workoutSet) =>
-                    workoutSet.dateKey === todayKey && workoutSet.programExerciseId === exercise.id,
-                ).length;
-                const displayedSets = Math.max(completedSets, recordedSets);
-                const isActive = exercise.id === activeExercise?.id;
+                const recordedSets = isStrengthExercise(exercise)
+                  ? workoutSets.filter(
+                      (workoutSet) =>
+                        workoutSet.dateKey === todayKey &&
+                        workoutSet.programExerciseId === exercise.id,
+                    ).length
+                  : 0;
+                const displayedSets = Math.max(exerciseProgress.doneUnits, recordedSets);
+                const isActive =
+                  exercise.id === (activeCardioExercise?.id ?? activeExercise?.id);
 
                 return (
                   <Pressable
@@ -1425,7 +2326,11 @@ export default function WorkoutDayScreen() {
                        * bozulurdu. Her dokunuş bayrağı yeniden yazdığı için
                        * eski mod başka egzersize taşınmaz.
                        */
-                      void handleExerciseSelection(exercise.id, isComplete);
+                      void handleExerciseSelection(
+                        exercise.id,
+                        isComplete,
+                        isCardioExercise(exercise),
+                      );
                     }}
                     style={({ pressed }) => [styles.panelRow, pressed && styles.pressed]}>
                     <View style={styles.panelMarker}>
@@ -1441,7 +2346,7 @@ export default function WorkoutDayScreen() {
                       {exerciseName}
                     </Text>
                     <Text style={[styles.panelSetCount, isComplete && styles.panelSetCountComplete]}>
-                      {displayedSets}/{exercise.targetSets}
+                      {displayedSets}/{exerciseTargetUnits(exercise)}
                     </Text>
                   </Pressable>
                 );
@@ -1486,28 +2391,74 @@ export default function WorkoutDayScreen() {
                 <Text numberOfLines={2} style={styles.exerciseEditorSubtitle}>{editingExerciseName}</Text>
               </View>
 
-              <View style={styles.exerciseTargetFields}>
-                <ExerciseTargetInput
+              {/*
+                Tür seçici KİLİTLİDİR: kayıtlı bir egzersizin takip biçimini
+                değiştirmek geçmiş disiplin ve ödül kanıtını bozar. Kullanıcı
+                sunucu hatasına düşürülmez; kural burada açıkça anlatılır.
+              */}
+              <View style={styles.exerciseTrackingMode}>
+                <TrackingModeSelector
                   colors={colors}
-                  label={t('day.sets')}
-                  onChangeText={setTargetSetsDraft}
-                  value={targetSetsDraft}
-                />
-                <ExerciseTargetInput
-                  colors={colors}
-                  keyboardType="default"
-                  label={t('day.reps')}
-                  onChangeText={setTargetRepsDraft}
-                  value={targetRepsDraft}
-                />
-                <ExerciseTargetInput
-                  colors={colors}
-                  label={t('day.rest')}
-                  onChangeText={setRestSecondsDraft}
-                  suffix={t('day.secondsSuffix')}
-                  value={restSecondsDraft}
+                  disabled
+                  disabledHint={t('day.trackingModeLocked')}
+                  labels={{
+                    distance: t('day.trackingModeDistance'),
+                    duration: t('day.trackingModeDuration'),
+                    sets_reps: t('day.trackingModeSetsReps'),
+                  }}
+                  onChange={setEditingTrackingMode}
+                  title={t('day.trackingModeLabel')}
+                  value={editingTrackingMode}
                 />
               </View>
+
+              {editingTrackingMode === 'sets_reps' && (
+                <View style={styles.exerciseTargetFields}>
+                  <ExerciseTargetInput
+                    colors={colors}
+                    label={t('day.sets')}
+                    onChangeText={setTargetSetsDraft}
+                    value={targetSetsDraft}
+                  />
+                  <ExerciseTargetInput
+                    colors={colors}
+                    keyboardType="default"
+                    label={t('day.reps')}
+                    onChangeText={setTargetRepsDraft}
+                    value={targetRepsDraft}
+                  />
+                  <ExerciseTargetInput
+                    colors={colors}
+                    label={t('day.rest')}
+                    onChangeText={setRestSecondsDraft}
+                    suffix={t('day.secondsSuffix')}
+                    value={restSecondsDraft}
+                  />
+                </View>
+              )}
+
+              {editingTrackingMode === 'duration' && (
+                <View style={styles.exerciseTargetFields}>
+                  <ExerciseTargetInput
+                    colors={colors}
+                    label={t('day.targetDuration')}
+                    onChangeText={setTargetDurationDraft}
+                    value={targetDurationDraft}
+                  />
+                </View>
+              )}
+
+              {editingTrackingMode === 'distance' && (
+                <View style={styles.exerciseTargetFields}>
+                  <ExerciseTargetInput
+                    colors={colors}
+                    keyboardType="decimal-pad"
+                    label={t('day.targetDistance')}
+                    onChangeText={setTargetDistanceDraft}
+                    value={targetDistanceDraft}
+                  />
+                </View>
+              )}
 
               <View style={styles.exerciseVisualField}>
                 <Text style={styles.exerciseVisualLabel}>{t('day.milestoneMarker')}</Text>
@@ -1620,7 +2571,7 @@ function ExerciseTargetInput({
   value,
 }: {
   colors: ThemeColors;
-  keyboardType?: 'number-pad' | 'default';
+  keyboardType?: 'number-pad' | 'default' | 'decimal-pad';
   label: string;
   onChangeText: (value: string) => void;
   suffix?: string;
@@ -1715,6 +2666,86 @@ function createStyles(colors: ThemeColors, feature: FeatureColors) {
       textAlign: 'center',
     },
     valueUnit: { color: colors.textSecondary, fontSize: 13 },
+
+    /**
+     * KARDİYO YARDIMCI ALANLARI — ana süre/mesafe değerinden görsel olarak
+     * İKİNCİLDİR: tek satır, ayrı kart YOK, yığılmış renkli kutu YOK.
+     * Dokunma alanı 44 pt'nin altına düşmez.
+     */
+    activityFieldRow: {
+      alignItems: 'center',
+      alignSelf: 'stretch',
+      flexDirection: 'row',
+      gap: 12,
+      minHeight: Layout.minTouchSize,
+    },
+    activityFieldLabel: { color: colors.textSecondary, flex: 1, fontSize: 13 },
+    activityFieldInput: {
+      borderBottomColor: colors.inputBorder,
+      borderBottomWidth: Layout.hairline,
+      color: colors.text,
+      fontSize: 20,
+      fontVariant: ['tabular-nums'],
+      fontWeight: '400',
+      minHeight: Layout.minTouchSize,
+      minWidth: 84,
+      paddingVertical: 4,
+      textAlign: 'right',
+    },
+    activityFieldUnit: { color: colors.textSecondary, fontSize: 13, minWidth: 20 },
+    activityHint: { color: colors.textTertiary, fontSize: 12, lineHeight: 16, textAlign: 'center' },
+    activityPace: {
+      color: colors.textSecondary,
+      fontSize: 13,
+      fontVariant: ['tabular-nums'],
+      textAlign: 'center',
+    },
+    /**
+     * KRONOMETRE — panelin görsel odağı. Hedef/kalan/fazla süre ikincil
+     * hiyerarşide, aynı tipografik aileden ama belirgin biçimde küçük.
+     */
+    activityTimerBlock: { alignItems: 'center', gap: 4, paddingVertical: 4 },
+    activityTimerValue: {
+      color: colors.text,
+      fontSize: 56,
+      fontVariant: ['tabular-nums'],
+      fontWeight: '200',
+      letterSpacing: 1,
+    },
+    activityTimerCaption: { color: colors.textSecondary, fontSize: 13, textAlign: 'center' },
+    activityTimerState: { color: colors.textTertiary, fontSize: 12 },
+    /** Birincil işlemler alt başparmak bölgesinde, yan yana ve net ayrık. */
+    activityControls: { alignSelf: 'stretch', flexDirection: 'row', gap: 10 },
+    activitySecondaryButton: {
+      alignItems: 'center',
+      borderColor: colors.inputBorder,
+      borderRadius: Layout.radiusPill,
+      borderWidth: Layout.hairline,
+      flex: 1,
+      justifyContent: 'center',
+      minHeight: Layout.minTouchSize,
+      minWidth: 0,
+      paddingHorizontal: 16,
+    },
+    activitySecondaryText: { color: colors.text, fontSize: 15, fontWeight: '600' },
+    /**
+     * Yan yana kullanımda `completeSetPill`'in tekil-düğme değerlerini EZER:
+     * dikey hizayı ortalamak yerine `stretch` ile satır yüksekliğine (52 pt)
+     * oturtur, üst boşluğu (`marginTop`) ve sabit `minWidth`'i sıfırlar, dar
+     * yatay padding ile `flex: 1` iki düğmeyi eşit genişliğe getirir. Böylece
+     * `Bitir` ile `Duraklat/Devam et` aynı yükseklik ve hizada kalır.
+     */
+    activityPrimaryButton: {
+      alignSelf: 'stretch',
+      flex: 1,
+      marginTop: 0,
+      minWidth: 0,
+      paddingHorizontal: 16,
+    },
+    /** Yan yana düğme metinleri tek satır ve ortalı görünür. */
+    activityButtonText: { textAlign: 'center' },
+    clearActivityButton: { minHeight: Layout.minTouchSize, justifyContent: 'center', paddingHorizontal: 12 },
+    clearActivityText: { color: colors.danger, fontSize: 14, fontWeight: '500' },
 
     /**
      * Drop set satırı: ana set alanından belirgin biçimde daha KÜÇÜK ama
@@ -1936,6 +2967,7 @@ function createStyles(colors: ThemeColors, feature: FeatureColors) {
     exerciseEditorHeading: { gap: 4 },
     exerciseEditorTitle: { color: colors.text, ...Form.title },
     exerciseEditorSubtitle: { color: colors.textSecondary, ...Type.caption, lineHeight: 18 },
+    exerciseTrackingMode: { marginBottom: 16 },
     exerciseTargetFields: { flexDirection: 'row', gap: 12 },
     // SET / TEKRAR / DİNLENME etiketleri, diğer form etiketleriyle AYNI token.
     exerciseTargetLabel: { color: colors.textSecondary, ...Type.eyebrow },

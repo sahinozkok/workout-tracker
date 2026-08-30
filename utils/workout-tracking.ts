@@ -257,6 +257,77 @@ export function completesWorkoutAfterSet(input: {
 }
 
 /**
+ * Bir aktivite kaydının gün toplamına KATKISI.
+ *
+ * Plandan kopmuş (`programExerciseId` yok) kayıt hiçbir hedefe katkı veremez;
+ * `aggregateActivityTotals` ile AYNI kural.
+ */
+export type ActivityContribution = {
+  dateKey: string;
+  programExerciseId?: string;
+  durationSeconds: number;
+  distanceMeters?: number;
+};
+
+/**
+ * Tek kaydın değişimini toplamlara UYGULAR — yeniden yükleme gerekmeden.
+ *
+ * INSERT'te `previous` yoktur, DELETE'te `next` yoktur, UPDATE'te ikisi de
+ * vardır. UPDATE'te eski katkı ÇIKARILIR ve yeni katkı EKLENİR; iki kaydı
+ * birlikte saymak (yalnızca yeniyi eklemek) aynı egzersizi iki kez kaydetmiş
+ * gibi gösterip günü haksız yere tamamlardı.
+ *
+ * Aynı günün BAŞKA oturumlarından gelen katkılar aynı anahtarda toplandığı için
+ * doğal olarak korunur: delta yalnızca farkı işler, anahtarı sıfırlamaz.
+ * Negatife düşme matematiksel olarak mümkün olmasa da `Math.max` ile kapatılır;
+ * bozuk bir sunucu cevabı toplamları negatife çeviremez.
+ */
+export function applyActivityTotalsDelta(
+  totals: Record<string, ActivityTotals>,
+  previous: ActivityContribution | undefined,
+  next: ActivityContribution | undefined,
+): Record<string, ActivityTotals> {
+  const updated: Record<string, ActivityTotals> = { ...totals };
+
+  const shift = (contribution: ActivityContribution | undefined, sign: 1 | -1) => {
+    if (!contribution?.programExerciseId) return;
+    const key = getActivityProgressKey(contribution.dateKey, contribution.programExerciseId);
+    const current = updated[key] ?? EMPTY_TOTALS;
+    updated[key] = {
+      durationSeconds: Math.max(0, current.durationSeconds + sign * contribution.durationSeconds),
+      distanceMeters: Math.max(0, current.distanceMeters + sign * (contribution.distanceMeters ?? 0)),
+    };
+  };
+
+  shift(previous, -1);
+  shift(next, 1);
+  return updated;
+}
+
+/**
+ * Bir aktivite kaydedildikten SONRA bütün gün tamamlandı mı?
+ *
+ * `completesWorkoutAfterSet` ile aynı çekirdeği kullanır; tek fark, kanıtın set
+ * sayacından değil ÖNGÖRÜLEN aktivite toplamlarından gelmesidir. Çağıran taraf
+ * güncellenmiş toplamı `applyActivityTotalsDelta` ile hesaplayıp buraya verir;
+ * böylece karar henüz yazılmamış React state'ine (stale closure) değil, gerçek
+ * kayıt sonucuna dayanır.
+ *
+ * Karışık günde yalnız strength ya da yalnız aktivite tamamlanması YETMEZ;
+ * yalnız kardiyo gününde hedef dolduğunda oturum bitebilir.
+ */
+export function completesWorkoutAfterActivity(input: {
+  dateKey: string;
+  exercises: readonly ProgramExercise[];
+  completedSetCounts: Record<string, number>;
+  activityTotals: Record<string, ActivityTotals>;
+  getSetProgressKey: (dateKey: string, programExerciseId: string) => string;
+}): boolean {
+  const progress = resolveDayProgress(input);
+  return progress.targetUnits > 0 && progress.doneUnits >= progress.targetUnits;
+}
+
+/**
  * Tempo — mesafe ve süreden TÜRETİLİR, hiçbir yerde saklanmaz.
  *
  * Bu fazda hiçbir yüzey göstermez; ileride history/progress için hazır durur.

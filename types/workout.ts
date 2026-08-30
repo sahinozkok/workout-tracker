@@ -64,13 +64,22 @@ export type ProgramExercise =
   | DistanceProgramExercise;
 
 /** Birleşim üyelerini tek tek daraltan `Omit`. Düz `Omit` birleşimi çökertir. */
-type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+export type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
 /** Aktif antrenman ekranı ve set akışı YALNIZCA bu türle çalışır. */
 export function isStrengthExercise(
   exercise: ProgramExercise,
 ): exercise is StrengthProgramExercise {
   return exercise.trackingMode === 'sets_reps';
+}
+
+/** Kardiyo paneli ve aktivite yazma yolu YALNIZCA bu türle çalışır. */
+export type CardioProgramExercise = DurationProgramExercise | DistanceProgramExercise;
+
+export function isCardioExercise(
+  exercise: ProgramExercise,
+): exercise is CardioProgramExercise {
+  return exercise.trackingMode !== 'sets_reps';
 }
 
 export type ProgramIconName =
@@ -186,6 +195,19 @@ export type NewProgramExercise = DistributiveOmit<ProgramExercise, 'id'>;
  * TEMPO SAKLANMAZ. Gerekirse mesafe ve süreden türetilir; bu fazda hiçbir
  * yüzeyde gösterilmez.
  */
+/**
+ * Kullanıcının GERÇEKLEŞTİRDİĞİ kardiyo performansı.
+ *
+ * Süre HER İKİ türde de zorunludur (kolon `not null`); mesafe yalnızca
+ * `distance` türünde zorunludur. Tempo BURADA YOK: mesafe ve süreden türetilir,
+ * hiçbir yerde saklanmaz.
+ */
+export type ActivityPerformance = {
+  durationSeconds: number;
+  distanceMeters?: number;
+  rpe?: number;
+};
+
 export type WorkoutActivityRecord = {
   id: string;
   sessionId: string;

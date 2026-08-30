@@ -19,16 +19,26 @@ import {
   WorkoutSetRecord,
   WorkoutVisual,
   WorkoutActivityRecord,
+  ActivityPerformance,
+  isCardioExercise,
   isStrengthExercise,
 } from '@/types/workout';
 import { toDateKey } from '@/utils/discipline';
+import { clearAllActivityTimers } from '@/utils/activity-timer-storage';
+import { cancelAllActivityTargetNotifications } from '@/utils/activity-notifications';
 import { buildDisciplineStatuses, getSetProgressKey, isScheduledDate } from '@/utils/workout-schedule';
 import {
-  buildStrengthExerciseInsertPayload,
+  buildProgramExerciseInsertPayload,
+  buildProgramExerciseTargetUpdatePayload,
   parseProgramExerciseRow,
   ProgramExerciseRow,
 } from '@/utils/program-exercise';
-import { ActivityTotals, aggregateActivityTotals } from '@/utils/workout-tracking';
+import {
+  ActivityContribution,
+  ActivityTotals,
+  aggregateActivityTotals,
+  applyActivityTotalsDelta,
+} from '@/utils/workout-tracking';
 import {
   getActualSetCount,
   getDisciplineCountAfterUndo,
@@ -41,12 +51,20 @@ import {
  * `program_exercises_mode_guard` de geçmişi olan egzersizde tür değişimini
  * reddeder).
  */
+/**
+ * Hedef düzenleme yükü — MOD DEĞİŞTİRMEZ.
+ *
+ * `trackingMode` yalnızca hangi hedef kolonlarının yazılacağını SEÇER; UPDATE
+ * payload'ına hiç konmaz. Sunucudaki `program_exercises_mode_guard` performans
+ * kanıtı olan egzersizin türünü zaten reddeder; istemci o yola hiç girmez.
+ */
 type ExerciseUpdates = {
   visual?: WorkoutVisual;
-  targetSets?: number;
-  targetReps?: string;
-  restSeconds?: number;
-};
+} & (
+  | { trackingMode: 'sets_reps'; targetSets: number; targetReps: string; restSeconds: number }
+  | { trackingMode: 'duration'; targetDurationSeconds: number }
+  | { trackingMode: 'distance'; targetDistanceMeters: number }
+);
 type DayUpdates = Partial<Pick<WorkoutDay, 'name' | 'visual' | 'scheduledWeekday' | 'isOffDay'>>;
 
 type WorkoutContextValue = {
@@ -95,6 +113,21 @@ type WorkoutContextValue = {
     performance: WorkoutSetPerformance,
   ) => Promise<void>;
   undoCompletedSet: (dateKey: string, programExerciseId: string) => Promise<void>;
+  /**
+   * Kardiyo kaydını OLUŞTURUR ya da GÜNCELLER.
+   *
+   * Aynı `session_id + program_exercise_id` için kayıt varsa UPDATE edilir;
+   * ikinci satır ASLA oluşmaz. Dönen `activityTotals`, kayıt kalıcı olduktan
+   * SONRAKİ gerçek toplamdır: çağıran taraf otomatik bitiş kararını henüz
+   * yazılmamış React state'ine değil bu değere dayandırır.
+   */
+  saveActivityRecord: (
+    dateKey: string,
+    programExerciseId: string,
+    performance: ActivityPerformance,
+  ) => Promise<{ record: WorkoutActivityRecord; activityTotals: Record<string, ActivityTotals> }>;
+  /** Kardiyo kaydını siler ve toplamları anında düzeltir. */
+  deleteActivityRecord: (recordId: string) => Promise<void>;
   resetCompletedSets: (dateKey: string, programExerciseIds: string[]) => Promise<void>;
   startWorkout: (programId: string, dayId: string, dateKey: string) => Promise<void>;
   pauseWorkout: (sessionId: string) => Promise<void>;
@@ -280,6 +313,14 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
       setWorkoutSets([]);
       setWorkoutActivityRecords([]);
       setActivityTotals({});
+      /**
+       * Kardiyo kronometreleri de temizlenir: kayıt AsyncStorage'da yaşadığı
+       * için oturum kapansa bile kalırdı ve başka bir hesap açıldığında yabancı
+       * bir ölçüm geri yüklenirdi. Yalnız kendi ön eki silinir; mola kayıtları
+       * ve profil/tema/dil verileri etkilenmez.
+       */
+      void clearAllActivityTimers();
+      void cancelAllActivityTargetNotifications();
       setProgramsError(undefined);
       setIsProgramsLoading(false);
       return;
@@ -670,14 +711,25 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
   async function deleteWorkoutSession(sessionId: string) {
     const previousSessions = workoutSessions;
     const previousSets = workoutSets;
+    /**
+     * AKTİVİTE KAYITLARI da yerel olarak ayrılır — setlerle AYNI kural.
+     *
+     * `activityTotals` bilinçli olarak DOKUNULMADAN bırakılır: o disiplin ve
+     * ödül KANITIDIR ve sunucu tarafı da silinmiş oturumları kanıta dahil eder
+     * (`exercise_done_units(..., exclude_deleted => false)`). Filtrelenseydi bir
+     * antrenman silindiği anda o günün takvim rengi ve streak geçmişi değişirdi.
+     */
+    const previousActivityRecords = workoutActivityRecords;
     setWorkoutSessions((current) => current.filter((session) => session.id !== sessionId));
     setWorkoutSets((current) => current.filter((workoutSet) => workoutSet.sessionId !== sessionId));
+    setWorkoutActivityRecords((current) => current.filter((record) => record.sessionId !== sessionId));
 
     const { error } = await supabase.rpc('soft_delete_workout_session', { session_id: sessionId });
 
     if (error) {
       setWorkoutSessions(previousSessions);
       setWorkoutSets(previousSets);
+      setWorkoutActivityRecords(previousActivityRecords);
       throw error;
     }
 
@@ -707,31 +759,17 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
   async function addExerciseToDay(programId: string, dayId: string, exercise: NewProgramExercise) {
     const day = programs.find((program) => program.id === programId)?.days.find((item) => item.id === dayId);
     if (!day) throw new Error('Egzersizin ekleneceği gün bulunamadı.');
-    /**
-     * Bu fazda YALNIZCA strength egzersizi oluşturulabilir. Kardiyo yükü
-     * gelirse sessizce yarım bir satır yazmak yerine açıkça reddedilir;
-     * kardiyo oluşturma akışı sonraki fazda eklenecek.
-     */
-    if (exercise.trackingMode !== 'sets_reps') {
-      throw new Error('Bu sürümde yalnızca set/tekrar egzersizi eklenebilir.');
-    }
 
     const { data, error } = await supabase
       .from('program_exercises')
       /**
-       * Mevcut arayüz YALNIZCA strength üretir; yük bunu AÇIKÇA yazar ve
-       * kardiyo hedeflerini açıkça `null` bırakır (varsayılana güvenmez).
-       * Kardiyo formu eklendiğinde tek değişim noktası burasıdır.
+       * Yük türü AÇIKÇA yazar: her modda kendi hedef kolonları dolar, diğerleri
+       * açıkça `null` kalır ve kardiyoda `rest_seconds` 0 olur. Varsayılana
+       * güvenilmez — sözleşme tek yerde, `utils/program-exercise.ts` içinde.
        */
       .insert(
-        buildStrengthExerciseInsertPayload({
+        buildProgramExerciseInsertPayload(exercise, {
           programDayId: dayId,
-          exerciseId: exercise.exerciseId,
-          customExerciseName: exercise.customExerciseName,
-          visual: exercise.visual ?? null,
-          targetSets: exercise.targetSets,
-          targetReps: exercise.targetReps,
-          restSeconds: exercise.restSeconds,
           position: day.exercises.length,
         }),
       )
@@ -850,11 +888,8 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
     programExerciseId: string,
     updates: ExerciseUpdates,
   ) {
-    const databaseUpdates: Record<string, unknown> = {};
+    const databaseUpdates = buildProgramExerciseTargetUpdatePayload(updates);
     if (updates.visual !== undefined) databaseUpdates.visual = updates.visual;
-    if (updates.targetSets !== undefined) databaseUpdates.target_sets = updates.targetSets;
-    if (updates.targetReps !== undefined) databaseUpdates.target_reps = updates.targetReps;
-    if (updates.restSeconds !== undefined) databaseUpdates.rest_seconds = updates.restSeconds;
 
     const { error } = await supabase.from('program_exercises').update(databaseUpdates).eq('id', programExerciseId);
     if (error) throw error;
@@ -869,9 +904,12 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
                   ? {
                       ...day,
                       exercises: day.exercises.map((exercise) =>
-                        exercise.id === programExerciseId && isStrengthExercise(exercise)
-                  ? { ...exercise, ...updates }
-                  : exercise,
+                        // Yalnız AYNI türdeki egzersiz iyimser olarak güncellenir;
+                        // tür uyuşmazsa yerel durum bozulmadan bırakılır.
+                        exercise.id === programExerciseId &&
+                        exercise.trackingMode === updates.trackingMode
+                          ? ({ ...exercise, ...updates } as ProgramExercise)
+                          : exercise,
                       ),
                     }
                   : day,
@@ -1070,6 +1108,194 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
           ? Math.max((currentCounts[progressKey] ?? 0) - 1, 0)
           : getDisciplineCountAfterUndo(remainingActualSetCount, targetSets),
     }));
+  }
+
+  /**
+   * KARDİYO KAYDI — oluştur ya da güncelle.
+   *
+   * Sahiplik istemcide de doğrulanır: egzersiz kullanıcının programında
+   * bulunmalı, kardiyo türünde olmalı ve o gün için mevcut oturum sözleşmesine
+   * uyan bir antrenman bulunmalıdır. Sunucudaki RLS zinciri aynı kuralı zorlar;
+   * istemci kontrolü kullanıcıyı anlaşılmaz bir `permission denied` yerine
+   * okunur bir hataya düşürmek içindir.
+   */
+  async function saveActivityRecord(
+    dateKey: string,
+    programExerciseId: string,
+    performance: ActivityPerformance,
+  ) {
+    const program = programs.find((item) =>
+      item.days.some((day) => day.exercises.some((exercise) => exercise.id === programExerciseId)),
+    );
+    const day = program?.days.find((item) =>
+      item.exercises.some((exercise) => exercise.id === programExerciseId),
+    );
+    const exercise = day?.exercises.find((item) => item.id === programExerciseId);
+
+    if (!exercise) throw new Error('Aktivitenin bağlı olduğu egzersiz bulunamadı.');
+    if (!isCardioExercise(exercise)) {
+      throw new Error('Bu egzersiz süre/mesafe ile takip edilmiyor; aktivite kaydedilemez.');
+    }
+
+    /**
+     * Oturum sözleşmesi set akışıyla AYNIDIR: yeni bir akış tasarlanmaz.
+     * `running` oturum aranır; kullanıcı tamamlanmış bir oturuma dönüp kayıt
+     * eklemek isterse ekran önce `resumeWorkout` çağırır, tıpkı ekstra set
+     * akışında olduğu gibi.
+     */
+    const session = workoutSessions.find(
+      (item) =>
+        item.programId === program?.id &&
+        item.dayId === day?.id &&
+        item.dateKey === dateKey &&
+        item.status === 'running',
+    );
+    if (!session) throw new Error('Aktiviteyi kaydetmek için antrenmanı başlatmalısın.');
+
+    const exerciseName = getProgramExerciseName(exercise.exerciseId, exercise.customExerciseName);
+    const existing = workoutActivityRecords.find(
+      (record) => record.sessionId === session.id && record.programExerciseId === programExerciseId,
+    );
+
+    const performancePayload = {
+      duration_seconds: performance.durationSeconds,
+      distance_meters: performance.distanceMeters ?? null,
+      rpe: performance.rpe ?? null,
+      completed_at: new Date().toISOString(),
+    };
+
+    let saved: WorkoutActivityRecord;
+
+    if (existing) {
+      /**
+       * GÜNCELLEME — yalnız performans alanları.
+       *
+       * Kimlik (`session_id`, `program_exercise_id`) ve snapshot alanları
+       * (`tracking_mode`, `exercise_name`, hedefler) yük'e HİÇ konmaz; sunucudaki
+       * `workout_activity_records_guard` bunları değiştirmeyi zaten reddeder.
+       * İkinci bir satır oluşmaz.
+       */
+      const { data, error } = await supabase
+        .from('workout_activity_records')
+        .update(performancePayload)
+        .eq('id', existing.id)
+        .select('completed_at')
+        .single();
+
+      if (error) throw error;
+
+      saved = {
+        ...existing,
+        durationSeconds: performance.durationSeconds,
+        distanceMeters: performance.distanceMeters,
+        rpe: performance.rpe,
+        completedAt: data.completed_at,
+      };
+    } else {
+      /** YENİ KAYIT — snapshot alanları burada, yalnız bir kez yazılır. */
+      const { data, error } = await supabase
+        .from('workout_activity_records')
+        .insert({
+          session_id: session.id,
+          program_exercise_id: programExerciseId,
+          exercise_name: exerciseName,
+          tracking_mode: exercise.trackingMode,
+          target_duration_seconds:
+            exercise.trackingMode === 'duration' ? exercise.targetDurationSeconds : null,
+          target_distance_meters:
+            exercise.trackingMode === 'distance' ? exercise.targetDistanceMeters : null,
+          ...performancePayload,
+        })
+        .select('id, completed_at')
+        .single();
+
+      if (error) throw error;
+
+      saved = {
+        id: data.id,
+        sessionId: session.id,
+        programExerciseId,
+        exerciseName,
+        trackingMode: exercise.trackingMode,
+        targetDurationSeconds:
+          exercise.trackingMode === 'duration' ? exercise.targetDurationSeconds : undefined,
+        targetDistanceMeters:
+          exercise.trackingMode === 'distance' ? exercise.targetDistanceMeters : undefined,
+        durationSeconds: performance.durationSeconds,
+        distanceMeters: performance.distanceMeters,
+        rpe: performance.rpe,
+        completedAt: data.completed_at,
+        dateKey,
+      };
+    }
+
+    const toContribution = (record: WorkoutActivityRecord): ActivityContribution => ({
+      dateKey: record.dateKey,
+      programExerciseId: record.programExerciseId,
+      durationSeconds: record.durationSeconds,
+      distanceMeters: record.distanceMeters,
+    });
+
+    /**
+     * Toplamlar YENİDEN YÜKLENMEDEN düzeltilir: eski katkı çıkarılır, yeni katkı
+     * eklenir. Aynı günün başka oturumlarındaki katkılar aynı anahtarda durduğu
+     * için korunur. Öngörülen değer çağırana DÖNDÜRÜLÜR; otomatik bitiş kararı
+     * henüz yazılmamış state'e değil buna dayanır.
+     */
+    const projectedTotals = applyActivityTotalsDelta(
+      activityTotals,
+      existing ? toContribution(existing) : undefined,
+      toContribution(saved),
+    );
+
+    setActivityTotals(projectedTotals);
+    setWorkoutActivityRecords((current) =>
+      existing
+        ? current.map((record) => (record.id === saved.id ? saved : record))
+        : [...current, saved],
+    );
+
+    /**
+     * Ödül ve rank uzlaştırması set akışıyla BİREBİR aynı sırada ve aynı
+     * biçimde (beklenmeden) tetiklenir: kayıt kalıcı olmadan buraya gelinmez,
+     * sunucu defteri idempotent olduğu için tekrar çağrı çift ödül üretmez.
+     */
+    void syncWorkoutDay(toDateKey(new Date()), dateKey);
+    void syncRank?.();
+
+    return { record: saved, activityTotals: projectedTotals };
+  }
+
+  /**
+   * KARDİYO KAYDINI SİLER.
+   *
+   * Daha önce verilmiş XP/gül GERİ ALINMAZ — `reward_ledger` append-only'dir ve
+   * bu davranış mevcut set undo ile BİREBİR tutarlıdır (`undoCompletedSet` de
+   * ödül geri almaz). Rank kanıtı bir sonraki uzlaştırmada sunucu tarafından
+   * yeniden hesaplanır.
+   */
+  async function deleteActivityRecord(recordId: string) {
+    const existing = workoutActivityRecords.find((record) => record.id === recordId);
+    if (!existing) return;
+
+    const { error } = await supabase.from('workout_activity_records').delete().eq('id', recordId);
+    if (error) throw error;
+
+    setActivityTotals((current) =>
+      applyActivityTotalsDelta(
+        current,
+        {
+          dateKey: existing.dateKey,
+          programExerciseId: existing.programExerciseId,
+          durationSeconds: existing.durationSeconds,
+          distanceMeters: existing.distanceMeters,
+        },
+        undefined,
+      ),
+    );
+    setWorkoutActivityRecords((current) => current.filter((record) => record.id !== recordId));
+
+    void syncRank?.();
   }
 
   async function resetCompletedSets(dateKey: string, programExerciseIds: string[]) {
@@ -1287,55 +1513,49 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
     return isScheduledDate(dateKey, activeProgram, activeProgramStartedAt);
   }
 
-  const value = useMemo(
-    () => ({
-      programs,
-      isProgramsLoading,
-      programsError,
-      activeProgramId,
-      activeProgramStartedAt,
-      disciplineStatuses,
-      completedSetCounts,
-      workoutSessions,
-      workoutSets,
-      workoutActivityRecords,
-      activityTotals,
-      refreshPrograms,
-      addProgram,
-      activateProgram,
-      deleteProgram,
-      deleteWorkoutSession,
-      reorderPrograms,
-      addExerciseToDay,
-      removeExerciseFromDay,
-      reorderExercisesInDay,
-      reorderDays,
-      updateProgram,
-      updateDay,
-      updateExercise,
-      completeSet,
-      undoCompletedSet,
-      resetCompletedSets,
-      startWorkout,
-      pauseWorkout,
-      resumeWorkout,
-      finishWorkout,
-      isDateScheduled: isDateScheduledForProgram,
-      cycleDisciplineStatus,
-    }),
-    [
-      activeProgramId,
-      activeProgramStartedAt,
-      completedSetCounts,
-      disciplineStatuses,
-      isProgramsLoading,
-      programs,
-      programsError,
-      refreshPrograms,
-      workoutSessions,
-      workoutSets,
-    ],
-  );
+  /**
+   * Provider değeri doğrudan üretilir. Buradaki işlemler render içinde
+   * tanımlandığı için eksik bir `useMemo` bağımlılığı eski state'i yakalayan
+   * fonksiyonları tüketicilere taşırdı. Özellikle aktivite INSERT'inden sonra
+   * eski kayıt listesini gören ikinci işlem yeniden INSERT deneyebilirdi.
+   */
+  const value: WorkoutContextValue = {
+    programs,
+    isProgramsLoading,
+    programsError,
+    activeProgramId,
+    activeProgramStartedAt,
+    disciplineStatuses,
+    completedSetCounts,
+    workoutSessions,
+    workoutSets,
+    workoutActivityRecords,
+    activityTotals,
+    refreshPrograms,
+    addProgram,
+    activateProgram,
+    deleteProgram,
+    deleteWorkoutSession,
+    reorderPrograms,
+    addExerciseToDay,
+    removeExerciseFromDay,
+    reorderExercisesInDay,
+    reorderDays,
+    updateProgram,
+    updateDay,
+    updateExercise,
+    completeSet,
+    undoCompletedSet,
+    saveActivityRecord,
+    deleteActivityRecord,
+    resetCompletedSets,
+    startWorkout,
+    pauseWorkout,
+    resumeWorkout,
+    finishWorkout,
+    isDateScheduled: isDateScheduledForProgram,
+    cycleDisciplineStatus,
+  };
 
   return <WorkoutContext.Provider value={value}>{children}</WorkoutContext.Provider>;
 }

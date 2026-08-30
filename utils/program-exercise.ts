@@ -1,5 +1,6 @@
 import {
   DistanceProgramExercise,
+  NewProgramExercise,
   DurationProgramExercise,
   ProgramExercise,
   StrengthProgramExercise,
@@ -162,4 +163,140 @@ export function buildStrengthExerciseInsertPayload(input: {
     rest_seconds: input.restSeconds,
     position: input.position,
   };
+}
+
+/**
+ * Yeni SÜRE egzersizi INSERT yükü.
+ *
+ * Strength alanları AÇIKÇA `null` yazılır ve `rest_seconds` 0'dır: kardiyoda
+ * set arası dinlenme kavramı yoktur. Sözleşme sunucuda
+ * `program_exercises_tracking_contract_check` tarafından da zorlanır; buradaki
+ * açık yazım, varsayılana güvenmek yerine niyeti kayda geçirir.
+ */
+export function buildDurationExerciseInsertPayload(input: {
+  programDayId: string;
+  exerciseId?: string;
+  customExerciseName?: string;
+  visual: unknown;
+  targetDurationSeconds: number;
+  position: number;
+}) {
+  return {
+    program_day_id: input.programDayId,
+    exercise_id: input.exerciseId ?? null,
+    custom_exercise_name: input.customExerciseName ?? null,
+    visual: input.visual,
+    tracking_mode: 'duration' as const,
+    target_sets: null,
+    target_reps: null,
+    target_duration_seconds: input.targetDurationSeconds,
+    target_distance_meters: null,
+    rest_seconds: 0,
+    position: input.position,
+  };
+}
+
+/** Yeni MESAFE egzersizi INSERT yükü. Kurallar süre yüküyle simetriktir. */
+export function buildDistanceExerciseInsertPayload(input: {
+  programDayId: string;
+  exerciseId?: string;
+  customExerciseName?: string;
+  visual: unknown;
+  targetDistanceMeters: number;
+  position: number;
+}) {
+  return {
+    program_day_id: input.programDayId,
+    exercise_id: input.exerciseId ?? null,
+    custom_exercise_name: input.customExerciseName ?? null,
+    visual: input.visual,
+    tracking_mode: 'distance' as const,
+    target_sets: null,
+    target_reps: null,
+    target_duration_seconds: null,
+    target_distance_meters: input.targetDistanceMeters,
+    rest_seconds: 0,
+    position: input.position,
+  };
+}
+
+export type ProgramExerciseInsertPayload = {
+  program_day_id: string;
+  exercise_id: string | null;
+  custom_exercise_name: string | null;
+  visual: unknown;
+  tracking_mode: WorkoutTrackingMode;
+  target_sets: number | null;
+  target_reps: string | null;
+  target_duration_seconds: number | null;
+  target_distance_meters: number | null;
+  rest_seconds: number;
+  position: number;
+};
+
+/**
+ * `NewProgramExercise`'ten doğru INSERT yükünü seçer.
+ *
+ * Ayrık birleşim sayesinde her dal kendi zorunlu alanlarına DARALTILMIŞ hâlde
+ * erişir; eksik bir mod eklenirse `tsc` burada hata verir.
+ */
+export function buildProgramExerciseInsertPayload(
+  exercise: NewProgramExercise,
+  context: { programDayId: string; position: number },
+): ProgramExerciseInsertPayload {
+  const shared = {
+    programDayId: context.programDayId,
+    position: context.position,
+    exerciseId: exercise.exerciseId,
+    customExerciseName: exercise.customExerciseName,
+    visual: exercise.visual ?? null,
+  };
+
+  if (exercise.trackingMode === 'sets_reps') {
+    return buildStrengthExerciseInsertPayload({
+      ...shared,
+      restSeconds: exercise.restSeconds,
+      targetReps: exercise.targetReps,
+      targetSets: exercise.targetSets,
+    });
+  }
+
+  if (exercise.trackingMode === 'duration') {
+    return buildDurationExerciseInsertPayload({
+      ...shared,
+      targetDurationSeconds: exercise.targetDurationSeconds,
+    });
+  }
+
+  return buildDistanceExerciseInsertPayload({
+    ...shared,
+    targetDistanceMeters: exercise.targetDistanceMeters,
+  });
+}
+
+/**
+ * Hedef düzenleme yükü — MOD DEĞİŞTİRMEZ.
+ *
+ * Sunucudaki `program_exercises_mode_guard` performans kanıtı olan bir
+ * egzersizin türünü değiştirmeyi reddeder. İstemci bu yola hiç girmez: yük
+ * yalnızca içinde bulunulan türün hedef kolonlarını yazar, `tracking_mode`
+ * alanını UPDATE'e HİÇ koymaz.
+ */
+export function buildProgramExerciseTargetUpdatePayload(
+  updates:
+    | { trackingMode: 'sets_reps'; targetSets: number; targetReps: string; restSeconds: number }
+    | { trackingMode: 'duration'; targetDurationSeconds: number }
+    | { trackingMode: 'distance'; targetDistanceMeters: number },
+): Record<string, unknown> {
+  if (updates.trackingMode === 'sets_reps') {
+    return {
+      target_sets: updates.targetSets,
+      target_reps: updates.targetReps,
+      rest_seconds: updates.restSeconds,
+    };
+  }
+  if (updates.trackingMode === 'duration') {
+    return { target_duration_seconds: updates.targetDurationSeconds };
+  }
+  return { target_distance_meters: updates.targetDistanceMeters };
 }

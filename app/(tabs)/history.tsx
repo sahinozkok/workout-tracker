@@ -20,9 +20,22 @@ import { ProgressRing } from '@/components/progress-ring';
 import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { useWorkout } from '@/context/workout-context';
+import {
+  ActivityHistoryEntry,
+  buildActivityHistoryEntries,
+  buildActivityProgressEntries,
+  countUniqueExercises,
+  summarizeSessionActivity,
+} from '@/utils/activity-history';
+import { formatMetersAsKilometers } from '@/utils/activity-input';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import { useFeatureColor } from '@/hooks/use-feature-colors';
-import { WorkoutProgram, WorkoutSession, WorkoutSetRecord } from '@/types/workout';
+import {
+  WorkoutActivityRecord,
+  WorkoutProgram,
+  WorkoutSession,
+  WorkoutSetRecord,
+} from '@/types/workout';
 import { getSetTotalVolume } from '@/utils/workout-analytics';
 import { dateFromKey } from '@/utils/workout-schedule';
 import { formatDuration } from '@/utils/workout-session';
@@ -50,7 +63,14 @@ type ExerciseSetGroup = {
 export default function HistoryScreen() {
   const { colors } = useAppTheme();
   const { locale, t } = useTranslation();
-  const { deleteWorkoutSession, isProgramsLoading, programs, workoutSessions, workoutSets } = useWorkout();
+  const {
+    deleteWorkoutSession,
+    isProgramsLoading,
+    programs,
+    workoutActivityRecords,
+    workoutSessions,
+    workoutSets,
+  } = useWorkout();
   // Sağ üstteki görünüm geçişi Geçmiş ve Gelişim rengini kullanır.
   const historyAccent = useFeatureColor('historyProgress', colors.primary).color;
   /**
@@ -80,19 +100,30 @@ export default function HistoryScreen() {
     );
   const completedSessionIds = new Set(completedSessions.map((session) => session.id));
   const completedWorkoutSets = workoutSets.filter((workoutSet) => completedSessionIds.has(workoutSet.sessionId));
+  /**
+   * Geçmiş artık YALNIZ setlerden beslenmiyor: tamamlanmış oturumun kardiyo
+   * kayıtları da aynı kümeden okunur. `workoutActivityRecords` zaten silinmiş
+   * oturumları içermez, dolayısıyla ek bir filtreye gerek yoktur.
+   */
+  const completedActivityRecords = workoutActivityRecords.filter((record) =>
+    completedSessionIds.has(record.sessionId),
+  );
   const totalDurationSeconds = completedSessions.reduce(
     (total, session) => total + session.accumulatedDurationSeconds,
     0,
   );
   const averageDurationSeconds =
     completedSessions.length > 0 ? Math.round(totalDurationSeconds / completedSessions.length) : 0;
-  const uniqueExerciseCount = new Set(
-    completedWorkoutSets.map((workoutSet) => workoutSet.exerciseName.trim().toLocaleLowerCase(locale)),
-  ).size;
+  /**
+   * Benzersiz egzersiz metriği strength VE aktivite egzersizlerini birlikte
+   * sayar; aynı egzersizi iki kez saymaz. Hesap ortak saf yardımcıdadır.
+   */
+  const uniqueExerciseCount = countUniqueExercises(completedWorkoutSets, completedActivityRecords);
   /**
    * Satır hareketi. Kanca aşağıdaki erken dönüşlerin ÜSTÜNDE çağrılır; yükleme
    * ve boş durumlarında kanca sırası bozulmasın.
    */
+  const activityProgressEntries = buildActivityProgressEntries(completedActivityRecords);
   const { getDelay } = useListEntrance(completedSessions.length);
 
   async function handleDeleteSession(sessionId: string) {
@@ -207,6 +238,9 @@ export default function HistoryScreen() {
                   program={programs.find((item) => item.id === session.programId)}
                   session={session}
                   locale={locale}
+                  activityRecords={completedActivityRecords.filter(
+                    (record) => record.sessionId === session.id,
+                  )}
                   sets={workoutSets.filter((workoutSet) => workoutSet.sessionId === session.id)}
                   styles={styles}
                   t={t}
@@ -215,8 +249,42 @@ export default function HistoryScreen() {
             </MotionSection>
           </>
         ) : (
-          <MotionSection delay={40}>
-            <ExerciseProgress workoutSets={completedWorkoutSets} />
+          <MotionSection delay={40} style={styles.progressStack}>
+            {/*
+              Yalnız kardiyo yapan kullanıcıya BOŞ strength kartı gösterilmez;
+              aşağıdaki aktivite bölümü gerçek verisini zaten sunar. Set kaydı
+              varsa mevcut görünüm AYNEN korunur.
+            */}
+            {(completedWorkoutSets.length > 0 || activityProgressEntries.length === 0) && (
+              <ExerciseProgress workoutSets={completedWorkoutSets} />
+            )}
+            {/*
+              Yalnız kardiyo yapan kullanıcı "veri yok" görmemeli. Bu bölüm
+              bilinçli olarak SADE: grafik yok, yeni paket yok — egzersiz başına
+              son kayıt ve toplam sayı. Tam aktivite analitiği sonraki fazda.
+            */}
+            {activityProgressEntries.length > 0 && (
+              <View style={styles.activitySection}>
+                <Text style={styles.activitySectionTitle}>{t('history.activityHistory')}</Text>
+                {activityProgressEntries.map((entry) => (
+                  <View key={entry.key} style={styles.activityProgressRow}>
+                    <Text numberOfLines={1} style={styles.activityProgressName}>
+                      {entry.exerciseName}
+                    </Text>
+                    <Text style={styles.activityProgressMeta}>
+                      {t('history.activityRecordCount', { count: entry.recordCount })} ·{' '}
+                      {entry.trackingMode === 'distance' && entry.lastDistanceMeters !== undefined
+                        ? `${formatMetersAsKilometers(entry.lastDistanceMeters)} ${t('day.kmUnit')}${
+                            entry.lastPaceSecondsPerKm === undefined
+                              ? ''
+                              : ` · ${formatDuration(Math.round(entry.lastPaceSecondsPerKm))} ${t('day.paceUnit')}`
+                          }`
+                        : formatDuration(entry.lastDurationSeconds)}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
           </MotionSection>
         )}
         </MotionSwap>
@@ -398,9 +466,11 @@ function SessionHistoryRow({
   program,
   session,
   sets,
+  activityRecords,
   styles,
   t,
 }: {
+  activityRecords: WorkoutActivityRecord[];
   colors: ThemeColors;
   entranceDelay: number;
   expanded: boolean;
@@ -419,6 +489,12 @@ function SessionHistoryRow({
   const day = program?.days.find((item) => item.id === session.dayId);
   const sessionDate = dateFromKey(session.dateKey);
   const exerciseGroups = groupSetsByExercise(sets);
+  const activityEntries = buildActivityHistoryEntries(activityRecords);
+  const summary = summarizeSessionActivity({
+    activityRecords,
+    durationSeconds: session.accumulatedDurationSeconds,
+    sets,
+  });
   // Drop setler ana satırın içinde saklanır; toplam hacme onlar da dahildir.
   const totalVolume = sets.reduce((total, workoutSet) => total + getSetTotalVolume(workoutSet), 0);
 
@@ -460,7 +536,21 @@ function SessionHistoryRow({
           </View>
           <View style={styles.sessionSummary}>
             <Text style={styles.sessionDuration}>{formatDuration(session.accumulatedDurationSeconds)}</Text>
-            <Text style={styles.sessionSetCount}>{t('history.setCount', { count: sets.length })}</Text>
+            {/*
+              Strength-only oturum ESKİ görünümünü korur. Kardiyo veya karma
+              oturumda set ve aktivite sayısı yan yana, tek satırda gösterilir —
+              ek kart veya emoji yok.
+            */}
+            <Text style={styles.sessionSetCount}>
+              {summary.activityCount === 0
+                ? t('history.setCount', { count: summary.setCount })
+                : [
+                    summary.setCount > 0 ? t('history.setCount', { count: summary.setCount }) : undefined,
+                    t('history.activityCount', { count: summary.activityCount }),
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+            </Text>
           </View>
         </Pressable>
       </SwipeableSessionRow>
@@ -524,7 +614,25 @@ function SessionHistoryRow({
                 ))}
               </View>
             ))
-          ) : (
+          ) : null}
+
+          {/*
+            AKTİVİTE BÖLÜMLERİ — strength tabloları AYNEN korunur, kardiyo
+            kayıtları onların altına compact satırlar olarak eklenir. Egzersiz
+            adı KAYITTAKİ snapshot'tan gelir; program silinmiş olsa bile okunur.
+          */}
+          {activityEntries.map((entry) => (
+            <ActivityHistoryRow
+              colors={colors}
+              entry={entry}
+              key={entry.id}
+              locale={locale}
+              styles={styles}
+              t={t}
+            />
+          ))}
+
+          {exerciseGroups.length === 0 && activityEntries.length === 0 && (
             <View style={styles.noSetDetails}>
               <Ionicons name="information-circle-outline" size={16} color={colors.textTertiary} />
               <Text style={styles.noSetDetailsText}>{t('history.noSetDetails')}</Text>
@@ -533,6 +641,87 @@ function SessionHistoryRow({
         </View>
       )}
     </MotionListItem>
+  );
+}
+
+/**
+ * Tek bir kardiyo kaydı. Değerler veritabanında metre/saniye durur; burada
+ * kilometreye ve okunabilir süreye çevrilir. Tempo TÜRETİLMİŞTİR.
+ */
+function ActivityHistoryRow({
+  colors,
+  entry,
+  locale,
+  styles,
+  t,
+}: {
+  colors: ThemeColors;
+  entry: ActivityHistoryEntry;
+  locale: string;
+  styles: ReturnType<typeof createStyles>;
+  t: (key: string, params?: Record<string, string | number>) => string;
+}) {
+  const target =
+    entry.trackingMode === 'duration'
+      ? entry.targetDurationSeconds === undefined
+        ? undefined
+        : formatDuration(entry.targetDurationSeconds)
+      : entry.targetDistanceMeters === undefined
+        ? undefined
+        : `${formatMetersAsKilometers(entry.targetDistanceMeters)} ${t('day.kmUnit')}`;
+
+  return (
+    <View style={styles.exerciseGroup}>
+      <View style={styles.exerciseHeading}>
+        <Text numberOfLines={1} style={styles.exerciseName}>
+          {entry.exerciseName}
+        </Text>
+        <Text
+          style={[
+            styles.activityStatus,
+            entry.isTargetReached ? styles.activityStatusDone : styles.activityStatusBelow,
+          ]}>
+          {entry.isTargetReached ? t('history.activityCompleted') : t('history.activityBelowTarget')}
+        </Text>
+      </View>
+
+      <View style={styles.activityDetailRow}>
+        <Text style={styles.activityDetailLabel}>{t('history.activityDuration')}</Text>
+        <Text style={styles.activityDetailValue}>{formatDuration(entry.durationSeconds)}</Text>
+      </View>
+
+      {entry.distanceMeters !== undefined && (
+        <View style={styles.activityDetailRow}>
+          <Text style={styles.activityDetailLabel}>{t('history.activityDistance')}</Text>
+          <Text style={styles.activityDetailValue}>
+            {formatMetersAsKilometers(entry.distanceMeters)} {t('day.kmUnit')}
+          </Text>
+        </View>
+      )}
+
+      {target !== undefined && (
+        <View style={styles.activityDetailRow}>
+          <Text style={styles.activityDetailLabel}>{t('history.activityTarget')}</Text>
+          <Text style={styles.activityDetailValue}>{target}</Text>
+        </View>
+      )}
+
+      {entry.paceSecondsPerKm !== undefined && (
+        <View style={styles.activityDetailRow}>
+          <Text style={styles.activityDetailLabel}>{t('history.activityPace')}</Text>
+          <Text style={styles.activityDetailValue}>
+            {formatDuration(Math.round(entry.paceSecondsPerKm))} {t('day.paceUnit')}
+          </Text>
+        </View>
+      )}
+
+      {entry.rpe !== undefined && (
+        <View style={styles.activityDetailRow}>
+          <Text style={styles.activityDetailLabel}>{t('history.rpe')}</Text>
+          <Text style={styles.activityDetailValue}>{formatDecimal(entry.rpe, locale)}</Text>
+        </View>
+      )}
+    </View>
   );
 }
 
@@ -674,6 +863,39 @@ function createStyles(colors: ThemeColors, historyAccent: string) {
     },
     noSetDetails: { alignItems: 'center', flexDirection: 'row', gap: 8 },
     noSetDetailsText: { color: colors.textSecondary, flex: 1, ...Type.footnote, lineHeight: 15 },
+    progressStack: { gap: 16 },
+    /** Gelişimdeki sade aktivite bölümü — grafik yok, kart yığını yok. */
+    activitySection: {
+      backgroundColor: colors.card,
+      borderRadius: Layout.radiusLarge,
+      gap: 10,
+      padding: 16,
+    },
+    activitySectionTitle: { color: colors.text, fontSize: 16, fontWeight: '600' },
+    activityProgressRow: { gap: 2 },
+    activityProgressName: { color: colors.text, fontSize: 14, fontWeight: '500' },
+    activityProgressMeta: {
+      color: colors.textSecondary,
+      fontSize: 12,
+      fontVariant: ['tabular-nums'],
+    },
+    /** Oturum detayındaki kardiyo satırları — strength tablosuyla aynı ritim. */
+    activityDetailRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      paddingVertical: 4,
+    },
+    activityDetailLabel: { color: colors.textSecondary, fontSize: 13 },
+    activityDetailValue: {
+      color: colors.text,
+      fontSize: 13,
+      fontVariant: ['tabular-nums'],
+      fontWeight: '500',
+    },
+    activityStatus: { fontSize: 12, fontWeight: '600' },
+    activityStatusDone: { color: colors.disciplineCompleted },
+    activityStatusBelow: { color: colors.textSecondary },
     pressed: { opacity: 0.6 },
   });
 }

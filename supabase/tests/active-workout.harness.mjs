@@ -75,7 +75,8 @@ let pass = 0;
 let fail = 0;
 function check(name, actual, expected) {
   const ok = JSON.stringify(actual) === JSON.stringify(expected);
-  ok ? pass++ : fail++;
+  if (ok) pass++;
+  else fail++;
   console.log(
     `${ok ? 'PASS' : 'FAIL'}  ${name}` +
       (ok ? '' : `  (beklenen ${JSON.stringify(expected)}, gelen ${JSON.stringify(actual)})`),
@@ -115,12 +116,36 @@ contains('öneri önce bugünkü son set', screen, 'const suggestedSet = latestS
 contains('elle seçim ekstra set açıyor', screen, 'const isExtraSetMode =');
 contains('elle seçimde otomatik temizleme durur', screen, 'if (isManualSelection) return;');
 contains('panel satırı seçilebilir', screen, 'setIsManualSelection(isComplete);');
+/**
+ * KALICI ANLAM: egzersiz SEÇİMİ manuel modu koşulsuz açmaz — `isComplete`'ten
+ * türetir. Faz 2C'de "çalışan aktiviteye dön" uyarıları seçimi programatik
+ * olarak taşıdığı için dosyanın BAŞKA yerlerinde `setIsManualSelection(true)`
+ * bulunuyor; bu, iddianın koruduğu hatayla ilgisizdir. İddia zayıflatılmadı,
+ * ait olduğu fonksiyonun gövdesine daraltıldı.
+ */
+const exerciseSelectionStart = screen.indexOf('async function handleExerciseSelection(');
+const exerciseSelectionBody = screen.slice(
+  exerciseSelectionStart,
+  // Yalnız BU fonksiyonun gövdesi; sonraki fonksiyon bildiriminde kesilir.
+  screen.indexOf('\n  function ', exerciseSelectionStart),
+);
+check(
+  'egzersiz seçimi gövdesi bulundu',
+  exerciseSelectionBody.length > 200 && exerciseSelectionBody.includes('setIsManualSelection('),
+  true,
+);
 check(
   'manuel mod koşulsuz açılmıyor',
-  screen.includes('setIsManualSelection(true);'),
+  exerciseSelectionBody.includes('setIsManualSelection(true);'),
   false,
 );
-contains('panelde gerçek set sayısı', screen, 'const displayedSets = Math.max(completedSets, recordedSets);');
+/**
+ * KALICI ANLAM: panel, hedefe clamp edilmiş disiplin sayacını DEĞİL, gerçek
+ * kayıt sayısını gösterir (4/3 görünür). Faz 2B'de clamp'li değer ortak
+ * çekirdekten (`exerciseProgress.doneUnits`) geldiği için ifade değişti;
+ * `Math.max(..., recordedSets)` kuralı aynen duruyor.
+ */
+contains('panelde gerçek set sayısı', screen, 'const displayedSets = Math.max(exerciseProgress.doneUnits, recordedSets);');
 /**
  * Bu iddianın KALICI anlamı "bitiş kararı ekranda satır içi hesaplanmıyor,
  * ortak saf yardımcıdan geliyor"dur. Yardımcının adı strength-only
@@ -216,13 +241,29 @@ check(
 
 contains('yeni egzersiz yükü türü AÇIKÇA yazıyor', programExercise, "tracking_mode: 'sets_reps' as const");
 contains('yeni egzersiz yükü kardiyo hedefini AÇIKÇA null bırakıyor', programExercise, 'target_duration_seconds: null');
-contains('ekleme yolu ortak yükü kullanıyor', context, 'buildStrengthExerciseInsertPayload({');
+/**
+ * Faz 2A'da yol yalnız strength üretiyordu; Faz 2B'de aynı ortak yardımcı
+ * ÜÇ modu da üretir. İddia zayıflatılmadı: yük hâlâ tek yerde kuruluyor ve
+ * ekran satır içi nesne yazmıyor.
+ */
+contains('ekleme yolu ortak yükü kullanıyor', context, 'buildProgramExerciseInsertPayload(exercise, {');
 
 contains('aktivite kayıtları OKUNUYOR', context, "from('workout_activity_records')");
+/**
+ * FAZ 2A'YA ÖZGÜ İDDİA KALDIRILDI, YERİNE GERÇEK SÖZLEŞME KONDU.
+ *
+ * "Aktivite yazma yolu yok" iddiası Faz 2A turunda doğruydu; Faz 2B yazma
+ * yolunu KASITLI olarak ekler. Boş bir yoklukla değil, yazmanın hangi kapılardan
+ * geçtiğiyle ölçülür. Ayrıntılı yük/immutable/delta sözleşmesi
+ * `scripts/verify-activity-tracking-client-write.mjs` içindedir.
+ */
+contains('aktivite yazma yolu strength’i REDDEDİYOR', context, 'if (!isCardioExercise(exercise)) {');
+contains('aktivite yazma yolu aktif oturum İSTİYOR', context, "if (!session) throw new Error('Aktiviteyi kaydetmek için antrenmanı başlatmalısın.');");
+contains('aktivite toplamları delta ile düzeltiliyor', context, 'applyActivityTotalsDelta(');
 check(
-  'bu fazda aktivite YAZMA yolu yok',
-  /from\('workout_activity_records'\)[\s\S]{0,120}\.(insert|update|delete|upsert)\(/.test(context),
-  false,
+  'aktivite UPDATE’i kayıt kimliğiyle hedefleniyor — ikinci satır yok',
+  /\.update\(performancePayload\)[\s\S]{0,80}\.eq\('id', existing\.id\)/.test(context),
+  true,
 );
 
 console.log('\n--- A3b. Otomatik bitiş tür-farkında ---');
@@ -265,11 +306,24 @@ check(
 contains('karar matematiği ortak çekirdekte', tracking, 'export function completesWorkoutAfterSet');
 contains('öngörü ortak çekirdekte', tracking, 'export function resolveProjectedSetProgress');
 contains('öngörü ortak katkı kuralını kullanıyor', tracking, 'contributesToPlannedProgress(clampedCount, completed.targetSets)');
+/**
+ * KALICI ANLAM: ekran mode-aware matematiği YENİDEN YAZMAZ. Faz 2A'da bu,
+ * "çekirdek adları ekranda hiç geçmesin" diye ölçülüyordu; Faz 2B'de ekran
+ * kardiyo ilerlemesini göstermek zorunda olduğu için çekirdeği İÇE AKTARARAK
+ * kullanır — doğru olan da budur. İddia, satır içi ikinci formülün
+ * bulunmadığına daraltıldı.
+ */
 check(
-  'ekranda ikinci bir mode-aware algoritma yok',
-  /resolveDayProgress|exerciseTargetUnits\(/.test(screen),
+  'ekranda satır içi ikinci hedef/ilerleme formülü yok',
+  /reduce\([^)]*exercise\.target(Sets|DurationSeconds|DistanceMeters)/.test(screen.replace(/\s+/g, ' ')),
   false,
 );
+check(
+  'kardiyo ilerlemesi ortak çekirdekten okunuyor',
+  /resolveExerciseProgress\(\s*exercise,/.test(screen) && /exerciseTargetUnits\(exercise\)/.test(screen),
+  true,
+);
+contains('mode-aware yardımcılar ortak modülden import ediliyor', screen, "} from '@/utils/workout-tracking';");
 
 contains('takvim ortak ilerleme çekirdeğini kullanıyor', read('components/discipline-calendar.tsx'), 'resolveDayProgress');
 contains('disiplin hesabı ortak çekirdeği kullanıyor', read('utils/workout-schedule.ts'), 'resolveDayProgress');

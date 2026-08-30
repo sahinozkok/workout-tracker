@@ -46,16 +46,6 @@ function assertDeepEqual(actual, expected, message) {
   const e = JSON.stringify(expected);
   if (a !== e) throw new Error(`${message} (beklenen ${e}, gelen ${a})`);
 }
-function assertThrows(fn, message) {
-  let threw = false;
-  try {
-    fn();
-  } catch {
-    threw = true;
-  }
-  if (!threw) throw new Error(message);
-}
-
 // ---------------------------------------------------------------------------
 // A · GERÇEK modülleri derle ve içe aktar
 // ---------------------------------------------------------------------------
@@ -81,7 +71,8 @@ try {
       'export type DurationProgramExercise = any;\n' +
       'export type DistanceProgramExercise = any;\n' +
       'export type WorkoutTrackingMode = any;\n' +
-      'export type WorkoutSetRecord = any;\n',
+      'export type WorkoutSetRecord = any;\n' +
+      'export type NewProgramExercise = any;\n',
   );
 
   for (const [relative, outName] of [
@@ -119,7 +110,6 @@ const {
   getActivityProgressKey,
   resolveDayProgress,
   resolveExerciseProgress,
-  summarizeDayProgress,
   derivePaceSecondsPerKm,
 } = tracking;
 const { parseProgramExerciseRow, ProgramExerciseContractError } = parser;
@@ -600,7 +590,8 @@ check('M1. Strength-only: yeni karar ESKİ davranışla birebir aynı', () => {
         const actual = finishesAfterSet({ exercises, sets, completedExerciseId: id });
         assertEqual(actual, legacyFinishes(exercises, sets, id),
           `eşdeğerlik bozuldu (bench=${b}, squat=${q}, kaydedilen=${id})`);
-        actual ? (sawFinish = true) : (sawNoFinish = true);
+        if (actual) sawFinish = true;
+        else sawNoFinish = true;
       }
     }
   }
@@ -785,13 +776,25 @@ check('L2. Aktif set akışı strength’e daraltılmış', () => {
   assert(/if \(!isStrengthExercise\(exercise\)\)/.test(context), 'completeSet guard yok');
 });
 
-check('L3. Bu fazda aktivite YAZMA yolu yok', () => {
+/**
+ * BU İDDİA FAZ 2A'YA ÖZGÜYDÜ: o turda aktivite yazma yolu BİLİNÇLİ olarak
+ * yoktu. Faz 2B yazma yolunu kasıtlı olarak ekler, dolayısıyla "yazma yolu
+ * yok" iddiası doğal olarak geçersizleşir — ve geçersizliği OKUMA
+ * sözleşmesiyle ilgili DEĞİLDİR.
+ *
+ * İddia zayıflatılmadı, KALICI anlamına daraltıldı: bu harness'ın koruduğu şey
+ * OKUMA yolunun ve soft-delete sınırının bozulmamasıdır. Yazma sözleşmesi
+ * (INSERT/UPDATE ayrımı, immutable kolonlar, delta) `scripts/
+ * verify-activity-tracking-client-write.mjs` içinde ayrıca ve daha ayrıntılı
+ * doğrulanır.
+ */
+check('L3. Aktivite OKUMA yolu ve soft-delete sınırı korunuyor', () => {
   const context = source('context/workout-context.tsx');
-  assert(
-    !/from\('workout_activity_records'\)[\s\S]{0,120}\.(insert|update|delete|upsert)\(/.test(context),
-    'aktivite yazma çağrısı eklenmiş',
-  );
   assert(/from\('workout_activity_records'\)[\s\S]{0,60}\.select\(/.test(context), 'aktivite SELECT yok');
+  assert(/const loadedActivityTotals = aggregateActivityTotals\(disciplineActivityRecords\)/.test(context),
+    'disiplin kanıtı BÜTÜN kayıtlardan üretilmiyor');
+  assert(/loadedActivityRecords = disciplineActivityRecords\.filter\(/.test(context),
+    'görünür koleksiyon filtrelenmiyor');
 });
 
 check('L4. Yeni egzersiz yükü türü AÇIKÇA yazıyor', () => {
