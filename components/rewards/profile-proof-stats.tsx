@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useMemo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useTranslation } from '@/context/language-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
@@ -9,6 +9,8 @@ type ProfileProofStatsProps = {
   /** Eyebrow (`A LITTLE PROOF`) rengi. Verilmezse bugünkü ton korunur. */
   accentColor?: string;
   dayStreak: number;
+  /** Verilirse YALNIZ seri istatistiği basılabilir olur; diğer ikisi değişmez. */
+  onDayStreakPress?: () => void;
   roseBalance: number;
   workoutDays: number;
 };
@@ -19,11 +21,18 @@ type ProofStatProps = {
   color: string;
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
+  onPress?: () => void;
   value: number;
 };
 
 /** Referanstaki kompakt üçlü profil kanıtı: gül, antrenman ve seri. */
-export function ProfileProofStats({ accentColor, dayStreak, roseBalance, workoutDays }: ProfileProofStatsProps) {
+export function ProfileProofStats({
+  accentColor,
+  dayStreak,
+  onDayStreakPress,
+  roseBalance,
+  workoutDays,
+}: ProfileProofStatsProps) {
   const { colors, isDark } = useAppTheme();
   const { t } = useTranslation();
 
@@ -53,6 +62,7 @@ export function ProfileProofStats({ accentColor, dayStreak, roseBalance, workout
           gap: 8,
           minWidth: 0,
         },
+        pressed: { opacity: 0.6 },
         iconCircle: {
           alignItems: 'center',
           borderRadius: 15,
@@ -105,11 +115,16 @@ export function ProfileProofStats({ accentColor, dayStreak, roseBalance, workout
           value={workoutDays}
         />
         <ProofStat
-          accessibilityLabel={t('profile.proofDayStreakA11y', { count: dayStreak })}
+          accessibilityLabel={
+            onDayStreakPress
+              ? t('profile.proofDayStreakOpenA11y', { count: dayStreak })
+              : t('profile.proofDayStreakA11y', { count: dayStreak })
+          }
           backgroundColor="#F5E7C5"
           color="#BD9147"
           icon="flame-outline"
           label={t('profile.proofDayStreak')}
+          onPress={onDayStreakPress}
           value={dayStreak}
         />
       </View>
@@ -122,10 +137,11 @@ export function ProfileProofStats({ accentColor, dayStreak, roseBalance, workout
     color,
     icon,
     label,
+    onPress,
     value,
   }: ProofStatProps) {
-    return (
-      <View accessibilityLabel={accessibilityLabel} accessible style={styles.stat}>
+    const content = (
+      <>
         <View style={[styles.iconCircle, { backgroundColor }]}>
           <Ionicons color={color} name={icon} size={14} />
         </View>
@@ -135,6 +151,28 @@ export function ProfileProofStats({ accentColor, dayStreak, roseBalance, workout
             {label}
           </Text>
         </View>
+      </>
+    );
+
+    // Yalnız seri alanına `onPress` gelir; buton olur. Görsel yükseklik
+    // değişmez — 44 pt dokunma alanı `hitSlop` ile sağlanır, böylece istatistik
+    // komşularından görsel olarak kopmaz.
+    if (onPress) {
+      return (
+        <Pressable
+          accessibilityLabel={accessibilityLabel}
+          accessibilityRole="button"
+          hitSlop={{ bottom: 8, left: 6, right: 6, top: 8 }}
+          onPress={onPress}
+          style={({ pressed }) => [styles.stat, pressed && styles.pressed]}>
+          {content}
+        </Pressable>
+      );
+    }
+
+    return (
+      <View accessibilityLabel={accessibilityLabel} accessible style={styles.stat}>
+        {content}
       </View>
     );
   }

@@ -207,6 +207,13 @@ function AppNavigation() {
             name="settings"
             options={{ headerBackTitle: t('tabs.profile'), title: t('profile.settings') }}
           />
+          {/* Seri geçmişi de kök Stack'te açılır: native başlık + geri düğmesi
+              ve iOS geri kaydırma hareketi aynen çalışır, alt sekme çubuğu
+              görünmez ve yeni sekme EKLENMEZ. */}
+          <Stack.Screen
+            name="streaks"
+            options={{ headerBackTitle: t('tabs.profile'), title: t('streaks.navTitle') }}
+          />
           {/* Sezon rankı kök Stack'te açılır: yeni bir alt sekme EKLENMEZ ve
               bu ekranda sekme çubuğu görünmez. */}
           <Stack.Screen

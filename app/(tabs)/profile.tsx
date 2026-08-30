@@ -500,6 +500,7 @@ export default function ProfileScreen() {
             <ProfileProofStats
               accentColor={profileAccent.color}
               dayStreak={disciplineStreak}
+              onDayStreakPress={() => router.push('/streaks')}
               roseBalance={levelProgress.roseBalance}
               workoutDays={completedWorkoutDayCount}
             />
