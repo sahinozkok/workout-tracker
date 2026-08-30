@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -11,6 +12,7 @@ import { useTranslation } from '@/context/language-context';
 import { useWorkout } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import { calculateDisciplineStreak, toDateKey } from '@/utils/discipline';
+import { buildWorkoutEstimate, WorkoutEstimate } from '@/utils/workout-estimate';
 import { formatDuration } from '@/utils/workout-session';
 import { exerciseTargetUnits } from '@/utils/workout-tracking';
 
@@ -47,6 +49,33 @@ export default function HomeScreen() {
   const lastDay = lastProgram?.days.find((day) => day.id === lastCompletedSession?.dayId);
   const weekdayLabel = today.toLocaleDateString(locale, { weekday: 'long' }).toLocaleUpperCase(locale);
   const monthLabel = today.toLocaleDateString(locale, { month: 'long' });
+
+  const [, setEstimateTick] = useState(0);
+  // Tahmin YALNIZCA planlı (dinlenme olmayan) bir gün için türetilir; geçmiş
+  // örnek yoksa veya bugün tamamlandıysa çekirdek `undefined` döndürür.
+  const workoutEstimate =
+    activeProgram && todayDay && !todayDay.isOffDay
+      ? buildWorkoutEstimate({
+          sessions: workoutSessions,
+          programId: activeProgram.id,
+          dayId: todayDay.id,
+          currentSession: todaySession,
+          now: Date.now(),
+        })
+      : undefined;
+  const estimateStatus = workoutEstimate?.status;
+
+  /**
+   * Yalnız RENDER YENİLEYİCİ. Hem "şimdi başlarsan" saatini hem de çalışan
+   * antrenmanın kalan süresini en fazla 30 saniyede bir tazeler. Duraklatılmış
+   * tahminde zaman ilerlemediği, tahmin yokken de gösterilecek değer olmadığı
+   * için interval kurulmaz. Süre KAYNAĞI sayaç değil, her render'daki `now`dır.
+   */
+  useEffect(() => {
+    if (!estimateStatus || estimateStatus === 'paused') return;
+    const interval = setInterval(() => setEstimateTick((tick) => tick + 1), 30_000);
+    return () => clearInterval(interval);
+  }, [estimateStatus]);
 
   if (isProgramsLoading) {
     return (
@@ -141,6 +170,21 @@ export default function HomeScreen() {
                     sets: todayDay.exercises.reduce((total, exercise) => total + exerciseTargetUnits(exercise), 0),
                   })}
             </Text>
+            {/* Süre tahmini: egzersiz/set özetinin ALTINDA, başlat düğmesinden
+                görsel olarak daha düşük öncelikli ince bir bilgi satırı. Geçmiş
+                örnek yoksa `workoutEstimate` undefined olur ve satır hiç çizilmez. */}
+            {!todayDay.isOffDay && workoutEstimate && (
+              <View accessible accessibilityLabel={getEstimateLines(workoutEstimate, t, locale).join('. ')} style={styles.estimateRow}>
+                <Ionicons color={colors.textSecondary} name="time-outline" size={13} style={styles.estimateIcon} />
+                <View style={styles.estimateTextGroup}>
+                  {getEstimateLines(workoutEstimate, t, locale).map((line, index) => (
+                    <Text key={index} style={styles.estimateText}>
+                      {line}
+                    </Text>
+                  ))}
+                </View>
+              </View>
+            )}
             {!todayDay.isOffDay && (
               <Pressable
                 accessibilityRole="button"
@@ -227,6 +271,56 @@ export default function HomeScreen() {
   );
 }
 
+/**
+ * Metin uygulama dilini, saat çevrimi ise cihazın 12/24 saat tercihini izler.
+ * Yalnız `hour12` yazmamak yeterli değildir: `locale='en'` kendi başına 12 saat
+ * varsayımına geçebilir. Bu yüzden sistem formatter'ının çözdüğü hourCycle açıkça
+ * uygulama dilindeki formatter'a aktarılır.
+ */
+function formatFinishTime(finishAt: number, locale: string) {
+  const systemHourCycle = new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).resolvedOptions().hourCycle;
+  return new Date(finishAt).toLocaleTimeString(locale, {
+    hour: 'numeric',
+    hourCycle: systemHourCycle,
+    minute: '2-digit',
+  });
+}
+
+/**
+ * Tahmin durumuna göre gösterilecek metin satırları. Dakikaya yuvarlar ve
+ * negatif/"şimdi biter" göstermez: `exceeded` durumunda yalnız tek satır döner.
+ */
+function getEstimateLines(
+  estimate: WorkoutEstimate,
+  t: (key: string, params?: Record<string, string | number>) => string,
+  locale: string,
+): string[] {
+  if (estimate.exceeded) return [t('home.estimateExceeded')];
+
+  const remainingMinutes = Math.max(1, Math.round(estimate.remainingSeconds / 60));
+
+  if (estimate.status === 'not_started') {
+    const averageMinutes = Math.max(1, Math.round(estimate.averageSeconds / 60));
+    const lines = [t('home.estimateApproxDuration', { minutes: averageMinutes })];
+    if (estimate.finishAt !== undefined) {
+      lines.push(t('home.estimateStartFinish', { time: formatFinishTime(estimate.finishAt, locale) }));
+    }
+    return lines;
+  }
+
+  if (estimate.status === 'running' && estimate.finishAt !== undefined) {
+    return [
+      t('home.estimateRunningFinish', {
+        time: formatFinishTime(estimate.finishAt, locale),
+        minutes: remainingMinutes,
+      }),
+    ];
+  }
+
+  // `paused` (aşılmamış): kesin bitiş saati verilmez.
+  return [t('home.estimatePausedRemaining', { minutes: remainingMinutes })];
+}
+
 function createStyles(colors: ThemeColors) {
   return StyleSheet.create({
     safeArea: { backgroundColor: colors.background, flex: 1 },
@@ -253,6 +347,10 @@ function createStyles(colors: ThemeColors) {
     cardEyebrow: { color: colors.textSecondary, ...Type.eyebrow },
     cardTitle: { color: colors.text, fontSize: 28, fontWeight: '600', marginTop: 6 },
     cardMeta: { color: colors.textSecondary, ...Type.caption },
+    estimateRow: { alignItems: 'flex-start', flexDirection: 'row', gap: 6, marginTop: 8 },
+    estimateIcon: { marginTop: 1 },
+    estimateTextGroup: { flex: 1, gap: 1 },
+    estimateText: { color: colors.textSecondary, ...Type.footnote, fontVariant: ['tabular-nums'] },
     startButton: {
       alignItems: 'center',
       alignSelf: 'flex-start',
