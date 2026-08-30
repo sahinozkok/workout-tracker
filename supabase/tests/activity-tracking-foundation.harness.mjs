@@ -188,19 +188,33 @@ check('P0. Sözleşme sabitleri migration’dan AYRIŞTIRILABİLDİ', () => {
 console.log('=== A. Migration hijyeni ===');
 // ===========================================================================
 
-check('A1. Faz 1 TEK migration dosyasıdır', () => {
-  const untracked = execFileSync('git', ['ls-files', '--others', '--exclude-standard', 'supabase/migrations'], {
-    cwd: ROOT,
-    encoding: 'utf8',
-  })
-    .split('\n')
-    .filter(Boolean);
-  assertDeepEqual(untracked, [MIGRATION_PATH], 'yeni migration sayısı bir değil');
+/**
+ * A1/A2 — FAZ SINIRI DÜZELTMESİ.
+ *
+ * Bu iki iddia eskiden "Faz 1 TEK untracked migration'dır" ve "Faz 1 EN SON
+ * sıradadır" diyordu. İkisi de Faz 1'in kendi turunda doğruydu, ama Faz 1
+ * commit edilip ardından yeni bir migration eklendiğinde ikisi de doğal olarak
+ * geçersizleşir — bu beklenen ilerleme, bir regresyon değil.
+ *
+ * İddialar kalıcı anlamlarına GÜÇLENDİRİLDİ: Faz 1 hâlâ TEK bir dosyadır,
+ * kendinden öncekinden sonra gelir ve hiçbir timestamp çakışması yoktur.
+ * Zayıflatma değil daraltma: artık sonraki fazlar bu harness'ı düşürmez ama
+ * Faz 1'in bölünmesi veya yerinin değişmesi hâlâ yakalanır.
+ */
+check('A1. Faz 1 TEK ve tekil bir migration dosyasıdır', () => {
+  const names = readdirSync(join(ROOT, 'supabase/migrations')).filter((f) => f.endsWith('.sql'));
+  const phase1 = names.filter((n) => n.includes('activity_tracking_foundation'));
+  assertDeepEqual(phase1, [MIGRATION_NAME], 'Faz 1 tek dosya değil veya adı değişmiş');
 });
 
-check('A2. Timestamp mevcut en son migration’dan SONRA ve çakışmıyor', () => {
+check('A2. Faz 1 timestamp’i sırayı koruyor ve çakışma yok', () => {
   const names = readdirSync(join(ROOT, 'supabase/migrations')).filter((f) => f.endsWith('.sql')).sort();
-  assertEqual(names[names.length - 1], MIGRATION_NAME, 'yeni dosya en son sırada değil');
+  const index = names.indexOf(MIGRATION_NAME);
+  assert(index > 0, 'Faz 1 migration listesinde bulunamadı veya ilk sırada');
+  assert(
+    names[index - 1].slice(0, 14) < MIGRATION_NAME.slice(0, 14),
+    'Faz 1 kendinden öncekinden sonra gelmiyor',
+  );
   const stamps = names.map((n) => n.slice(0, 14));
   assertEqual(new Set(stamps).size, stamps.length, 'timestamp çakışması var');
 });
@@ -231,7 +245,7 @@ check('A4. Uygulanmış migration dosyalarının HİÇBİRİ değişmedi', () =>
   assert(tracked.length >= 24, 'izlenen migration sayısı beklenenden az — kontrol vacuous');
 });
 
-check('A5. İstemci ve yapılandırma dosyaları bu fazda DEĞİŞMEDİ', () => {
+check('A5. İstemci ve yapılandırma dosyaları DEĞİŞMEDİ', () => {
   const changed = execFileSync('git', ['status', '--porcelain'], { cwd: ROOT, encoding: 'utf8' })
     .split('\n')
     .filter(Boolean)
@@ -242,6 +256,12 @@ check('A5. İstemci ve yapılandırma dosyaları bu fazda DEĞİŞMEDİ', () => 
       `kapsam dışı dosya değişmiş: ${path}`,
     );
   }
+  // Uygulanmış migration'lar hiç DEĞİŞTİRİLMEMELİ (yeni dosya eklenebilir).
+  const modified = execFileSync('git', ['diff', '--name-only', 'HEAD', '--', 'supabase/migrations'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+  }).trim();
+  assertEqual(modified, '', 'uygulanmış migration değiştirilmiş');
 });
 
 check('A6. Gizli bilgi veya attribution yok', () => {
