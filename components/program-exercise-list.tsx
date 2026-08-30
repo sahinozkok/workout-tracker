@@ -15,6 +15,7 @@ import { useAppTheme } from '@/hooks/use-app-theme';
 import { useFeatureColor } from '@/hooks/use-feature-colors';
 import { ProgramExercise } from '@/types/workout';
 import { getExerciseVisual } from '@/utils/workout-visual';
+import { formatExerciseTargetLabel } from '@/utils/workout-tracking';
 
 /** Varsayılan Antrenman Günleri rengi; kullanıcı seçim yapmadıysa bu kullanılır. */
 const WORKOUT_ORANGE = '#FF9138';
@@ -81,7 +82,7 @@ export default function ProgramExerciseList({ exercises, onEdit, onReorder, show
                       {exerciseName}
                     </Text>
                     <View style={styles.targetInfo}>
-                      <Text style={styles.exerciseTarget}>{item.targetSets}×{item.targetReps}</Text>
+                      <Text style={styles.exerciseTarget}>{formatExerciseTargetLabel(item)}</Text>
                       <Text style={styles.exerciseRest}>{t('day.restSecondsShort', { seconds: item.restSeconds })}</Text>
                     </View>
                   </View>

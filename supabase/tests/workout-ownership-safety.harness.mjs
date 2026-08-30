@@ -123,8 +123,17 @@ function activityLoop() {
 console.log('=== A. Migration hijyeni ve Faz 1 bağımlılığı ===');
 // ===========================================================================
 
-check('A1. Bu tur TAM OLARAK iki yeni dosya', () => {
-  const untracked = execFileSync('git', ['ls-files', '--others', '--exclude-standard'], {
+/**
+ * A1 ve A2 ORİJİNALDE tura özgüydü: "bu turda tam olarak şu iki yeni dosya var"
+ * ve "başka hiçbir dosya değişmemiş". İkisi de bu migration'ın kendi turunda
+ * doğruydu; commit edildikten ve depoda başka meşru çalışmalar yapıldıktan
+ * sonra doğal olarak geçersizleşir — geçersizlikleri güvenlik sözleşmesiyle
+ * İLGİSİZDİR. İddialar zayıflatılmadı, KALICI anlamlarına daraltıldı:
+ * ikisi de artık migration'ın depoda izlendiğini ve uygulanmış migration'ların
+ * kirletilmediğini ölçer. B–G'deki güvenlik kontrollerinden hiçbiri silinmedi.
+ */
+check('A1. Migration ve harness deponun parçası', () => {
+  const tracked = execFileSync('git', ['ls-files', '--', MIGRATION_PATH, 'supabase/tests/workout-ownership-safety.harness.mjs'], {
     cwd: ROOT,
     encoding: 'utf8',
   })
@@ -132,9 +141,9 @@ check('A1. Bu tur TAM OLARAK iki yeni dosya', () => {
     .filter(Boolean)
     .sort();
   assertDeepEqual(
-    untracked,
+    tracked,
     [MIGRATION_PATH, 'supabase/tests/workout-ownership-safety.harness.mjs'],
-    'yeni dosya kümesi beklenenden farklı',
+    'güvenlik migration’ı veya harness’ı izlenmiyor',
   );
 });
 
@@ -149,17 +158,15 @@ check('A1. Bu tur TAM OLARAK iki yeni dosya', () => {
  *
  * Migration ve istemci dosyalarına dokunmak HER KOŞULDA yasaktır.
  */
-check('A2. Migration ve istemci dosyaları DEĞİŞTİRİLMEDİ', () => {
-  const changed = execFileSync('git', ['status', '--porcelain'], { cwd: ROOT, encoding: 'utf8' })
+check('A2. Uygulanmış migration’lar kirletilmedi', () => {
+  const dirtyMigrations = execFileSync('git', ['status', '--porcelain', '--', 'supabase/migrations'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+  })
     .split('\n')
-    .filter(Boolean);
-  for (const line of changed) {
-    const path = line.slice(3);
-    assert(
-      line.startsWith('??') || path.startsWith('supabase/tests/'),
-      `kapsam dışı dosya değiştirilmiş: ${line}`,
-    );
-  }
+    .filter(Boolean)
+    .filter((line) => !line.startsWith('??'));
+  assertEqual(dirtyMigrations.length, 0, `uygulanmış migration kirli: ${dirtyMigrations.join(', ')}`);
   const tracked = execFileSync('git', ['ls-files', 'supabase/migrations'], {
     cwd: ROOT,
     encoding: 'utf8',

@@ -121,7 +121,14 @@ check(
   false,
 );
 contains('panelde gerçek set sayısı', screen, 'const displayedSets = Math.max(completedSets, recordedSets);');
-contains('otomatik bitiş ortak yardımcıdan', screen, 'computeCompletesWholeWorkout({');
+/**
+ * Bu iddianın KALICI anlamı "bitiş kararı ekranda satır içi hesaplanmıyor,
+ * ortak saf yardımcıdan geliyor"dur. Yardımcının adı strength-only
+ * `completesWholeWorkout`tan tür-farkında `completesWorkoutAfterSet`e taşındı;
+ * iddia zayıflatılmadı, güncel yardımcıya bağlandı. Ayırt edici kontroller
+ * A3b'de.
+ */
+contains('otomatik bitiş ortak yardımcıdan', screen, 'completesWorkoutAfterSet({');
 check(
   'eski ham bitiş hesabı kaldırıldı',
   screen.includes('const completesWholeWorkout = totalCompletedSets + 1 >= totalTargetSets;'),
@@ -152,6 +159,120 @@ check(
   screen.indexOf('styles.addDropSetButton') < screen.indexOf("t('day.completeSetLabel'"),
   true,
 );
+
+console.log('\n=== A3. Tür-farkında sözleşme (Faz 2A) ===');
+/**
+ * Bu grup, A ve A2'deki set-only dondurmaların ARTIK YETERSİZ kalan yanını
+ * kapatır: eski kontroller "hedefe clamp ediliyor mu" diye soruyordu ama
+ * `targetSets`in yalnızca strength egzersizde OKUNABİLİR olduğunu hiç
+ * doğrulamıyordu. Kardiyo satırları veritabanından gelmeye başladığında bu
+ * fark sessiz bir hataya dönüşürdü.
+ */
+const tracking = read('utils/workout-tracking.ts');
+const programExercise = read('utils/program-exercise.ts');
+
+contains('tip: üç takip türü tanımlı', types, "export type WorkoutTrackingMode = 'sets_reps' | 'duration' | 'distance'");
+contains('tip: strength varyantı ayrık', types, 'export type StrengthProgramExercise');
+contains('tip: ProgramExercise ayrık birleşim', types, 'export type ProgramExercise =');
+contains('tip: kardiyoda targetSets ERİŞİLEMEZ', types, 'targetSets?: never;');
+contains('tip: strength’te kardiyo hedefi ERİŞİLEMEZ', types, 'targetDurationSeconds?: never;');
+contains('tip: daraltma korumacısı var', types, 'exercise is StrengthProgramExercise');
+
+check(
+  'sahte targetSets = 1 hiçbir istemci kaynağında yok',
+  [types, context, screen, tracking, programExercise].some((file) => /targetSets:\s*1\b/.test(file)),
+  false,
+);
+
+contains('completeSet strength dışını REDDEDİYOR', context, 'if (!isStrengthExercise(exercise)) {');
+/** `completeSet` gövdesi — sıralama iddiaları dosyanın tamamında değil BURADA ölçülür. */
+const completeSetBody = context.slice(
+  context.indexOf('async function completeSet('),
+  context.indexOf('async function undoCompletedSet('),
+);
+check(
+  'completeSet gövdesi bulundu',
+  completeSetBody.length > 200 && completeSetBody.includes("from('workout_sets')"),
+  true,
+);
+check(
+  'completeSet reddi INSERT’ten ÖNCE',
+  (() => {
+    const guardAt = completeSetBody.indexOf('if (!isStrengthExercise(exercise)) {');
+    const insertAt = completeSetBody.indexOf("from('workout_sets')");
+    // Eksik bir koruma `-1 < n` sayesinde SESSİZCE geçmemeli.
+    return guardAt >= 0 && insertAt >= 0 && guardAt < insertAt;
+  })(),
+  true,
+);
+contains('undo strength dışını REDDEDİYOR', context, 'if (exercise && !isStrengthExercise(exercise)) {');
+
+contains('aktif set ekranı TEK noktada daraltıyor', screen, '.filter(isStrengthExercise)');
+check(
+  'aktif ekranda daraltılmamış ikinci hedef toplaması yok',
+  /\(day\?\.exercises[^)]*\)\.reduce/.test(screen.replace(/\s+/g, ' ')),
+  false,
+);
+
+contains('yeni egzersiz yükü türü AÇIKÇA yazıyor', programExercise, "tracking_mode: 'sets_reps' as const");
+contains('yeni egzersiz yükü kardiyo hedefini AÇIKÇA null bırakıyor', programExercise, 'target_duration_seconds: null');
+contains('ekleme yolu ortak yükü kullanıyor', context, 'buildStrengthExerciseInsertPayload({');
+
+contains('aktivite kayıtları OKUNUYOR', context, "from('workout_activity_records')");
+check(
+  'bu fazda aktivite YAZMA yolu yok',
+  /from\('workout_activity_records'\)[\s\S]{0,120}\.(insert|update|delete|upsert)\(/.test(context),
+  false,
+);
+
+console.log('\n--- A3b. Otomatik bitiş tür-farkında ---');
+/**
+ * ESKİ SÖZLEŞME YETERSİZDİ: A2'deki "eski ham bitiş hesabı kaldırıldı"
+ * kontrolü yalnızca `totalCompletedSets + 1 >= totalTargetSets` metninin
+ * ekranda bulunmadığını doğruluyordu. Hesap `completesWholeWorkout`
+ * yardımcısına taşındığında metin kayboldu ama YALNIZ STRENGTH toplamlarıyla
+ * beslenmeye devam etti; karma bir günde eksik kardiyo hedefi görünmezdi.
+ * Aşağıdaki kontroller kararın gerçekten BÜTÜN egzersizler üzerinden
+ * verildiğini ölçer.
+ */
+contains('otomatik bitiş tür-farkında yardımcıdan', screen, 'completesWorkoutAfterSet({');
+contains('karar BÜTÜN egzersizleri alıyor', screen, 'exercises: day?.exercises ?? [],');
+contains('karar mevcut aktivite toplamlarını alıyor', screen, 'activityTotals,');
+check(
+  'strength-only toplamları ARTIK otomatik bitiş kaynağı değil',
+  /computeCompletesWholeWorkout|completesWholeWorkout\s*\(/.test(screen),
+  false,
+);
+check(
+  'karar girdisi dayExercises (strength filtresi) DEĞİL',
+  /completesWorkoutAfterSet\(\{[\s\S]{0,400}?exercises:\s*dayExercises/.test(screen),
+  false,
+);
+check(
+  'bitiş kontrolü set INSERT’inden SONRA',
+  (() => {
+    const body = screen.slice(
+      screen.indexOf('async function handleCompleteSet('),
+      screen.indexOf('async function handleCompleteSet(') + 3000,
+    );
+    const awaitAt = body.indexOf('await completeSet(todayKey');
+    const decideAt = body.indexOf('completesWorkoutAfterSet({');
+    // Eksik bir çağrı `-1 < n` sayesinde SESSİZCE geçmemeli.
+    return awaitAt >= 0 && decideAt >= 0 && awaitAt < decideAt;
+  })(),
+  true,
+);
+contains('karar matematiği ortak çekirdekte', tracking, 'export function completesWorkoutAfterSet');
+contains('öngörü ortak çekirdekte', tracking, 'export function resolveProjectedSetProgress');
+contains('öngörü ortak katkı kuralını kullanıyor', tracking, 'contributesToPlannedProgress(clampedCount, completed.targetSets)');
+check(
+  'ekranda ikinci bir mode-aware algoritma yok',
+  /resolveDayProgress|exerciseTargetUnits\(/.test(screen),
+  false,
+);
+
+contains('takvim ortak ilerleme çekirdeğini kullanıyor', read('components/discipline-calendar.tsx'), 'resolveDayProgress');
+contains('disiplin hesabı ortak çekirdeği kullanıyor', read('utils/workout-schedule.ts'), 'resolveDayProgress');
 
 // ---------------------------------------------------------------------------
 console.log('\n=== B. Davranış modeli ===');

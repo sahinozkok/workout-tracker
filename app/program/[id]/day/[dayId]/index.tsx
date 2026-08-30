@@ -38,12 +38,12 @@ import {
   WorkoutSetPerformance,
   WorkoutSetRecord,
   WorkoutVisual,
+  isStrengthExercise,
+  StrengthProgramExercise,
 } from '@/types/workout';
 import { toDateKey } from '@/utils/discipline';
-import {
-  completesWholeWorkout as computeCompletesWholeWorkout,
-  getActiveSetLabelNumber,
-} from '@/utils/workout-sets';
+import { completesWorkoutAfterSet } from '@/utils/workout-tracking';
+import { getActiveSetLabelNumber } from '@/utils/workout-sets';
 import {
   cancelRestNotification,
   isRestNotificationScheduled,
@@ -73,6 +73,7 @@ export default function WorkoutDayScreen() {
   // Yalnızca yerel, geçici bir UI olayı gönderir; ağ/depolama işlemi yapmaz.
   const { triggerReaction } = useMascot();
   const {
+    activityTotals,
     completeSet,
     completedSetCounts,
     activeProgramId,
@@ -169,7 +170,18 @@ export default function WorkoutDayScreen() {
   // Aktif egzersiz: kullanıcı panelden seçtiyse o, yoksa program sırasındaki
   // ilk tamamlanmamış egzersiz.
   // useMemo: effect bağımlılıklarının her render'da değişmesini engeller.
-  const dayExercises = useMemo(() => day?.exercises ?? [], [day?.exercises]);
+  /**
+   * AKTİF SET AKIŞI YALNIZCA `sets_reps` EGZERSİZLERLE ÇALIŞIR.
+   *
+   * Kardiyo satırı ileride veritabanından gelirse buraya sızmamalıdır: set
+   * paneli, otomatik ilerleme, mola sayacı ve `completeSet` hepsi set birimi
+   * varsayar. Daraltma TEK noktada yapılır, aşağıdaki her kullanım bundan
+   * beslenir. Kardiyo için arayüz bu fazda BİLİNÇLİ olarak yoktur.
+   */
+  const dayExercises = useMemo(
+    () => (day?.exercises ?? []).filter(isStrengthExercise),
+    [day?.exercises],
+  );
   // Program sırasındaki ilk tamamlanmamış egzersiz.
   const currentExerciseId = dayExercises.find(
     (exercise) => (completedSetCounts[getSetProgressKey(todayKey, exercise.id)] ?? 0) < exercise.targetSets,
@@ -367,8 +379,8 @@ export default function WorkoutDayScreen() {
   const isScheduledToday = day.scheduledWeekday === today.getDay();
   const isActiveProgram = program.id === activeProgramId;
   const canTrackToday = isScheduledToday && isActiveProgram;
-  const totalTargetSets = day.exercises.reduce((total, exercise) => total + exercise.targetSets, 0);
-  const totalCompletedSets = day.exercises.reduce(
+  const totalTargetSets = dayExercises.reduce((total, exercise) => total + exercise.targetSets, 0);
+  const totalCompletedSets = dayExercises.reduce(
     (total, exercise) =>
       total +
       Math.min(completedSetCounts[getSetProgressKey(todayKey, exercise.id)] ?? 0, exercise.targetSets),
@@ -568,28 +580,30 @@ export default function WorkoutDayScreen() {
     }
   }
 
-  async function handleCompleteSet(exercise: ProgramExercise, performance: WorkoutSetPerformance) {
+  async function handleCompleteSet(exercise: StrengthProgramExercise, performance: WorkoutSetPerformance) {
     setPendingExerciseId(exercise.id);
     try {
-      /**
-       * KATKI KONTROLÜ, kayıt gönderilmeden ÖNCEKİ sayaçla yapılır.
-       *
-       * Hedefi dolmuş bir egzersize eklenen EKSTRA set planlı ilerlemeyi
-       * artırmaz; eski hesap (`totalCompletedSets + 1 >= totalTargetSets`)
-       * başka egzersizde eksik planlı set varken bile antrenmanı bitiriyordu.
-       */
-      const exerciseCompletedSets = Math.min(
-        completedSetCounts[getSetProgressKey(todayKey, exercise.id)] ?? 0,
-        exercise.targetSets,
-      );
-
       await completeSet(todayKey, exercise.id, exercise.targetSets, performance);
 
-      const completesWholeWorkout = computeCompletesWholeWorkout({
-        completedSets: exerciseCompletedSets,
-        targetSets: exercise.targetSets,
-        totalCompletedSets,
-        totalTargetSets,
+      /**
+       * OTOMATİK BİTİŞ KARARI — tür-farkında ve TEK kaynaklı.
+       *
+       * Girdi olarak `dayExercises` (yalnız strength) DEĞİL, günün BÜTÜN
+       * egzersizleri verilir: karma bir günde strength hedefleri dolsa bile
+       * duration/distance hedefi eksikse oturum KAPANMAMALIDIR. Sayaçlar
+       * kayıt gönderilmeden ÖNCEKİ değerlerdir; yardımcı, katkı veren kaydın
+       * etkisini kendi içinde öngörür ve ekstra sette hiç bitirmez.
+       *
+       * Karar matematiği burada DEĞİL, `utils/workout-tracking.ts` içindeki
+       * ortak çekirdektedir; ekranda ikinci bir algoritma tutulmaz.
+       */
+      const completesWholeWorkout = completesWorkoutAfterSet({
+        activityTotals,
+        completedExerciseId: exercise.id,
+        completedSetCounts,
+        dateKey: todayKey,
+        exercises: day?.exercises ?? [],
+        getSetProgressKey,
       });
       if (completesWholeWorkout) {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -731,7 +745,13 @@ export default function WorkoutDayScreen() {
     }
   }
 
+  /**
+   * Egzersiz düzenleyici YALNIZCA strength alanlarını (set/tekrar/mola) taşır.
+   * Kardiyo satırı listede görünmeye devam eder ama bu fazda düzenlenemez;
+   * sessizce yanlış alanları göstermek yerine açıkça hiçbir şey yapmaz.
+   */
   function openExerciseEditor(exercise: ProgramExercise, exerciseName: string) {
+    if (!isStrengthExercise(exercise)) return;
     setEditingExerciseId(exercise.id);
     setEditingExerciseName(exerciseName);
     setExerciseVisualDraft(getExerciseVisual(exercise.visual));
@@ -1371,7 +1391,7 @@ export default function WorkoutDayScreen() {
               <View style={styles.panelGrabber} />
               <Text style={styles.panelTitle}>{t('day.allExercises')}</Text>
 
-              {day.exercises.map((exercise) => {
+              {dayExercises.map((exercise) => {
                 const exerciseName = getProgramExerciseName(exercise.exerciseId, exercise.customExerciseName);
                 const completedSets = Math.min(
                   completedSetCounts[getSetProgressKey(todayKey, exercise.id)] ?? 0,

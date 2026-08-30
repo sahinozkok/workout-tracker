@@ -12,6 +12,7 @@ import { useWorkout } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import { calculateDisciplineStreak, toDateKey } from '@/utils/discipline';
 import { formatDuration } from '@/utils/workout-session';
+import { exerciseTargetUnits } from '@/utils/workout-tracking';
 
 export default function HomeScreen() {
   const {
@@ -137,7 +138,7 @@ export default function HomeScreen() {
                 ? t('home.restDayBody')
                 : t('home.exerciseSetSummary', {
                     exercises: todayDay.exercises.length,
-                    sets: todayDay.exercises.reduce((total, exercise) => total + exercise.targetSets, 0),
+                    sets: todayDay.exercises.reduce((total, exercise) => total + exerciseTargetUnits(exercise), 0),
                   })}
             </Text>
             {!todayDay.isOffDay && (

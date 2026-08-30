@@ -1,4 +1,5 @@
 import { DisciplineStatus, WorkoutProgram } from '@/types/workout';
+import { ActivityTotals, resolveDayProgress } from '@/utils/workout-tracking';
 import { toDateKey } from '@/utils/discipline';
 
 export function getSetProgressKey(dateKey: string, programExerciseId: string) {
@@ -26,6 +27,7 @@ export function getScheduledDisciplineStatus(
   activeProgramStartedAt: string | undefined,
   completedSetCounts: Record<string, number>,
   todayKey: string,
+  activityTotals: Record<string, ActivityTotals> = {},
 ): DisciplineStatus | undefined {
   if (!activeProgram || !activeProgramStartedAt || dateKey < activeProgramStartedAt) return undefined;
   // Gelecek günlere otomatik durum üretilmez.
@@ -41,19 +43,27 @@ export function getScheduledDisciplineStatus(
   const workoutDays = scheduledDays.filter((day) => !day.isOffDay);
   if (workoutDays.length === 0) return 'completed';
 
+  /**
+   * TÜR-FARKINDA ÇEKİRDEK. Set formülü burada TEKRAR EDİLMEZ;
+   * `utils/workout-tracking.ts` tek doğruluk kaynağıdır.
+   *
+   * `partial` kararı artık tamamlanan birim sayısına değil `hasProgress`
+   * sinyaline bakar: hedefin altında biten bir kardiyo kaydı sıfır birim üretir
+   * ama gerçek bir ilerlemedir. Yalnızca strength içeren programlarda ikisi
+   * matematiksel olarak eşdeğerdir, dolayısıyla mevcut davranış değişmez.
+   */
   const exercises = workoutDays.flatMap((day) => day.exercises);
-  const totalTargetSets = exercises.reduce((total, exercise) => total + exercise.targetSets, 0);
-  if (totalTargetSets === 0) return isToday ? undefined : 'skipped';
+  const progress = resolveDayProgress({
+    dateKey,
+    exercises,
+    completedSetCounts,
+    activityTotals,
+    getSetProgressKey,
+  });
 
-  const totalCompletedSets = exercises.reduce(
-    (total, exercise) =>
-      total +
-      Math.min(completedSetCounts[getSetProgressKey(dateKey, exercise.id)] ?? 0, exercise.targetSets),
-    0,
-  );
-
-  if (totalCompletedSets === totalTargetSets) return 'completed';
-  if (totalCompletedSets > 0) return 'partial';
+  if (progress.targetUnits === 0) return isToday ? undefined : 'skipped';
+  if (progress.doneUnits >= progress.targetUnits) return 'completed';
+  if (progress.hasProgress) return 'partial';
   return isToday ? undefined : 'skipped';
 }
 
@@ -78,6 +88,7 @@ export function buildDisciplineStatuses(
   activeProgram: WorkoutProgram | undefined,
   activeProgramStartedAt: string | undefined,
   completedSetCounts: Record<string, number>,
+  activityTotals: Record<string, ActivityTotals> = {},
 ) {
   const statuses = { ...historyStatuses, ...manualStatuses };
   const today = new Date();
@@ -94,6 +105,7 @@ export function buildDisciplineStatuses(
       activeProgramStartedAt,
       completedSetCounts,
       todayKey,
+      activityTotals,
     );
     if (scheduledStatus) statuses[dateKey] = scheduledStatus;
   }

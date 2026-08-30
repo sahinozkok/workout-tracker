@@ -247,6 +247,8 @@ export default function AddExerciseScreen() {
           await addExerciseToDay(programId, workoutDay.id, {
             customExerciseName: item.exerciseId ? undefined : item.name,
             exerciseId: item.exerciseId,
+            // Bu ekran YALNIZCA strength üretir; tür açıkça yazılır.
+            trackingMode: 'sets_reps',
             restSeconds: parsedRestSeconds,
             targetReps: trimmedReps,
             targetSets: parsedSets,

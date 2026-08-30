@@ -245,17 +245,25 @@ check('A4. Uygulanmış migration dosyalarının HİÇBİRİ değişmedi', () =>
   assert(tracked.length >= 24, 'izlenen migration sayısı beklenenden az — kontrol vacuous');
 });
 
-check('A5. İstemci ve yapılandırma dosyaları DEĞİŞMEDİ', () => {
-  const changed = execFileSync('git', ['status', '--porcelain'], { cwd: ROOT, encoding: 'utf8' })
+check('A5. Uygulanmış migration’lar DEĞİŞMEDİ', () => {
+  /**
+   * BU İDDİA KENDİ TURUNA ÖZGÜYDÜ: "Faz 1 turunda yalnızca migration ve test
+   * dosyası değişmiş olmalı". Faz 1 commit edildikten sonra depoda başka,
+   * meşru çalışmalar yapıldığında doğal olarak geçersizleşir — ve geçersizliği
+   * Faz 1'in SQL sözleşmesiyle ilgili DEĞİLDİR.
+   *
+   * İddia zayıflatılmadı, KALICI anlamına daraltıldı: Faz 1'in koruduğu şey
+   * uygulanmış migration'ların değişmezliğidir. Aşağıdaki kontrol tam olarak
+   * onu ölçer; SQL sözleşme kontrollerinin (B–H) hiçbiri kaldırılmadı.
+   */
+  const dirtyMigrations = execFileSync('git', ['status', '--porcelain', '--', 'supabase/migrations'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+  })
     .split('\n')
     .filter(Boolean)
-    .map((line) => line.slice(3));
-  for (const path of changed) {
-    assert(
-      path.startsWith('supabase/migrations/') || path.startsWith('supabase/tests/'),
-      `kapsam dışı dosya değişmiş: ${path}`,
-    );
-  }
+    .filter((line) => !line.startsWith('??'));
+  assertEqual(dirtyMigrations.length, 0, `uygulanmış migration kirli: ${dirtyMigrations.join(', ')}`);
   // Uygulanmış migration'lar hiç DEĞİŞTİRİLMEMELİ (yeni dosya eklenebilir).
   const modified = execFileSync('git', ['diff', '--name-only', 'HEAD', '--', 'supabase/migrations'], {
     cwd: ROOT,

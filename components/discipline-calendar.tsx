@@ -22,6 +22,7 @@ import { getWeekdayShortLabel, WEEKDAY_VALUES } from '@/constants/weekdays';
 import { toDateKey } from '@/utils/discipline';
 import { getSetProgressKey } from '@/utils/workout-schedule';
 import { formatDuration } from '@/utils/workout-session';
+import { resolveDayProgress } from '@/utils/workout-tracking';
 
 export type CalendarPeriod = 'week' | 'month' | 'year';
 
@@ -291,6 +292,7 @@ export function useDisciplineDayPress() {
   const {
     activeProgramId,
     completedSetCounts,
+    activityTotals,
     disciplineStatuses,
     cycleDisciplineStatus,
     isDateScheduled,
@@ -330,18 +332,20 @@ export function useDisciplineDayPress() {
     const isScheduled = isDateScheduled(dateKey);
     const activeProgram = programs.find((program) => program.id === activeProgramId);
     const scheduledDays = activeProgram?.days.filter((day) => day.scheduledWeekday === date.getDay()) ?? [];
-    const totalSets = scheduledDays
-      .filter((day) => !day.isOffDay)
-      .flatMap((day) => day.exercises)
-      .reduce((total, exercise) => total + exercise.targetSets, 0);
-    const completedSets = scheduledDays
-      .filter((day) => !day.isOffDay)
-      .flatMap((day) => day.exercises)
-      .reduce(
-        (total, exercise) =>
-          total + Math.min(completedSetCounts[getSetProgressKey(dateKey, exercise.id)] ?? 0, exercise.targetSets),
-        0,
-      );
+    /**
+     * İKİNCİ BAĞIMSIZ ALGORİTMA BIRAKILMAZ: gün ilerlemesi tek tür-farkında
+     * çekirdekten (`utils/workout-tracking.ts`) okunur. Etiket hâlâ "birim"
+     * sayar; strength gününde birim = set olduğu için gösterim değişmez.
+     */
+    const dayProgress = resolveDayProgress({
+      dateKey,
+      exercises: scheduledDays.filter((day) => !day.isOffDay).flatMap((day) => day.exercises),
+      completedSetCounts,
+      activityTotals,
+      getSetProgressKey,
+    });
+    const totalSets = dayProgress.targetUnits;
+    const completedSets = dayProgress.doneUnits;
     const completedSession = workoutSessions.find(
       (session) => session.dateKey === dateKey && session.status === 'completed',
     );

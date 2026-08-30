@@ -5,15 +5,73 @@ export type ExerciseDefinition = {
   equipment: string;
 };
 
-export type ProgramExercise = {
+/**
+ * Egzersizin nasıl ÖLÇÜLDÜĞÜ. Veritabanındaki
+ * `program_exercises.tracking_mode` ile birebir aynı küme.
+ */
+export type WorkoutTrackingMode = 'sets_reps' | 'duration' | 'distance';
+
+/** Türden bağımsız, her egzersizde bulunan alanlar. */
+type ProgramExerciseBase = {
   id: string;
   exerciseId?: string;
   customExerciseName?: string;
   visual?: WorkoutVisual;
-  targetSets: number;
-  targetReps: string;
+  /**
+   * Setler arası mola. `sets_reps` için kullanıcının seçtiği değer;
+   * `duration`/`distance` için veritabanı sözleşmesi gereği HER ZAMAN 0
+   * (o türlerde setler arası mola kavramı yoktur).
+   */
   restSeconds: number;
 };
+
+/**
+ * Üç tür AYRIK bir birleşimdir ve geçersiz kombinasyonlar TİP DÜZEYİNDE
+ * temsil edilemez: her varyant kendi türüne ait olmayan hedef alanlarını
+ * `?: never` ile kapatır. Böylece "süre hedefi taşıyan bir strength egzersizi"
+ * gibi bir nesne derlenmez.
+ *
+ * Kardiyo BİLİNÇLİ OLARAK sahte bir set modeliyle (`targetSets = 1`) temsil
+ * EDİLMEZ; hedef birimi türe göre `utils/workout-tracking.ts` içinde çözülür.
+ */
+export type StrengthProgramExercise = ProgramExerciseBase & {
+  trackingMode: 'sets_reps';
+  targetSets: number;
+  targetReps: string;
+  targetDurationSeconds?: never;
+  targetDistanceMeters?: never;
+};
+
+export type DurationProgramExercise = ProgramExerciseBase & {
+  trackingMode: 'duration';
+  targetDurationSeconds: number;
+  targetSets?: never;
+  targetReps?: never;
+  targetDistanceMeters?: never;
+};
+
+export type DistanceProgramExercise = ProgramExerciseBase & {
+  trackingMode: 'distance';
+  targetDistanceMeters: number;
+  targetSets?: never;
+  targetReps?: never;
+  targetDurationSeconds?: never;
+};
+
+export type ProgramExercise =
+  | StrengthProgramExercise
+  | DurationProgramExercise
+  | DistanceProgramExercise;
+
+/** Birleşim üyelerini tek tek daraltan `Omit`. Düz `Omit` birleşimi çökertir. */
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
+/** Aktif antrenman ekranı ve set akışı YALNIZCA bu türle çalışır. */
+export function isStrengthExercise(
+  exercise: ProgramExercise,
+): exercise is StrengthProgramExercise {
+  return exercise.trackingMode === 'sets_reps';
+}
 
 export type ProgramIconName =
   | 'barbell-outline'
@@ -116,6 +174,33 @@ export type WorkoutSetRecord = {
 };
 
 export type NewWorkoutProgram = Pick<WorkoutProgram, 'name' | 'days'> & { visual: WorkoutVisual };
-export type NewProgramExercise = Omit<ProgramExercise, 'id'>;
+export type NewProgramExercise = DistributiveOmit<ProgramExercise, 'id'>;
+
+/**
+ * Süre/mesafe egzersizinin tek bir oturumdaki performans kaydı.
+ *
+ * `workout_activity_records` satırının istemci karşılığıdır. Hedef alanları
+ * KAYIT ANINDAKİ snapshot'tır: plan sonradan değişse bile geçmiş kayıt kendi
+ * hedefine göre okunabilir.
+ *
+ * TEMPO SAKLANMAZ. Gerekirse mesafe ve süreden türetilir; bu fazda hiçbir
+ * yüzeyde gösterilmez.
+ */
+export type WorkoutActivityRecord = {
+  id: string;
+  sessionId: string;
+  /** Program veya egzersiz silindiyse NULL'a düşer; kayıt yine de kalır. */
+  programExerciseId?: string;
+  exerciseName: string;
+  trackingMode: 'duration' | 'distance';
+  targetDurationSeconds?: number;
+  targetDistanceMeters?: number;
+  durationSeconds: number;
+  distanceMeters?: number;
+  rpe?: number;
+  completedAt: string;
+  /** Kaydın ait olduğu oturumun `workout_date` değeri. */
+  dateKey: string;
+};
 
 export type DisciplineStatus = 'completed' | 'partial' | 'skipped';
