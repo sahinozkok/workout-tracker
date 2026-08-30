@@ -556,6 +556,10 @@ export const tr = {
     workoutDayIcons: 'Egzersiz simgeleri',
     workoutDayIconsCaption: 'Antrenman günü listelerinde egzersiz simgelerini gösterir.',
     workoutDayIconsLabel: 'Egzersiz simgelerini göster veya gizle',
+    shareActiveProgram: 'Aktif programımı profilimde göster',
+    shareActiveProgramCaption:
+      'Arkadaşların aktif programındaki günleri, egzersizleri ve hedefleri görebilir.',
+    shareActiveProgramLabel: 'Aktif programı profilde göstermeyi aç veya kapat',
     displayPreferenceFailed: 'Görünüm ayarı kaydedilemedi',
     displayPreferenceFailedBody: 'Görünüm ayarını tekrar değiştirmeyi dene.',
     accountConnected: 'Supabase hesabı bağlı',
@@ -591,6 +595,13 @@ export const tr = {
     emptyBody: 'Bir antrenman gününü tamamladığında serin burada görünür.',
     loadFailed: 'Seri geçmişi yüklenemedi.',
     loadFailedBody: 'Bağlantını kontrol edip tekrar dene.',
+  },
+  sharedProgram: {
+    title: 'Aktif program',
+    dayCount: '{count} antrenman günü',
+    exerciseCount: '{count} egzersiz',
+    restDay: 'Dinlenme günü',
+    toggleHint: 'Programı aç veya kapat',
   },
   exerciseLibrary: {
     muscleGroups: {

@@ -30,6 +30,7 @@ import { RankBadge } from '@/components/ranks/rank-badge';
 import { LevelProgressRing } from '@/components/rewards/level-progress-ring';
 import { ProfileProofStats } from '@/components/rewards/profile-proof-stats';
 import { ProfileDisciplineCard } from '@/components/profile-discipline-card';
+import { ProfileSharedProgram } from '@/components/profile-shared-program';
 import { MotionCollapsible, MotionSection } from '@/components/motion-section';
 import { MotionDuration } from '@/constants/motion';
 import { Fonts, Layout, ThemeColors, Type } from '@/constants/theme';
@@ -49,6 +50,7 @@ import {
 } from '@/services/profile-media';
 import { TrainingGoal, UserProfile } from '@/types/profile';
 import { calculateDisciplineStreak } from '@/utils/discipline';
+import { buildSharedProgramFromWorkoutProgram } from '@/utils/shared-program';
 
 const GOAL_OPTIONS: { glyph: string; labelKey: string; value: TrainingGoal }[] = [
   { glyph: '📅', labelKey: 'profile.goalConsistency', value: 'consistency' },
@@ -69,6 +71,7 @@ export default function ProfileScreen() {
     reloadProfile,
     saveProfile,
     saveProfileMedia,
+    shareActiveProgram,
     uploadProfileMedia,
   } = useProfile();
   /**
@@ -79,7 +82,7 @@ export default function ProfileScreen() {
   const { colors, isDark } = useAppTheme();
   const insets = useSafeAreaInsets();
   const reduceMotion = useReducedMotion();
-  const { disciplineStatuses, workoutSessions } = useWorkout();
+  const { activeProgramId, disciplineStatuses, programs, workoutSessions } = useWorkout();
   const { t } = useLanguage();
   const { progress: levelProgress } = useRewards();
   /**
@@ -398,6 +401,19 @@ export default function ProfileScreen() {
   ).size;
   const disciplineStreak = calculateDisciplineStreak(disciplineStatuses);
 
+  /**
+   * Kendi profilde de arkadaşların GÖRECEĞİ program sunumu gösterilir. Yeni bir
+   * Supabase sorgusu AÇILMAZ: DTO yalnızca opt-in açıkken ve aktif program varken
+   * mevcut `useWorkout` verisinden türetilir. Kapalıysa veya aktif program yoksa
+   * `undefined` kalır ve bileşen hiç render edilmez.
+   */
+  const activeProgram = shareActiveProgram
+    ? programs.find((program) => program.id === activeProgramId)
+    : undefined;
+  const ownSharedProgram = activeProgram
+    ? buildSharedProgramFromWorkoutProgram(activeProgram)
+    : undefined;
+
   return (
     /*
       Banner ekranın EN ÜSTÜNDEN başlasın diye üst safe-area kenarı bilinçli
@@ -521,6 +537,16 @@ export default function ProfileScreen() {
             />
 
           </MotionSection>
+
+          {/* Paylaşılan aktif program: achievement bölümü ile disiplin kartı
+              ARASINDA. Yalnızca opt-in açık ve aktif program varken görünür;
+              aksi hâlde bileşen null döner ve akış aynen korunur. Arkadaşların
+              göreceği sunumun BİREBİR aynısıdır (aynı ortak bileşen). */}
+          {ownSharedProgram && (
+            <MotionSection delay={40} style={styles.sharedProgramSection}>
+              <ProfileSharedProgram accentColor={profileAccent.color} program={ownSharedProgram} />
+            </MotionSection>
+          )}
 
           {/* Disiplin kartı düzenleme formunun dışındadır; form kapalıyken de
               görünür ve mevcut kullanıcı için etkileşimlidir. Profil ekranına
@@ -1039,6 +1065,7 @@ function createStyles(
     // Takvim ekranın diğer bölümleriyle aynı yatay payı kullanır; içerik
     // genişliği kompakt ölçüleri belirler.
     calendarSection: { marginTop: 8, paddingHorizontal: Layout.screenPadding },
+    sharedProgramSection: { marginTop: 8, paddingHorizontal: Layout.screenPadding },
     pressed: { opacity: 0.6 },
   });
 }

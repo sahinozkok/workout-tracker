@@ -73,6 +73,9 @@ type ProfileContextValue = {
   setRestTimerEnabled: (enabled: boolean) => Promise<void>;
   setShowExerciseIcons: (enabled: boolean) => Promise<void>;
   setShowProgramIcons: (enabled: boolean) => Promise<void>;
+  /** Aktif programın arkadaş profilinde görünüp görünmeyeceği. Varsayılan kapalı. */
+  shareActiveProgram: boolean;
+  setShareActiveProgram: (enabled: boolean) => Promise<void>;
   uploadProfileMedia: (kind: ProfileImageKind, asset: PickedImage) => Promise<string>;
 };
 
@@ -84,6 +87,7 @@ type ProfileRow = {
   preferred_language?: string | null;
   color_preset?: string | null;
   rest_timer_enabled: boolean;
+  show_active_program_on_profile?: boolean | null;
   training_goal: TrainingGoal;
   username: string | null;
 };
@@ -122,6 +126,9 @@ const COLOR_PRESET_KEY_PREFIX = '@workout-tracker/color-preset';
 const LOCAL_COLOR_FEATURES = COLOR_FEATURES.filter((feature) => feature !== 'profile');
 const LEGACY_COLUMNS = 'display_name, username, bio, avatar_url, training_goal, rest_timer_enabled';
 const EXTENDED_COLUMNS = `${LEGACY_COLUMNS}, banner_url, preferred_language, color_preset`;
+/** En yeni paylaşım kolonu dahil sorgu. Yükleme önce BUNU dener. */
+const SHARE_ACTIVE_PROGRAM_COLUMN = 'show_active_program_on_profile';
+const FULL_COLUMNS = `${EXTENDED_COLUMNS}, ${SHARE_ACTIVE_PROGRAM_COLUMN}`;
 /** Postgres: kolon bulunamadı. PostgREST ise şema önbelleği için PGRST204 döner. */
 const UNDEFINED_COLUMN = '42703';
 const POSTGREST_MISSING_COLUMN = 'PGRST204';
@@ -140,6 +147,26 @@ function isMissingOptionalColumnError(error: { code?: string; message?: string }
   const message = error.message ?? '';
   const mentionsOptionalColumn = OPTIONAL_COLUMNS.some((column) => message.includes(column));
   if (!mentionsOptionalColumn) return false;
+
+  if (error.code === UNDEFINED_COLUMN) return true;
+  if (error.code === POSTGREST_MISSING_COLUMN) return true;
+
+  return /column .* does not exist/i.test(message) || /schema cache/i.test(message);
+}
+
+/**
+ * Yalnızca `show_active_program_on_profile` kolonunun eksikliğini tespit eder.
+ *
+ * Bu AYRI bir dedektör olmak ZORUNDA: yeni kolon eksik olduğunda doğrudan
+ * `LEGACY_COLUMNS`'a düşmek banner/dil/renk verilerini kaybettirirdi. Eksiklik
+ * burada yakalanır ve yükleme mevcut `EXTENDED_COLUMNS` sorgusuna düşer; oradaki
+ * eski optional-column fallback zinciri olduğu gibi korunur.
+ */
+function isMissingShareColumnError(error: { code?: string; message?: string } | null) {
+  if (!error) return false;
+
+  const message = error.message ?? '';
+  if (!message.includes(SHARE_ACTIVE_PROGRAM_COLUMN)) return false;
 
   if (error.code === UNDEFINED_COLUMN) return true;
   if (error.code === POSTGREST_MISSING_COLUMN) return true;
@@ -169,6 +196,7 @@ export function ProfileProvider({ children }: PropsWithChildren) {
   const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
   const [preferredLanguage, setPreferredLanguage] = useState<AppLanguage>();
   const [restTimerEnabled, setRestTimerEnabledState] = useState(true);
+  const [shareActiveProgram, setShareActiveProgramState] = useState(false);
   const [showExerciseIcons, setShowExerciseIconsState] = useState(false);
   const [showProgramIcons, setShowProgramIconsState] = useState(false);
   const [colorPresets, setColorPresetsState] = useState<Partial<Record<ColorFeature, ColorPresetId>>>({});
@@ -260,6 +288,8 @@ export function ProfileProvider({ children }: PropsWithChildren) {
       setProfile(DEFAULT_PROFILE);
       setPreferredLanguage(undefined);
       setRestTimerEnabledState(true);
+      // Hesap çıkışında paylaşım tercihi varsayılana döner; taşınmaz.
+      setShareActiveProgramState(false);
       setLoadState({ status: 'idle', userId: undefined });
       setIsLoading(false);
       return;
@@ -277,11 +307,20 @@ export function ProfileProvider({ children }: PropsWithChildren) {
     setLoadState({ status: 'loading', userId });
 
     async function loadProfile() {
-      const extendedResult = await supabase
+      // ÜÇ KADEMELİ FALLBACK. Önce en yeni kolonlu sorgu denenir; yalnızca
+      // `show_active_program_on_profile` eksikse EXTENDED'e düşülür (banner/dil/
+      // renk KORUNUR). EXTENDED'in kendi optional-column → LEGACY zinciri aynen
+      // sürer. Böylece migration hangi kademede uygulanmışsa uygulansın, mevcut
+      // veriler kaybolmaz.
+      const fullResult = await supabase
         .from('profiles')
-        .select(EXTENDED_COLUMNS)
+        .select(FULL_COLUMNS)
         .eq('id', userId)
         .single<ProfileRow>();
+
+      const extendedResult = isMissingShareColumnError(fullResult.error)
+        ? await supabase.from('profiles').select(EXTENDED_COLUMNS).eq('id', userId).single<ProfileRow>()
+        : fullResult;
 
       // banner_url / preferred_language henüz yoksa eski kolon kümesiyle devam edilir.
       const { data, error } = isMissingOptionalColumnError(extendedResult.error)
@@ -330,6 +369,9 @@ export function ProfileProvider({ children }: PropsWithChildren) {
         });
       }
       setRestTimerEnabledState(data.rest_timer_enabled);
+      // Kolon yoksa (migration uygulanmadıysa) alan `undefined` gelir → varsayılan
+      // KAPALI. Yalnızca gerçekten `true` ise paylaşım açık sayılır.
+      setShareActiveProgramState(data.show_active_program_on_profile === true);
       // `ready` YALNIZCA veri gerçekten uygulandıktan sonra yazılır; erken
       // dönülen hiçbir yol bu satıra ulaşamaz.
       setLoadState({ status: 'ready', userId });
@@ -659,6 +701,38 @@ export function ProfileProvider({ children }: PropsWithChildren) {
   );
 
   /**
+   * Aktif programı arkadaş profilinde paylaşma tercihini SUNUCUDA saklar.
+   *
+   * AsyncStorage KULLANILMAZ: değer arkadaşlara gösterilir ve cihazlar arası
+   * aynı olmalıdır; tek doğru kaynak sunucudur.
+   *
+   * Profil okunmadan yazılmaz (`canWriteProfile` otoritesi). Toggle optimistic'tir
+   * ama sunucu hatasında önceki değere döner. Rollback SAHİPLİK GUARD'ıyla
+   * korunur: istek uçarken hesap değişmişse eski hatanın geri alması yeni hesabın
+   * state'ini ezmez.
+   */
+  const setShareActiveProgram = useCallback(
+    async (enabled: boolean) => {
+      if (!userId) throw new Error('missingSession');
+      if (!canWriteProfile(userId)) throw new Error('profileNotLoaded');
+
+      const previousValue = shareActiveProgram;
+      setShareActiveProgramState(enabled);
+
+      const { error } = await supabase
+        .from('profiles')
+        .update({ [SHARE_ACTIVE_PROGRAM_COLUMN]: enabled })
+        .eq('id', userId);
+
+      if (error) {
+        if (writeAuthorityRef.current.userId === userId) setShareActiveProgramState(previousValue);
+        throw error;
+      }
+    },
+    [canWriteProfile, shareActiveProgram, userId],
+  );
+
+  /**
    * Tek bir özelliğin rengini kaydeder. `undefined` verilirse tercih silinir ve
    * o özellik BUGÜNKÜ varsayılan rengine döner.
    *
@@ -848,6 +922,8 @@ export function ProfileProvider({ children }: PropsWithChildren) {
       colorPresets,
       resetColorPresets,
       setColorPreset,
+      shareActiveProgram,
+      setShareActiveProgram,
       showExerciseIcons,
       showProgramIcons,
       saveProfile,
@@ -868,6 +944,8 @@ export function ProfileProvider({ children }: PropsWithChildren) {
       colorPresets,
       resetColorPresets,
       setColorPreset,
+      shareActiveProgram,
+      setShareActiveProgram,
       showExerciseIcons,
       showProgramIcons,
       saveProfile,

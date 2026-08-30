@@ -1,6 +1,6 @@
 import { ColorPresetId } from '@/constants/color-presets';
 
-import { DisciplineStatus } from '@/types/workout';
+import { DisciplineStatus, Weekday } from '@/types/workout';
 
 export type FriendshipStatus = 'pending' | 'accepted';
 
@@ -59,4 +59,32 @@ export type FriendProfile = {
 export type SharedDisciplineDay = {
   dateKey: string;
   status: DisciplineStatus;
+};
+
+/**
+ * Paylaşılan aktif programın GÜVENLİ gösterim modeli.
+ *
+ * Yalnızca ekranda gereken alanları taşır. UUID/satır kimliği, owner kimliği,
+ * timestamp, workout geçmişi, performans (kilo/tekrar/RPE), notlar, XP/gül/rank,
+ * `rest_seconds` ve görsel/Storage URL'leri BİLİNÇLİ olarak yoktur.
+ *
+ * Egzersiz, kaynak `ProgramExercise` gibi AYRIK bir birleşimdir: kardiyo sahte
+ * bir `1 set` olarak temsil edilmez, her tür kendi hedef alanını taşır.
+ */
+export type SharedProgramExercise =
+  | { trackingMode: 'sets_reps'; name: string; targetSets: number; targetReps: string }
+  | { trackingMode: 'duration'; name: string; targetDurationSeconds: number }
+  | { trackingMode: 'distance'; name: string; targetDistanceMeters: number };
+
+export type SharedProgramDay = {
+  name: string;
+  scheduledWeekday?: Weekday;
+  isOffDay: boolean;
+  /** Off-day veya henüz egzersiz eklenmemiş günde boş olabilir. */
+  exercises: SharedProgramExercise[];
+};
+
+export type SharedActiveProgram = {
+  name: string;
+  days: SharedProgramDay[];
 };

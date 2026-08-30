@@ -188,8 +188,27 @@ check('A4. Timestamp Faz 1’den SONRA ve çakışmıyor', () => {
   const names = readdirSync(join(ROOT, 'supabase/migrations'))
     .filter((f) => f.endsWith('.sql'))
     .sort();
-  assertEqual(names[names.length - 1], MIGRATION_NAME, 'yeni dosya en son sırada değil');
-  assertEqual(names[names.length - 2], PHASE1_NAME, 'Faz 1 hemen öncesinde değil');
+  /**
+   * SÖZLEŞME GÜNCELLENDİ (gevşetilmedi, DÜZELTİLDİ).
+   *
+   * Eski iddia "ownership migration'ı GLOBAL olarak en son dosyadır" idi; bu,
+   * yalnızca o an en yeni migration oydu diye doğruydu ve gerçek değişmez
+   * değildi. `20260907120000_add_shared_active_program.sql` gibi SONRAKİ, ilgisiz
+   * bir migration meşru şekilde eklendiğinde bu tesadüfi varsayım kırılır.
+   *
+   * GERÇEK değişmez: ownership migration'ı Faz 1'den (aktivite temeli) SONRA
+   * sıralanır — çünkü onun kurduğu `tracking_mode` vb. kolonlara bağımlıdır — ve
+   * hiçbir timestamp başka bir migration ile ÇAKIŞMAZ. Aşağıdaki kontroller bu
+   * değişmezi doğrudan ve daha güçlü biçimde doğrular.
+   */
+  const phase1Index = names.indexOf(PHASE1_NAME);
+  const ownershipIndex = names.indexOf(MIGRATION_NAME);
+  assert(phase1Index !== -1, 'Faz 1 migration bulunamadı');
+  assert(ownershipIndex !== -1, 'ownership migration bulunamadı');
+  assert(ownershipIndex > phase1Index, 'ownership Faz 1’den sonra sıralanmıyor');
+  // Faz 1 ile ownership arasında BAŞKA migration girmez: ownership doğrudan onun
+  // üzerine inşa edilir.
+  assertEqual(ownershipIndex, phase1Index + 1, 'ownership Faz 1’in hemen ardından gelmiyor');
   const stamps = names.map((n) => n.slice(0, 14));
   assertEqual(new Set(stamps).size, stamps.length, 'timestamp çakışması var');
 });

@@ -7,9 +7,11 @@ import {
   FriendSummary,
   FriendshipDirection,
   FriendshipStatus,
+  SharedActiveProgram,
   SharedDisciplineDay,
 } from '@/types/friends';
 import { DisciplineStatus } from '@/types/workout';
+import { FriendActiveProgramRow, mapFriendActiveProgramRows } from '@/utils/shared-program';
 
 /**
  * Arkadaşlık servis katmanı. Bütün Supabase çağrıları burada toplanır;
@@ -159,6 +161,28 @@ export async function getFriendProfile(targetUserId: string): Promise<FriendProf
     xpForNextLevel: row.xp_for_next ?? 0,
     xpIntoLevel: row.xp_into_level ?? 0,
   };
+}
+
+/**
+ * Arkadaşın PAYLAŞILAN aktif programını okur.
+ *
+ * RPC güvenliği tümüyle sunucudadır: opt-in kapalı / aktif program yok / arkadaş
+ * değil / engelli durumların hepsinde SIFIR satır döner (ayırt edilemez). Sıfır
+ * satır `undefined` demektir → ekran program bölümünü hiç göstermez.
+ *
+ * Dönüşüm saf `mapFriendActiveProgramRows` çekirdeğindedir; geçersiz bir tür/
+ * hedef kombinasyonu sessizce düzeltilmez, `SharedProgramContractError` fırlatır
+ * ve çağıran (arkadaş profili) bunu yakalayıp yalnızca bölümü gizler.
+ */
+export async function getFriendActiveProgram(
+  targetUserId: string,
+): Promise<SharedActiveProgram | undefined> {
+  const { data, error } = await supabase.rpc('get_friend_active_program', {
+    target_user_id: targetUserId,
+  });
+  if (error) throw error;
+
+  return mapFriendActiveProgramRows((data ?? []) as FriendActiveProgramRow[]);
 }
 
 export async function getFriendDisciplineDays(

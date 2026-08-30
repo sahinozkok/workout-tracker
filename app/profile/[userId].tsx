@@ -10,13 +10,14 @@ import { ProfileAchievementShowcase } from '@/components/ranks/profile-achieveme
 import { RankBadge } from '@/components/ranks/rank-badge';
 import { LevelProgressRing } from '@/components/rewards/level-progress-ring';
 import { ProfileDisciplineCard } from '@/components/profile-discipline-card';
+import { ProfileSharedProgram } from '@/components/profile-shared-program';
 import { Fonts, Layout, ThemeColors } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useTranslation } from '@/context/language-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import { fetchFriendAchievementShowcase, fetchFriendRank } from '@/services/ranks';
-import { getFriendDisciplineDays, getFriendProfile } from '@/services/friends';
-import { FriendProfile } from '@/types/friends';
+import { getFriendActiveProgram, getFriendDisciplineDays, getFriendProfile } from '@/services/friends';
+import { FriendProfile, SharedActiveProgram } from '@/types/friends';
 import { FriendRankSummary, SeasonAchievementShowcaseEntry } from '@/types/ranks';
 import { DisciplineStatus } from '@/types/workout';
 import { toDateKey } from '@/utils/discipline';
@@ -76,6 +77,16 @@ export default function FriendProfileScreen() {
    * YENİ profilin state'ine yazamaz.
    */
   const showcaseRequestIdRef = useRef(0);
+
+  /**
+   * Paylaşılan aktif program AYRI ve TOLERANSLI okunur: opt-out / aktif program
+   * yok / arkadaş değil / engel durumlarında RPC sıfır satır döner ve bölüm hiç
+   * çizilmez. RPC HATASI da profili/takvimi/rank'ı düşürmez — yalnızca program
+   * bölümü gizlenir. Kendi istek nesliyle route/hesap değişiminde eski cevap yeni
+   * profile yazamaz.
+   */
+  const [sharedProgram, setSharedProgram] = useState<SharedActiveProgram>();
+  const sharedProgramRequestIdRef = useRef(0);
 
   const load = useCallback(async () => {
     if (!userId || isOwnProfile) return;
@@ -152,6 +163,34 @@ export default function FriendProfileScreen() {
         if (!isActive || showcaseRequestIdRef.current !== requestId) return;
         // Vitrin sessizce gizlenir; profil ekranı düşmez.
         setHasShowcaseError(true);
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [isOwnProfile, userId]);
+
+  useEffect(() => {
+    // Nesil uzunluk kontrolünden ÖNCE artar: route değişince uçuştaki eski cevap
+    // geçersizleşir ve yeni profile yazamaz.
+    const requestId = sharedProgramRequestIdRef.current + 1;
+    sharedProgramRequestIdRef.current = requestId;
+
+    setSharedProgram(undefined);
+
+    if (!userId || isOwnProfile) return;
+
+    let isActive = true;
+
+    getFriendActiveProgram(userId)
+      .then((program) => {
+        if (!isActive || sharedProgramRequestIdRef.current !== requestId) return;
+        setSharedProgram(program);
+      })
+      .catch(() => {
+        // Program bölümü sessizce gizlenir; profil ekranı düşmez.
+        if (!isActive || sharedProgramRequestIdRef.current !== requestId) return;
+        setSharedProgram(undefined);
       });
 
     return () => {
@@ -263,6 +302,16 @@ export default function FriendProfileScreen() {
           />
         </View>
 
+        {/* Paylaşılan aktif program: SEVİYE bölümünden sonra, disiplin kartından
+            ÖNCE. Kendi profildekiyle AYNI ortak bileşen; salt okunur — hiçbir
+            edit/start callback'i bağlanmaz. RPC veri döndürmezse (opt-out / aktif
+            program yok / engel) `sharedProgram` undefined kalır ve hiç çizilmez. */}
+        {sharedProgram && (
+          <View style={styles.sharedProgramSection}>
+            <ProfileSharedProgram accentColor={ownerAccent.color} program={sharedProgram} />
+          </View>
+        )}
+
         {/* Kendi profiliyle **aynı** kart tasarımı, ancak salt okunur:
             `readOnly` verildiği için `onDayPress` hiç bağlanmaz — gün ayrıntısı
             penceresi açılmaz ve hiçbir mutation tetiklenemez. Kart arkadaşın
@@ -341,6 +390,7 @@ function createStyles(colors: ThemeColors, ownerAccent: string) {
     levelPillIcon: { color: ownerAccent, fontSize: 11 },
     levelPillText: { color: ownerAccent, fontSize: 11, fontWeight: '600' },
     levelSection: { marginTop: 20, paddingHorizontal: Layout.screenPadding },
+    sharedProgramSection: { marginTop: 18, paddingHorizontal: Layout.screenPadding },
     calendarSection: { marginTop: 18, paddingHorizontal: Layout.screenPadding },
     readOnlyNote: {
       color: colors.textTertiary,

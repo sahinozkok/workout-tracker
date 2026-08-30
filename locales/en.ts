@@ -557,6 +557,10 @@ export const en: TranslationSchema = {
     workoutDayIcons: 'Exercise icons',
     workoutDayIconsCaption: 'Show exercise icons in workout day lists.',
     workoutDayIconsLabel: 'Show or hide exercise icons',
+    shareActiveProgram: 'Show my active program on my profile',
+    shareActiveProgramCaption:
+      'Friends can see the days, exercises and targets in your active program.',
+    shareActiveProgramLabel: 'Turn showing the active program on your profile on or off',
     displayPreferenceFailed: 'Could not save the display setting',
     displayPreferenceFailedBody: 'Try changing the display setting again.',
     accountConnected: 'Supabase account connected',
@@ -592,6 +596,13 @@ export const en: TranslationSchema = {
     emptyBody: 'Complete a workout day and your streak shows up here.',
     loadFailed: 'Streak history could not load.',
     loadFailedBody: 'Check your connection and try again.',
+  },
+  sharedProgram: {
+    title: 'Active program',
+    dayCount: '{count} workout days',
+    exerciseCount: '{count} exercises',
+    restDay: 'Rest day',
+    toggleHint: 'Expand or collapse the program',
   },
   exerciseLibrary: {
     muscleGroups: {

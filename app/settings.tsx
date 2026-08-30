@@ -46,6 +46,8 @@ export default function SettingsScreen() {
     setRestTimerEnabled,
     setShowExerciseIcons,
     setShowProgramIcons,
+    shareActiveProgram,
+    setShareActiveProgram,
     showExerciseIcons,
     showProgramIcons,
     colorPresets,
@@ -94,6 +96,18 @@ export default function SettingsScreen() {
   ) {
     try {
       await setter(enabled);
+    } catch {
+      Alert.alert(t('profile.displayPreferenceFailed'), t('profile.displayPreferenceFailedBody'));
+    }
+  }
+
+  /**
+   * Aktif program paylaşımı. Başarısız kayıtta context değeri önceki hâline
+   * geri döndürür; burada yalnızca anlaşılır bir uyarı gösterilir.
+   */
+  async function handleShareActiveProgramToggle(enabled: boolean) {
+    try {
+      await setShareActiveProgram(enabled);
     } catch {
       Alert.alert(t('profile.displayPreferenceFailed'), t('profile.displayPreferenceFailedBody'));
     }
@@ -245,6 +259,25 @@ export default function SettingsScreen() {
             thumbColor={Platform.OS === 'android' ? '#F6F5F7' : undefined}
             trackColor={{ false: colors.surfaceMuted, true: settingsAccent }}
             value={showExerciseIcons}
+          />
+        </View>
+
+        <View style={styles.divider} />
+
+        <View style={[styles.settingRow, styles.featureRow]}>
+          <View style={styles.settingIcon}>
+            <Ionicons name="share-social-outline" size={19} color={settingsAccent} />
+          </View>
+          <View style={styles.settingText}>
+            <Text style={styles.settingTitle}>{t('profile.shareActiveProgram')}</Text>
+            <Text style={styles.caption}>{t('profile.shareActiveProgramCaption')}</Text>
+          </View>
+          <Switch
+            accessibilityLabel={t('profile.shareActiveProgramLabel')}
+            onValueChange={(enabled) => void handleShareActiveProgramToggle(enabled)}
+            thumbColor={Platform.OS === 'android' ? '#F6F5F7' : undefined}
+            trackColor={{ false: colors.surfaceMuted, true: settingsAccent }}
+            value={shareActiveProgram}
           />
         </View>
 
