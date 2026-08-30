@@ -19,9 +19,11 @@ import { RankProvider } from '@/context/rank-context';
 import { RewardProvider } from '@/context/reward-context';
 import { ThemePreferenceProvider } from '@/context/theme-context';
 import { useWorkout, WorkoutProvider } from '@/context/workout-context';
+import { WorkoutReminderProvider } from '@/context/workout-reminder-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import { useSharedDisciplineSync } from '@/hooks/use-shared-discipline-sync';
 import { configureRestNotifications } from '@/utils/rest-notifications';
+import { addReminderResponseListener } from '@/utils/workout-reminders';
 
 export default function RootLayout() {
   return (
@@ -54,24 +56,31 @@ function UserScopedApp() {
   return (
     <ProfileProvider key={user?.id ?? 'signed-out'}>
       <LanguageSync />
-      {/* Seviye/XP/gül sağlayıcısı WorkoutProvider'ın DIŞINDA durur: set
-          tamamlandığında workout akışı ödül uzlaştırmasını buradan çağırır.
-          `+N XP` katmanı da bu sağlayıcının içinde, bütün ekranların üzerinde
-          tek kopya olarak çizilir. */}
-      <RewardProvider>
-        {/* Sezonluk rank AYRI bir katmandır: XP/gül/level durumuna hiç
-            dokunmaz. `WorkoutProvider`'ın DIŞINDA durur ki antrenman akışı
-            set kaydından sonra rank senkronizasyonunu buradan tetikleyebilsin.
-            Rank okunamazsa antrenman akışı etkilenmez. */}
-        <RankProvider>
-          <WorkoutProvider>
-            <MascotProvider>
-              <SharedDisciplineSync />
-              <AppNavigation />
-            </MascotProvider>
-          </WorkoutProvider>
-        </RankProvider>
-      </RewardProvider>
+      {/* Hatırlatıcı sağlayıcısı bu KEYLİ ağaçtadır: hesap değişiminde remount
+          olur, eski kullanıcının bildirimleri unmount'ta iptal edilir ve eski
+          async sonuç yeni hesabı ezemez. Yerel bildirim odaklıdır; workout/rank
+          durumuna bağlı değildir. */}
+      <WorkoutReminderProvider>
+        {/* Seviye/XP/gül sağlayıcısı WorkoutProvider'ın DIŞINDA durur: set
+            tamamlandığında workout akışı ödül uzlaştırmasını buradan çağırır.
+            `+N XP` katmanı da bu sağlayıcının içinde, bütün ekranların üzerinde
+            tek kopya olarak çizilir. */}
+        <RewardProvider>
+          {/* Sezonluk rank AYRI bir katmandır: XP/gül/level durumuna hiç
+              dokunmaz. `WorkoutProvider`'ın DIŞINDA durur ki antrenman akışı
+              set kaydından sonra rank senkronizasyonunu buradan tetikleyebilsin.
+              Rank okunamazsa antrenman akışı etkilenmez. */}
+          <RankProvider>
+            <WorkoutProvider>
+              <MascotProvider>
+                <SharedDisciplineSync />
+                <WorkoutReminderNavigator />
+                <AppNavigation />
+              </MascotProvider>
+            </WorkoutProvider>
+          </RankProvider>
+        </RewardProvider>
+      </WorkoutReminderProvider>
     </ProfileProvider>
   );
 }
@@ -92,6 +101,18 @@ function SharedDisciplineSync() {
   const { disciplineStatuses, isProgramsLoading, programsError } = useWorkout();
   const isWorkoutDataReady = !isProgramsLoading && !programsError;
   useSharedDisciplineSync(user?.id, disciplineStatuses, isWorkoutDataReady);
+  return null;
+}
+
+/**
+ * Reminder bildirimine dokunulunca YALNIZCA ana sayfayı açar.
+ *
+ * Görsel çıktısı yoktur. Gözlemci yalnız kendi `type`'ımızı ve tam `'/'` adresini
+ * kabul eder (bkz. `addReminderResponseListener`); keyfî URL yönlendirmesi yapmaz.
+ * Signed-in ağaçta durduğu için soğuk açılışta ana sayfaya güvenle gidilir.
+ */
+function WorkoutReminderNavigator() {
+  useEffect(() => addReminderResponseListener(() => router.push('/')), []);
   return null;
 }
 
@@ -206,6 +227,13 @@ function AppNavigation() {
           <Stack.Screen
             name="settings"
             options={{ headerBackTitle: t('tabs.profile'), title: t('profile.settings') }}
+          />
+          {/* Antrenman hatırlatıcıları Ayarlar'dan açılan kök Stack ekranıdır:
+              native başlık + geri düğmesi ve iOS geri kaydırma hareketi çalışır,
+              alt sekme çubuğu görünmez ve YENİ SEKME EKLENMEZ. */}
+          <Stack.Screen
+            name="reminders"
+            options={{ headerBackTitle: t('profile.settings'), title: t('reminders.navTitle') }}
           />
           {/* Seri geçmişi de kök Stack'te açılır: native başlık + geri düğmesi
               ve iOS geri kaydırma hareketi aynen çalışır, alt sekme çubuğu

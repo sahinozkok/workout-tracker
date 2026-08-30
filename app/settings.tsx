@@ -12,10 +12,12 @@ import { useLanguage } from '@/context/language-context';
 import { useMascot } from '@/context/mascot-context';
 import { useProfile } from '@/context/profile-context';
 import { ThemePreference } from '@/context/theme-context';
+import { useWorkoutReminders } from '@/context/workout-reminder-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import { useFeatureColor } from '@/hooks/use-feature-colors';
 import { AppLanguage } from '@/types/profile';
 import { cancelAllRestNotifications } from '@/utils/rest-notifications';
+import { countEnabledReminders } from '@/utils/workout-reminder-core';
 import { clearAllRestTimers } from '@/utils/rest-timer-storage';
 
 const LANGUAGE_OPTIONS: { labelKey: string; value: AppLanguage }[] = [
@@ -55,8 +57,16 @@ export default function SettingsScreen() {
     setColorPreset,
   } = useProfile();
   const { enabled: mascotEnabled, setEnabled: setMascotEnabled } = useMascot();
+  const { reminders } = useWorkoutReminders();
   const { colors, isDark, preference, setPreference } = useAppTheme();
   const { language, setLanguage, t } = useLanguage();
+  const enabledReminderCount = countEnabledReminders(reminders);
+  const reminderSubtitle =
+    enabledReminderCount === 0
+      ? t('reminders.settingsSubtitleEmpty')
+      : enabledReminderCount === 1
+        ? t('reminders.settingsSubtitleCountOne')
+        : t('reminders.settingsSubtitleCount', { count: enabledReminderCount });
   const todayColor = useFeatureColor('todayHighlight', colors.primary).color;
   /**
    * Ayarlar ekranının vurgu rengi. Varsayılan bugünkü mordur; kullanıcı bir
@@ -328,6 +338,23 @@ export default function SettingsScreen() {
             value={mascotEnabled}
           />
         </View>
+
+        <View style={styles.divider} />
+
+        <Pressable
+          accessibilityLabel={t('reminders.settingsTitle')}
+          accessibilityRole="button"
+          onPress={() => router.push('/reminders')}
+          style={({ pressed }) => [styles.settingRow, styles.featureRow, pressed && styles.pressed]}>
+          <View style={styles.settingIcon}>
+            <Ionicons name="notifications-outline" size={19} color={settingsAccent} />
+          </View>
+          <View style={styles.settingText}>
+            <Text style={styles.settingTitle}>{t('reminders.settingsTitle')}</Text>
+            <Text style={styles.caption}>{reminderSubtitle}</Text>
+          </View>
+          <Ionicons color={colors.textTertiary} name="chevron-forward" size={18} />
+        </Pressable>
 
         <View style={styles.divider} />
 
