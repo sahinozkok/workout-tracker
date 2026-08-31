@@ -16,6 +16,10 @@ import {
 
 type ProgressMetric = 'strength' | 'volume' | 'weight';
 
+/** Grafik çubuklarının azami pikseli. Grafik bölümün görsel odağı olduğu için
+ * çubuklar bilinçli olarak uzun tutulur; oran hesabı değişmez. */
+const CHART_BAR_HEIGHT = 132;
+
 type ExerciseProgressProps = {
   workoutSets: WorkoutSetRecord[];
 };
@@ -53,8 +57,7 @@ export function ExerciseProgress({ workoutSets }: ExerciseProgressProps) {
 
   if (!selectedExercise) {
     return (
-      <View style={[styles.card, styles.emptyState]}>
-        <Ionicons name="trending-up-outline" size={30} color={colors.textTertiary} />
+      <View style={styles.emptyState}>
         <Text style={styles.emptyTitle}>{t('components.progressEmptyTitle')}</Text>
         <Text style={styles.emptyDescription}>{t('progress.emptyDescription')}</Text>
       </View>
@@ -82,57 +85,57 @@ export function ExerciseProgress({ workoutSets }: ExerciseProgressProps) {
 
   return (
     <View style={styles.container}>
-      {/* 1 — Egzersiz seçici + özet */}
-      <View style={styles.card}>
-        <Text style={styles.eyebrow}>{t('progress.title').toLocaleUpperCase(locale)}</Text>
-
-        <Pressable
-          accessibilityHint={t('progress.exercisePickerHint')}
-          accessibilityRole="button"
-          onPress={() => setIsPickerVisible(true)}
-          style={({ pressed }) => [styles.pickerRow, pressed && styles.pressed]}>
-          <View style={styles.pickerText}>
-            <Text numberOfLines={1} style={styles.pickerName}>
-              {selectedExercise.exerciseName}
-            </Text>
-            <View style={styles.pickerMetaRow}>
-              <Ionicons name="search" size={13} color={colors.textTertiary} />
-              <Text numberOfLines={1} style={styles.pickerMeta}>
-                {t('components.chooseExercise')}
-              </Text>
-            </View>
-          </View>
-          <View style={styles.pickerCountRow}>
-            <Text style={styles.pickerCount}>{analytics.length}</Text>
-            <Ionicons name="caret-down" size={11} color={colors.textTertiary} />
-          </View>
-        </Pressable>
-
-        <View style={styles.divider} />
-
-        <View style={styles.summaryRow}>
-          <ProgressSummary
-            colors={colors}
-            label={t('progress.latestPerformance')}
-            value={latestPerformance}
-          />
-          <ProgressSummary
-            colors={colors}
-            highlighted
-            label={t('progress.bestPerformance')}
-            value={bestPerformance}
-          />
-          <ProgressSummary
-            colors={colors}
-            label={t('progress.workoutCount')}
-            value={String(selectedExercise.points.length)}
-          />
+      {/*
+        Tek dikey bilgi akışı: kart yığını yok. Bölümler başlık, boşluk ve
+        `hairlineWidth` ayırıcılarla ayrılır; zemin ekran temasıdır.
+      */}
+      {/* 1 — Kompakt egzersiz seçici */}
+      <Pressable
+        accessibilityHint={t('progress.exercisePickerHint')}
+        accessibilityRole="button"
+        onPress={() => setIsPickerVisible(true)}
+        style={({ pressed }) => [styles.pickerRow, pressed && styles.pressed]}>
+        <View style={styles.pickerText}>
+          <Text style={styles.eyebrow}>{t('progress.title').toLocaleUpperCase(locale)}</Text>
+          <Text numberOfLines={1} style={styles.pickerName}>
+            {selectedExercise.exerciseName}
+          </Text>
         </View>
+        <View style={styles.pickerCountRow}>
+          <Text style={styles.pickerCount}>
+            {t('progress.exerciseCount', { count: analytics.length })}
+          </Text>
+          <Ionicons name="chevron-down" size={15} color={colors.textTertiary} />
+        </View>
+      </Pressable>
+
+      {/* 2 — Tek satırlık özet: son / en iyi / antrenman sayısı */}
+      <View style={styles.summaryRow}>
+        <ProgressSummary
+          colors={colors}
+          label={t('progress.latestPerformance')}
+          value={latestPerformance}
+        />
+        <View style={styles.summaryDivider} />
+        <ProgressSummary
+          colors={colors}
+          highlighted
+          label={t('progress.bestPerformance')}
+          value={bestPerformance}
+        />
+        <View style={styles.summaryDivider} />
+        <ProgressSummary
+          colors={colors}
+          label={t('progress.workoutCount')}
+          value={String(selectedExercise.points.length)}
+        />
       </View>
 
-      {/* 2 — Son ve önceki antrenman */}
-      <View style={styles.card}>
-        <View style={styles.comparisonHeader}>
+      <View style={styles.divider} />
+
+      {/* 3 — Son ve önceki antrenman karşılaştırması */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
           <Text style={styles.eyebrow}>{t('progress.comparisonTitle')}</Text>
           {previousPoint && performanceChange && (
             <ChangeIndicator change={performanceChange} colors={colors} />
@@ -147,7 +150,7 @@ export function ExerciseProgress({ workoutSets }: ExerciseProgressProps) {
               {previousPerformance}
             </Text>
           </View>
-          <Ionicons name="arrow-forward" size={16} color={colors.disciplineCompleted} />
+          <Ionicons name="arrow-forward" size={16} color={colors.textTertiary} />
           <View style={[styles.comparisonColumn, styles.comparisonColumnEnd]}>
             <Text style={styles.comparisonLabel}>{t('progress.latestWorkout')}</Text>
             <Text numberOfLines={1} adjustsFontSizeToFit style={styles.comparisonValueLatest}>
@@ -157,12 +160,14 @@ export function ExerciseProgress({ workoutSets }: ExerciseProgressProps) {
         </View>
       </View>
 
-      {/* 3 — Performans gelişimi */}
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <View style={styles.cardHeaderText}>
-            <Text style={styles.cardTitle}>{t('progress.trendTitle')}</Text>
-            <Text style={styles.cardSubtitle}>
+      <View style={styles.divider} />
+
+      {/* 4 — Performans grafiği ve ölçüm sekmeleri (ekranın görsel odağı) */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <View style={styles.sectionHeaderText}>
+            <Text style={styles.sectionTitle}>{t('progress.trendTitle')}</Text>
+            <Text style={styles.sectionSubtitle}>
               {t('progress.lastWorkoutDays', { count: Math.min(selectedExercise.points.length, 8) })}
             </Text>
           </View>
@@ -207,17 +212,20 @@ export function ExerciseProgress({ workoutSets }: ExerciseProgressProps) {
           <ProgressChart colors={colors} locale={locale} metric={selectedMetric} points={chartPoints} />
         ) : (
           <View style={styles.chartEmpty}>
-            <Ionicons name="analytics-outline" size={24} color={colors.textTertiary} />
             <Text style={styles.chartEmptyTitle}>{t('progress.chartNeedsAnotherWorkoutTitle')}</Text>
             <Text style={styles.chartEmptyText}>{t('progress.chartNeedsAnotherWorkout')}</Text>
           </View>
         )}
       </View>
 
-      {/* 4 — Rekor geçmişi */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>{t('progress.recordHistory')}</Text>
-        <Text style={styles.cardSubtitle}>{t('progress.recordHistorySubtitle')}</Text>
+      <View style={styles.divider} />
+
+      {/* 5 — Rekor geçmişi (sade liste) */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeaderText}>
+          <Text style={styles.sectionTitle}>{t('progress.recordHistory')}</Text>
+          <Text style={styles.sectionSubtitle}>{t('progress.recordHistorySubtitle')}</Text>
+        </View>
 
         {recordHistory.length > 0 ? (
           <View style={styles.recordList}>
@@ -407,13 +415,13 @@ function ProgressSummary({
 
   return (
     <View style={styles.summaryItem}>
-      <View style={styles.summaryValueRow}>
-        <Text numberOfLines={1} adjustsFontSizeToFit style={styles.summaryValue}>
-          {value}
-        </Text>
-        {highlighted && <Ionicons name="trophy" size={13} color={colors.accent} />}
-      </View>
-      <Text style={[styles.summaryLabel, highlighted && styles.summaryLabelHighlighted]}>{label}</Text>
+      <Text
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        style={[styles.summaryValue, highlighted && styles.summaryValueHighlighted]}>
+        {value}
+      </Text>
+      <Text style={styles.summaryLabel}>{label}</Text>
     </View>
   );
 }
@@ -437,7 +445,7 @@ function ProgressChart({
     <View style={styles.chart}>
       {points.map(({ point, value }, index) => {
         const isLatest = index === points.length - 1;
-        const height = Math.max(6, (value / maxValue) * 104);
+        const height = Math.max(6, (value / maxValue) * CHART_BAR_HEIGHT);
         return (
           <View key={point.dateKey} style={styles.barColumn}>
             <Text numberOfLines={1} adjustsFontSizeToFit style={styles.barValue}>
@@ -479,7 +487,6 @@ function RecordRow({
 
   return (
     <View style={[styles.recordRow, divided && styles.rowDivided]}>
-      <Ionicons name="trophy" size={15} color={colors.accent} />
       <View style={styles.recordText}>
         <Text numberOfLines={1} style={styles.recordLabel}>
           {label}
@@ -585,47 +592,43 @@ function createStyles(colors: ThemeColors, accentColor: string) {
   };
 
   return StyleSheet.create({
-    container: { gap: 16 },
     /**
-     * Referans tasarımdaki dört kart: border yok, yumuşak köşe, tema kart
-     * yüzeyi. Ekran boşluğu History ekranının `screenPadding` değerinden gelir.
+     * Tek dikey akış. Bölümler kartlarla değil; başlık, boşluk ve `divider`
+     * (hairline) ile ayrılır. Zemin ekran temasından gelir (`screenPadding`
+     * History ekranındadır), böylece görünüm sakin bir günlük gibi durur.
      */
-    card: {
-      backgroundColor: colors.card,
-      borderRadius: 22,
-      paddingHorizontal: 18,
-      paddingVertical: 18,
-    },
+    container: { gap: 20 },
+    section: { gap: 14 },
     eyebrow: { color: colors.textSecondary, ...Type.eyebrow },
-    cardTitle: { color: colors.text, ...Type.sectionTitle },
-    cardSubtitle: { color: colors.textSecondary, ...Type.caption, marginTop: 3 },
-    cardHeader: { alignItems: 'flex-start', flexDirection: 'row', gap: 10, justifyContent: 'space-between' },
-    cardHeaderText: { flex: 1 },
-    divider: { backgroundColor: colors.separator, height: StyleSheet.hairlineWidth, marginVertical: 16 },
+    sectionTitle: { color: colors.text, ...Type.sectionTitle },
+    sectionSubtitle: { color: colors.textSecondary, ...Type.caption, marginTop: 3 },
+    sectionHeader: { alignItems: 'flex-start', flexDirection: 'row', gap: 10, justifyContent: 'space-between' },
+    sectionHeaderText: { flex: 1 },
+    divider: { backgroundColor: colors.separator, height: StyleSheet.hairlineWidth },
     rowDivided: rowDivider,
 
-    pickerRow: { alignItems: 'center', flexDirection: 'row', gap: 12, marginTop: 10, minHeight: 48 },
+    pickerRow: { alignItems: 'center', flexDirection: 'row', gap: 12, minHeight: Layout.minTouchSize },
     pickerText: { flex: 1, gap: 4 },
     pickerName: { color: colors.text, ...Type.sectionTitle },
-    pickerMetaRow: { alignItems: 'center', flexDirection: 'row', gap: 6 },
-    pickerMeta: { color: colors.textSecondary, flexShrink: 1, ...Type.caption },
-    pickerCountRow: { alignItems: 'center', flexDirection: 'row', gap: 5 },
-    pickerCount: { color: colors.textTertiary, ...Type.body, fontVariant: ['tabular-nums'] },
+    pickerCountRow: { alignItems: 'center', flexDirection: 'row', gap: 4 },
+    pickerCount: { color: colors.textTertiary, flexShrink: 1, ...Type.caption },
 
-    summaryRow: { flexDirection: 'row', gap: 10 },
-    summaryItem: { flex: 1, gap: 6 },
-    summaryValueRow: { alignItems: 'center', flexDirection: 'row', gap: 5 },
+    summaryRow: { alignItems: 'stretch', flexDirection: 'row' },
+    summaryItem: { flex: 1, gap: 5, justifyContent: 'flex-start' },
+    summaryDivider: {
+      backgroundColor: colors.separator,
+      marginHorizontal: 12,
+      width: StyleSheet.hairlineWidth,
+    },
     summaryValue: {
       color: colors.text,
-      flexShrink: 1,
       ...Type.rowTitle,
       fontVariant: ['tabular-nums'],
     },
-    summaryLabel: { color: colors.textSecondary, ...Type.caption },
-    summaryLabelHighlighted: { color: accentColor },
+    summaryValueHighlighted: { color: accentColor },
+    summaryLabel: { color: colors.textSecondary, ...Type.footnote },
 
-    comparisonHeader: { alignItems: 'center', flexDirection: 'row', gap: 10, justifyContent: 'space-between' },
-    comparisonRow: { alignItems: 'flex-end', flexDirection: 'row', gap: 12, marginTop: 14 },
+    comparisonRow: { alignItems: 'flex-end', flexDirection: 'row', gap: 12 },
     comparisonColumn: { flex: 1, gap: 6 },
     comparisonColumnEnd: { alignItems: 'flex-end' },
     comparisonLabel: { color: colors.textSecondary, ...Type.caption },
@@ -636,21 +639,22 @@ function createStyles(colors: ThemeColors, accentColor: string) {
     changeTextNegative: { color: colors.accent },
     changeTextNeutral: { color: colors.textSecondary },
 
-    metricTabs: { flexDirection: 'row', gap: 18, marginTop: 18 },
+    metricTabs: { flexDirection: 'row', gap: 20 },
     metricTab: {
       borderBottomColor: 'transparent',
       borderBottomWidth: 2,
       flexShrink: 1,
       justifyContent: 'center',
-      minHeight: 30,
-      paddingBottom: 5,
+      minHeight: 32,
+      paddingBottom: 6,
     },
     metricTabSelected: { borderBottomColor: accentColor },
     metricText: { color: colors.textSecondary, ...Type.body },
     metricTextSelected: { color: accentColor, fontWeight: '600' },
 
-    chart: { alignItems: 'flex-end', flexDirection: 'row', gap: 4, marginTop: 22, minHeight: 150 },
-    barColumn: { alignItems: 'center', flex: 1, gap: 6 },
+    /** Grafik ekranın ana görsel odağı — çubuklar daha uzun ve öne çıkar. */
+    chart: { alignItems: 'flex-end', flexDirection: 'row', gap: 5, marginTop: 4, minHeight: 176 },
+    barColumn: { alignItems: 'center', flex: 1, gap: 8 },
     barValue: {
       color: colors.textSecondary,
       ...Type.footnote,
@@ -658,26 +662,26 @@ function createStyles(colors: ThemeColors, accentColor: string) {
       textAlign: 'center',
       width: '100%',
     },
-    barTrack: { alignItems: 'center', height: 104, justifyContent: 'flex-end', width: '100%' },
-    bar: { backgroundColor: colors.separator, borderRadius: 3, maxWidth: 20, width: '64%' },
+    barTrack: { alignItems: 'center', height: CHART_BAR_HEIGHT, justifyContent: 'flex-end', width: '100%' },
+    bar: { backgroundColor: colors.separator, borderRadius: 3, maxWidth: 22, width: '68%' },
     barLatest: { backgroundColor: accentColor },
     barDate: { color: colors.textTertiary, ...Type.footnote, textAlign: 'center', width: '100%' },
     barDateLatest: { color: colors.text },
     chartEmpty: {
       alignItems: 'center',
-      gap: 10,
+      gap: 8,
       justifyContent: 'center',
-      minHeight: 150,
+      minHeight: 176,
       paddingHorizontal: 8,
       paddingVertical: 20,
     },
     chartEmptyTitle: { color: colors.text, ...Type.rowTitle, fontWeight: '600', textAlign: 'center' },
     chartEmptyText: { color: colors.textSecondary, ...Type.caption, textAlign: 'center' },
 
-    recordList: { marginTop: 14 },
-    recordRow: { alignItems: 'center', flexDirection: 'row', gap: 10, minHeight: 56, paddingVertical: 12 },
+    recordList: {},
+    recordRow: { alignItems: 'center', flexDirection: 'row', gap: 10, minHeight: 52, paddingVertical: 12 },
     recordText: { flex: 1, gap: 3 },
-    recordLabel: { color: colors.text, ...Type.rowTitle },
+    recordLabel: { color: colors.text, ...Type.body },
     recordDate: { color: colors.textSecondary, ...Type.caption },
     recordValue: {
       color: accentColor,
@@ -686,10 +690,10 @@ function createStyles(colors: ThemeColors, accentColor: string) {
       maxWidth: '40%',
       textAlign: 'right',
     },
-    recordsEmpty: { color: colors.textSecondary, ...Type.caption, paddingVertical: 22, textAlign: 'center' },
+    recordsEmpty: { color: colors.textSecondary, ...Type.caption, paddingVertical: 12, textAlign: 'center' },
 
-    emptyState: { alignItems: 'center', gap: 10, paddingVertical: 40 },
-    emptyTitle: { color: colors.text, ...Type.sectionTitle, marginTop: 2, textAlign: 'center' },
+    emptyState: { alignItems: 'center', gap: 8, paddingVertical: 40 },
+    emptyTitle: { color: colors.text, ...Type.sectionTitle, textAlign: 'center' },
     emptyDescription: { color: colors.textSecondary, ...Type.caption, textAlign: 'center' },
 
     modalSafeArea: { backgroundColor: colors.background, flex: 1 },

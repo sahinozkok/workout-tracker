@@ -266,23 +266,27 @@ export default function HistoryScreen() {
             {activityProgressEntries.length > 0 && (
               <View style={styles.activitySection}>
                 <Text style={styles.activitySectionTitle}>{t('history.activityHistory')}</Text>
-                {activityProgressEntries.map((entry) => (
-                  <View key={entry.key} style={styles.activityProgressRow}>
-                    <Text numberOfLines={1} style={styles.activityProgressName}>
-                      {entry.exerciseName}
-                    </Text>
-                    <Text style={styles.activityProgressMeta}>
-                      {t('history.activityRecordCount', { count: entry.recordCount })} ·{' '}
-                      {entry.trackingMode === 'distance' && entry.lastDistanceMeters !== undefined
-                        ? `${formatMetersAsKilometers(entry.lastDistanceMeters)} ${t('day.kmUnit')}${
-                            entry.lastPaceSecondsPerKm === undefined
-                              ? ''
-                              : ` · ${formatDuration(Math.round(entry.lastPaceSecondsPerKm))} ${t('day.paceUnit')}`
-                          }`
-                        : formatDuration(entry.lastDurationSeconds)}
-                    </Text>
-                  </View>
-                ))}
+                <View style={styles.activityProgressList}>
+                  {activityProgressEntries.map((entry, index) => (
+                    <View
+                      key={entry.key}
+                      style={[styles.activityProgressRow, index > 0 && styles.activityProgressRowDivided]}>
+                      <Text numberOfLines={1} style={styles.activityProgressName}>
+                        {entry.exerciseName}
+                      </Text>
+                      <Text style={styles.activityProgressMeta}>
+                        {t('history.activityRecordCount', { count: entry.recordCount })} ·{' '}
+                        {entry.trackingMode === 'distance' && entry.lastDistanceMeters !== undefined
+                          ? `${formatMetersAsKilometers(entry.lastDistanceMeters)} ${t('day.kmUnit')}${
+                              entry.lastPaceSecondsPerKm === undefined
+                                ? ''
+                                : ` · ${formatDuration(Math.round(entry.lastPaceSecondsPerKm))} ${t('day.paceUnit')}`
+                            }`
+                          : formatDuration(entry.lastDurationSeconds)}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
               </View>
             )}
           </MotionSection>
@@ -877,20 +881,24 @@ function createStyles(colors: ThemeColors, historyAccent: string) {
     noSetDetails: { alignItems: 'center', flexDirection: 'row', gap: 8 },
     noSetDetailsText: { color: colors.textSecondary, flex: 1, ...Type.footnote, lineHeight: 15 },
     rpeNote: { color: colors.textTertiary, ...Type.footnote, lineHeight: 15 },
-    progressStack: { gap: 16 },
-    /** Gelişimdeki sade aktivite bölümü — grafik yok, kart yığını yok. */
-    activitySection: {
-      backgroundColor: colors.card,
-      borderRadius: Layout.radiusLarge,
-      gap: 10,
-      padding: 16,
+    progressStack: { gap: 24 },
+    /**
+     * Gelişimdeki sade aktivite bölümü — kart yığını değil; başlık, boşluk ve
+     * `hairlineWidth` ayırıcılarla kurulur. Egzersiz gelişimi bölümüyle aynı
+     * görsel dili paylaşır.
+     */
+    activitySection: { gap: 14 },
+    activitySectionTitle: { color: colors.text, ...Type.sectionTitle },
+    activityProgressList: {},
+    activityProgressRow: { gap: 3, minHeight: 44, paddingVertical: 10 },
+    activityProgressRowDivided: {
+      borderTopColor: colors.separator,
+      borderTopWidth: StyleSheet.hairlineWidth,
     },
-    activitySectionTitle: { color: colors.text, fontSize: 16, fontWeight: '600' },
-    activityProgressRow: { gap: 2 },
-    activityProgressName: { color: colors.text, fontSize: 14, fontWeight: '500' },
+    activityProgressName: { color: colors.text, ...Type.body, fontWeight: '500' },
     activityProgressMeta: {
       color: colors.textSecondary,
-      fontSize: 12,
+      ...Type.caption,
       fontVariant: ['tabular-nums'],
     },
     /** Oturum detayındaki kardiyo satırları — strength tablosuyla aynı ritim. */
