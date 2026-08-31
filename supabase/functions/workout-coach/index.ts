@@ -7,6 +7,8 @@ type CoachRequest = {
   feature?: CoachFeature;
   message?: string;
   clientMessageId?: string;
+  periodEnd?: string;
+  periodStart?: string;
 };
 
 type GeneratedInsight = {
@@ -40,6 +42,11 @@ type SetRow = {
   weight_kg: number | string | null;
 };
 
+type ActivityRow = {
+  distance_meters: number | string | null;
+  duration_seconds: number;
+};
+
 const CHAT_SCHEMA = {
   type: 'object',
   properties: {
@@ -52,6 +59,7 @@ const CHAT_SCHEMA = {
 };
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_USER_MESSAGE_LENGTH = 1000;
 const CHAT_HISTORY_LIMIT = 20;
 const DEFAULT_CHAT_MODELS = [
@@ -113,6 +121,39 @@ function addUtcDays(date: Date, amount: number) {
   return result;
 }
 
+function parseDateKey(value: unknown) {
+  if (typeof value !== 'string' || !DATE_KEY_PATTERN.test(value)) return undefined;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) || toDateKey(parsed) !== value ? undefined : parsed;
+}
+
+/**
+ * Yeni istemci cihazın yerel Pazartesi–Pazar aralığını gönderir. Sunucu yalnız
+ * tam yedi günlük ve bugüne (saat dilimi sınırında en fazla bir gün farka)
+ * karşılık gelen aralığı kabul eder. Eski istemciler için UTC hafta korunur.
+ */
+function resolveWeeklyPeriod(periodStart: unknown, periodEnd: unknown) {
+  if (periodStart === undefined && periodEnd === undefined) {
+    const start = startOfUtcWeek(new Date());
+    return { endKey: toDateKey(addUtcDays(start, 6)), startKey: toDateKey(start) };
+  }
+
+  const start = parseDateKey(periodStart);
+  const end = parseDateKey(periodEnd);
+  if (!start || !end || addUtcDays(start, 6).getTime() !== end.getTime()) {
+    throw new Error('Geçersiz haftalık özet dönemi.');
+  }
+
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const nearbyDays = [addUtcDays(today, -1), today, addUtcDays(today, 1)];
+  if (!nearbyDays.some((day) => day >= start && day <= end)) {
+    throw new Error('Haftalık özet dönemi güncel değil.');
+  }
+
+  return { endKey: toDateKey(end), startKey: toDateKey(start) };
+}
+
 function asNumber(value: number | string | null) {
   if (value === null) return undefined;
   const parsed = typeof value === 'number' ? value : Number(value);
@@ -164,13 +205,36 @@ async function countSets(supabase: any, sessionIds: string[]) {
   return count ?? 0;
 }
 
-async function buildWeeklyMetrics(supabase: any) {
-  const currentStart = startOfUtcWeek(new Date());
-  const currentEnd = addUtcDays(currentStart, 6);
+async function summarizeActivities(supabase: any, sessionIds: string[]) {
+  if (sessionIds.length === 0) {
+    return { completedActivities: 0, totalActivityDistanceMeters: 0, totalActivityDurationSeconds: 0 };
+  }
+  const { data, error } = await supabase
+    .from('workout_activity_records')
+    .select('duration_seconds, distance_meters')
+    .in('session_id', sessionIds);
+  if (error) throw error;
+
+  return ((data ?? []) as ActivityRow[]).reduce(
+    (total, record) => ({
+      completedActivities: total.completedActivities + 1,
+      totalActivityDistanceMeters:
+        total.totalActivityDistanceMeters + Math.max(0, asNumber(record.distance_meters) ?? 0),
+      totalActivityDurationSeconds:
+        total.totalActivityDurationSeconds + Math.max(0, record.duration_seconds),
+    }),
+    { completedActivities: 0, totalActivityDistanceMeters: 0, totalActivityDurationSeconds: 0 },
+  );
+}
+
+async function buildWeeklyMetrics(supabase: any, requestedStart?: string, requestedEnd?: string) {
+  const { endKey: currentEndKey, startKey: currentStartKey } = resolveWeeklyPeriod(
+    requestedStart,
+    requestedEnd,
+  );
+  const currentStart = parseDateKey(currentStartKey)!;
   const previousStart = addUtcDays(currentStart, -7);
   const previousEnd = addUtcDays(currentStart, -1);
-  const currentStartKey = toDateKey(currentStart);
-  const currentEndKey = toDateKey(currentEnd);
   const previousStartKey = toDateKey(previousStart);
   const previousEndKey = toDateKey(previousEnd);
 
@@ -205,16 +269,24 @@ async function buildWeeklyMetrics(supabase: any) {
     (total, session) => total + session.accumulated_duration_seconds,
     0,
   );
+  const currentSessionIds = currentSessions.map((session) => session.id);
+  const previousSessionIds = previousSessions.map((session) => session.id);
+  const [completedSets, previousWeekCompletedSets, activityTotals] = await Promise.all([
+    countSets(supabase, currentSessionIds),
+    countSets(supabase, previousSessionIds),
+    summarizeActivities(supabase, currentSessionIds),
+  ]);
 
   return {
     activeProgramName: activeProgramResult.data?.name ?? null,
     averageWorkoutDurationSeconds:
       currentSessions.length > 0 ? Math.round(totalDurationSeconds / currentSessions.length) : 0,
-    completedSets: await countSets(supabase, currentSessions.map((session) => session.id)),
+    completedSets,
     completedWorkouts: currentSessions.length,
+    ...activityTotals,
     periodEnd: currentEndKey,
     periodStart: currentStartKey,
-    previousWeekCompletedSets: await countSets(supabase, previousSessions.map((session) => session.id)),
+    previousWeekCompletedSets,
     previousWeekCompletedWorkouts: previousSessions.length,
     totalWorkoutDurationSeconds: totalDurationSeconds,
     trainingGoal: profileResult.data?.training_goal ?? 'consistency',
@@ -329,15 +401,26 @@ function buildDeterministicWeeklyInsight(metrics: WeeklyMetrics): GeneratedInsig
         : setDifference < 0
           ? `You completed ${Math.abs(setDifference)} fewer sets than last week.`
           : `Your completed set count matches last week: ${metrics.completedSets}.`;
+    const highlights = [workoutComparison];
+    if (metrics.completedSets > 0 || metrics.previousWeekCompletedSets > 0) highlights.push(setComparison);
+    if (metrics.completedActivities > 0) {
+      highlights.push(`You completed ${metrics.completedActivities} cardio/activity record${metrics.completedActivities === 1 ? '' : 's'}.`);
+    }
+    const summaryParts = [`You completed ${metrics.completedWorkouts} workout${metrics.completedWorkouts === 1 ? '' : 's'}`];
+    if (metrics.averageWorkoutDurationSeconds > 0) {
+      summaryParts.push(`your average workout lasted ${formatMetric(metrics.averageWorkoutDurationSeconds / 60, language)} minutes`);
+    }
+    if (metrics.completedSets > 0) summaryParts.push(`${metrics.completedSets} sets`);
+    if (metrics.completedActivities > 0) summaryParts.push(`${metrics.completedActivities} cardio records`);
     return {
       headline: metrics.completedWorkouts > 0 ? 'Your verified weekly summary is ready' : 'Your first workout is waiting',
-      highlights: [workoutComparison, setComparison],
+      highlights,
       nextSteps: [
         metrics.activeProgramName
           ? `Continue with the next scheduled day in ${metrics.activeProgramName}.`
           : 'Choose an active program to make your weekly plan easier to follow.',
       ],
-      summary: `You completed ${metrics.completedWorkouts} workouts and ${metrics.completedSets} sets. Your average workout duration was ${formatMetric(metrics.averageWorkoutDurationSeconds / 60, language)} minutes.`,
+      summary: `${summaryParts.join(', ')}.`,
     };
   }
 
@@ -353,15 +436,26 @@ function buildDeterministicWeeklyInsight(metrics: WeeklyMetrics): GeneratedInsig
       : setDifference < 0
         ? `Geçen haftaya göre ${Math.abs(setDifference)} set daha az tamamladın.`
         : `Tamamlanan set sayın geçen haftayla aynı: ${metrics.completedSets}.`;
+  const highlights = [workoutComparison];
+  if (metrics.completedSets > 0 || metrics.previousWeekCompletedSets > 0) highlights.push(setComparison);
+  if (metrics.completedActivities > 0) {
+    highlights.push(`${metrics.completedActivities} kardiyo/aktivite kaydını tamamladın.`);
+  }
+  const summaryParts = [`${metrics.completedWorkouts} antrenman tamamladın`];
+  if (metrics.averageWorkoutDurationSeconds > 0) {
+    summaryParts.push(`ortalama antrenman süren ${formatMetric(metrics.averageWorkoutDurationSeconds / 60, language)} dakikaydı`);
+  }
+  if (metrics.completedSets > 0) summaryParts.push(`${metrics.completedSets} set`);
+  if (metrics.completedActivities > 0) summaryParts.push(`${metrics.completedActivities} kardiyo kaydı`);
   return {
     headline: metrics.completedWorkouts > 0 ? 'Doğrulanmış haftalık özetin hazır' : 'İlk antrenmanın seni bekliyor',
-    highlights: [workoutComparison, setComparison],
+    highlights,
     nextSteps: [
       metrics.activeProgramName
         ? `${metrics.activeProgramName} programındaki sıradaki planlı günle devam et.`
         : 'Haftalık planını daha kolay takip etmek için aktif bir program seç.',
     ],
-    summary: `${metrics.completedWorkouts} antrenman ve ${metrics.completedSets} set tamamladın. Ortalama antrenman süren ${formatMetric(metrics.averageWorkoutDurationSeconds / 60, language)} dakikaydı.`,
+    summary: `${summaryParts.join(', ')}.`,
   };
 }
 
@@ -862,7 +956,9 @@ export default {
               await buildExerciseMetrics(context.supabase, exerciseName!),
               await getPreferredLanguage(context.supabase),
             )
-          : buildDeterministicWeeklyInsight(await buildWeeklyMetrics(context.supabase));
+          : buildDeterministicWeeklyInsight(
+              await buildWeeklyMetrics(context.supabase, body.periodStart, body.periodEnd),
+            );
 
       return Response.json({
         ...result,

@@ -36,7 +36,11 @@ function setComparison(metrics: WeeklyWorkoutMetrics) {
 }
 
 function buildMockInsight(metrics: WeeklyWorkoutMetrics): WeeklyWorkoutInsight {
-  if (metrics.completedWorkouts === 0 && metrics.completedSets === 0) {
+  if (
+    metrics.completedWorkouts === 0 &&
+    metrics.completedSets === 0 &&
+    metrics.completedActivities === 0
+  ) {
     return {
       generatedAt: new Date().toISOString(),
       headline: 'Bu haftanın ilk adımı seni bekliyor',
@@ -44,7 +48,7 @@ function buildMockInsight(metrics: WeeklyWorkoutMetrics): WeeklyWorkoutInsight {
         metrics.activeProgramName
           ? `${metrics.activeProgramName} aktif program olarak hazır.`
           : 'Henüz aktif bir program seçilmemiş.',
-        'Tamamlanan bir antrenman veya set henüz kaydedilmedi.',
+        'Tamamlanan bir antrenman henüz kaydedilmedi.',
       ],
       nextSteps: [
         metrics.activeProgramName ? 'Planındaki sıradaki antrenmanı başlat.' : 'Bir programı aktif hale getir.',
@@ -56,6 +60,23 @@ function buildMockInsight(metrics: WeeklyWorkoutMetrics): WeeklyWorkoutInsight {
   }
 
   const disciplineWins = metrics.discipline.completed + metrics.discipline.partial;
+  // Set sayısı ana başarı gibi öne çıkarılmaz: özet önce antrenman düzenini ve
+  // süreyi anlatır, set ve kardiyo yalnızca gerçekten varsa eklenir.
+  const highlights = [workoutComparison(metrics), `${disciplineWins} planlı günde ilerleme kaydettin.`];
+  if (metrics.completedSets > 0) highlights.push(setComparison(metrics));
+  if (metrics.completedActivities > 0) {
+    highlights.push(`${metrics.completedActivities} kardiyo/aktivite kaydını tamamladın.`);
+  }
+
+  const averageMinutes = Math.round(metrics.averageWorkoutDurationSeconds / 60);
+  const summaryParts = [`${metrics.completedWorkouts} antrenman tamamladın`];
+  if (metrics.completedWorkouts > 0 && averageMinutes > 0) {
+    summaryParts.push(`ortalama süre ${averageMinutes} dakika`);
+  }
+  if (metrics.completedSets > 0) summaryParts.push(`${metrics.completedSets} set`);
+  if (metrics.completedActivities > 0) {
+    summaryParts.push(`${metrics.completedActivities} kardiyo kaydı`);
+  }
 
   return {
     generatedAt: new Date().toISOString(),
@@ -64,8 +85,8 @@ function buildMockInsight(metrics: WeeklyWorkoutMetrics): WeeklyWorkoutInsight {
         ? 'Bu hafta ritmini yükseltiyorsun'
         : metrics.completedWorkouts > 0
           ? 'Bu haftanın antrenman verileri hazır'
-          : 'Set ilerlemen kaydediliyor',
-    highlights: [workoutComparison(metrics), setComparison(metrics), `${disciplineWins} planlı günde ilerleme kaydettin.`],
+          : 'İlerlemen kaydediliyor',
+    highlights,
     nextSteps: [
       metrics.discipline.partial > 0
         ? 'Kısmi kalan antrenmanını tamamlayabiliyorsan haftayı güçlü kapat.'
@@ -73,7 +94,7 @@ function buildMockInsight(metrics: WeeklyWorkoutMetrics): WeeklyWorkoutInsight {
       GOAL_SUGGESTIONS[metrics.trainingGoal],
     ],
     provider: 'mock',
-    summary: `${metrics.completedWorkouts} antrenmanda toplam ${metrics.completedSets} set tamamladın. Bu yorum, uygulamadaki doğrulanmış haftalık sayılardan üretildi.`,
+    summary: `${summaryParts.join(', ')}. Bu yorum, uygulamadaki doğrulanmış haftalık verilerden üretildi.`,
   };
 }
 
@@ -92,7 +113,12 @@ function isWorkoutInsight(value: unknown): value is WeeklyWorkoutInsight {
   );
 }
 
-async function invokeWorkoutCoach(body: { exerciseName?: string; feature: 'exercise_progress' | 'weekly_summary' }) {
+async function invokeWorkoutCoach(body: {
+  exerciseName?: string;
+  feature: 'exercise_progress' | 'weekly_summary';
+  periodEnd?: string;
+  periodStart?: string;
+}) {
   const {
     data: { session },
     error: sessionError,
@@ -128,7 +154,13 @@ async function invokeWorkoutCoach(body: { exerciseName?: string; feature: 'exerc
 }
 
 export async function generateWeeklyWorkoutInsight(metrics: WeeklyWorkoutMetrics) {
-  if (isCoachBackendEnabled) return invokeWorkoutCoach({ feature: 'weekly_summary' });
+  if (isCoachBackendEnabled) {
+    return invokeWorkoutCoach({
+      feature: 'weekly_summary',
+      periodEnd: metrics.periodEnd,
+      periodStart: metrics.periodStart,
+    });
+  }
 
   await wait(550);
   return buildMockInsight(metrics);

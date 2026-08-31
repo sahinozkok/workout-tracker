@@ -40,10 +40,11 @@ import {
   generateExerciseProgressInsight,
   generateWeeklyWorkoutInsight,
 } from '@/services/ai/workout-insights';
-import { CoachChatMessage, WeeklyWorkoutInsight } from '@/types/ai';
+import { CoachChatMessage, WeeklyMetricChange, WeeklyWorkoutInsight, WeeklyWorkoutMetrics } from '@/types/ai';
 import { buildExerciseProgressMetrics } from '@/utils/exercise-ai-metrics';
 import { buildWeeklyWorkoutMetrics } from '@/utils/weekly-workout-metrics';
 import { buildExerciseAnalytics } from '@/utils/workout-analytics';
+import { dateFromKey } from '@/utils/workout-schedule';
 
 const coachAvatarSource = require('../../assets/images/ai-coach-avatar.png');
 /**
@@ -740,6 +741,253 @@ function WelcomeState({ colors, disabled, onPick, questions, styles, subtitle, t
   );
 }
 
+type TranslateFn = (path: string, params?: Record<string, string | number>) => string;
+
+/**
+ * Süreyi cihaz diline uygun, okunur biçimde yazar. Ham saniye veya `mm:ss`
+ * kronometre biçimi gösterilmez; birim metinleri sözlükten gelir.
+ */
+function formatMetricDuration(totalSeconds: number, t: TranslateFn) {
+  const safeSeconds = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  if (hours > 0) {
+    return minutes > 0
+      ? t('coach.durationHoursMinutes', { hours, minutes })
+      : t('coach.durationHours', { hours });
+  }
+  return t('coach.durationMinutes', { minutes });
+}
+
+/** Metreyi kilometreye çevirip yerelleştirir; dönüşüm YALNIZCA burada yapılır. */
+function formatMetricDistance(meters: number, locale: string, t: TranslateFn) {
+  const kilometers = meters / 1000;
+  return t('coach.distanceKilometers', {
+    value: kilometers.toLocaleString(locale, { maximumFractionDigits: 2 }),
+  });
+}
+
+/** Haftalık dönemi ham `YYYY-MM-DD` yerine okunur, yerelleştirilmiş tarihle yazar. */
+function formatWeeklyPeriod(startKey: string, endKey: string, locale: string) {
+  const start = dateFromKey(startKey).toLocaleDateString(locale, { day: 'numeric', month: 'short' });
+  const end = dateFromKey(endKey).toLocaleDateString(locale, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+  return `${start} – ${end}`;
+}
+
+/**
+ * Değişimin GÜVENLİ metni. Önceki değer 0 iken yüzde gösterilmez (çekirdek onu
+ * zaten `undefined` bırakır); yalnızca işaretli fark yazılır, `NaN`/`Infinity`
+ * hiçbir koşulda oluşmaz.
+ */
+function formatMetricChange(change: WeeklyMetricChange, formatMagnitude: (value: number) => string) {
+  if (change.direction === 'same') return undefined;
+  const sign = change.direction === 'up' ? '+' : '−';
+  const magnitude = `${sign}${formatMagnitude(Math.abs(change.delta))}`;
+  if (change.percent === undefined) return magnitude;
+  return `${magnitude} · ${sign}%${Math.abs(change.percent)}`;
+}
+
+type MetricRow = {
+  key: string;
+  label: string;
+  value: string;
+  changeText?: string;
+  changeDirection?: WeeklyMetricChange['direction'];
+};
+
+function MetricStatRow({
+  colors,
+  row,
+  styles,
+}: {
+  colors: ThemeColors;
+  row: MetricRow;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const changeColor =
+    row.changeDirection === 'up' ? colors.disciplineCompleted : colors.textTertiary;
+  const accessibilityLabel = [row.label, row.value, row.changeText].filter(Boolean).join(', ');
+
+  return (
+    <View accessible accessibilityLabel={accessibilityLabel} style={styles.metricRow}>
+      <Text style={styles.metricLabel}>{row.label}</Text>
+      <View style={styles.metricValueWrap}>
+        <Text style={styles.metricValue}>{row.value}</Text>
+        {row.changeText && (
+          <Text style={[styles.metricChange, { color: changeColor }]}>{row.changeText}</Text>
+        )}
+      </View>
+    </View>
+  );
+}
+
+/**
+ * Üstte kompakt, kolay taranan DOĞRULANMIŞ metrik alanı. Yalnızca uygulamadaki
+ * gerçek verilerden üretilir; hiçbir sayı tahmin edilmez. Set sayısı ana başarı
+ * gibi öne çıkarılmaz — antrenman düzeni ve süre daha yüksek önceliktedir.
+ */
+function WeeklyMetricsPanel({
+  colors,
+  locale,
+  metrics,
+  styles,
+  t,
+}: {
+  colors: ThemeColors;
+  locale: string;
+  metrics: WeeklyWorkoutMetrics;
+  styles: ReturnType<typeof createStyles>;
+  t: TranslateFn;
+}) {
+  const disciplineTotal =
+    metrics.discipline.completed + metrics.discipline.partial + metrics.discipline.skipped;
+  const hasAnyData =
+    metrics.completedWorkouts > 0 ||
+    metrics.completedActivities > 0 ||
+    metrics.completedSets > 0 ||
+    disciplineTotal > 0;
+
+  const period = formatWeeklyPeriod(metrics.periodStart, metrics.periodEnd, locale);
+
+  if (!hasAnyData) {
+    return (
+      <View style={styles.metricPanel}>
+        <Text style={styles.metricPeriod}>{period}</Text>
+        <View style={styles.metricEmpty}>
+          <Text style={styles.metricEmptyTitle}>{t('coach.weeklyEmptyTitle')}</Text>
+          <Text style={styles.metricEmptyBody}>
+            {metrics.activeProgramName
+              ? t('coach.weeklyEmptyBodyProgram', { program: metrics.activeProgramName })
+              : t('coach.weeklyEmptyBody')}
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
+  const formatCount = (value: number) => value.toLocaleString(locale);
+  const rows: MetricRow[] = [
+    {
+      key: 'workouts',
+      label: t('coach.metricWorkouts'),
+      value: formatCount(metrics.completedWorkouts),
+      changeText: formatMetricChange(metrics.workoutChange, formatCount),
+      changeDirection: metrics.workoutChange.direction,
+    },
+  ];
+
+  if (metrics.totalWorkoutDurationSeconds > 0) {
+    rows.push({
+      key: 'totalDuration',
+      label: t('coach.metricTotalDuration'),
+      value: formatMetricDuration(metrics.totalWorkoutDurationSeconds, t),
+      changeText: formatMetricChange(metrics.durationChange, (seconds) =>
+        formatMetricDuration(seconds, t),
+      ),
+      changeDirection: metrics.durationChange.direction,
+    });
+  }
+
+  if (metrics.averageWorkoutDurationSeconds > 0) {
+    rows.push({
+      key: 'avgDuration',
+      label: t('coach.metricAvgDuration'),
+      value: formatMetricDuration(metrics.averageWorkoutDurationSeconds, t),
+    });
+  }
+
+  if (metrics.completedSets > 0 || metrics.previousWeekCompletedSets > 0) {
+    rows.push({
+      key: 'sets',
+      label: t('coach.metricSets'),
+      value: formatCount(metrics.completedSets),
+      changeText: formatMetricChange(metrics.setChange, formatCount),
+      changeDirection: metrics.setChange.direction,
+    });
+  }
+
+  if (metrics.completedActivities > 0) {
+    rows.push({
+      key: 'cardio',
+      label: t('coach.metricCardio'),
+      value: formatCount(metrics.completedActivities),
+    });
+  }
+
+  if (metrics.totalActivityDurationSeconds > 0) {
+    rows.push({
+      key: 'cardioDuration',
+      label: t('coach.metricCardioDuration'),
+      value: formatMetricDuration(metrics.totalActivityDurationSeconds, t),
+    });
+  }
+
+  if (metrics.activityDistanceCount > 0 && metrics.totalActivityDistanceMeters > 0) {
+    rows.push({
+      key: 'distance',
+      label: t('coach.metricDistance'),
+      value: formatMetricDistance(metrics.totalActivityDistanceMeters, locale, t),
+    });
+  }
+
+  const disciplineSegments: { key: string; color: string; label: string }[] = [];
+  if (metrics.discipline.completed > 0) {
+    disciplineSegments.push({
+      key: 'completed',
+      color: colors.disciplineCompleted,
+      label: t('coach.disciplineCompleted', { count: metrics.discipline.completed }),
+    });
+  }
+  if (metrics.discipline.partial > 0) {
+    disciplineSegments.push({
+      key: 'partial',
+      color: colors.disciplinePartial,
+      label: t('coach.disciplinePartial', { count: metrics.discipline.partial }),
+    });
+  }
+  if (metrics.discipline.skipped > 0) {
+    disciplineSegments.push({
+      key: 'skipped',
+      color: colors.disciplineSkipped,
+      label: t('coach.disciplineSkipped', { count: metrics.discipline.skipped }),
+    });
+  }
+
+  return (
+    <View style={styles.metricPanel}>
+      <Text style={styles.metricPeriod}>{period}</Text>
+      <View style={styles.metricList}>
+        {rows.map((row) => (
+          <MetricStatRow colors={colors} key={row.key} row={row} styles={styles} />
+        ))}
+      </View>
+      {disciplineSegments.length > 0 && (
+        <View
+          accessible
+          accessibilityLabel={[
+            t('coach.metricDiscipline'),
+            ...disciplineSegments.map((segment) => segment.label),
+          ].join(', ')}
+          style={styles.disciplineRow}>
+          <Text style={styles.metricLabel}>{t('coach.metricDiscipline')}</Text>
+          <View style={styles.disciplineSegments}>
+            {disciplineSegments.map((segment) => (
+              <View key={segment.key} style={styles.disciplineSegment}>
+                <View style={[styles.disciplineDot, { backgroundColor: segment.color }]} />
+                <Text style={styles.disciplineSegmentText}>{segment.label}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
+    </View>
+  );
+}
+
 /**
  * Haftalık özet ve egzersiz analizi, sohbet düzenini bozmadan başlıktaki
  * eylemden açılan panelde çalışmaya devam eder. Aynı servis fonksiyonlarını
@@ -757,10 +1005,16 @@ function AnalysisSheet({
   visible: boolean;
 }) {
   const { profile } = useProfile();
-  const { t } = useTranslation();
+  const { locale, t } = useTranslation();
   const chatAccent = useFeatureColor('roseaChat', colors.primary);
-  const { activeProgramId, completedSetCounts, disciplineStatuses, programs, workoutSessions, workoutSets } =
-    useWorkout();
+  const {
+    activeProgramId,
+    disciplineStatuses,
+    programs,
+    workoutActivityRecords,
+    workoutSessions,
+    workoutSets,
+  } = useWorkout();
   const [mode, setMode] = useState<'weekly' | 'exercise'>('weekly');
   const [selectedExerciseKey, setSelectedExerciseKey] = useState<string>();
   const [insight, setInsight] = useState<WeeklyWorkoutInsight>();
@@ -772,12 +1026,20 @@ function AnalysisSheet({
     () =>
       buildWeeklyWorkoutMetrics({
         activeProgramName: activeProgram?.name,
-        completedSetCounts,
         disciplineStatuses,
         trainingGoal: profile.trainingGoal,
+        workoutActivityRecords,
         workoutSessions,
+        workoutSets,
       }),
-    [activeProgram?.name, completedSetCounts, disciplineStatuses, profile.trainingGoal, workoutSessions],
+    [
+      activeProgram?.name,
+      disciplineStatuses,
+      profile.trainingGoal,
+      workoutActivityRecords,
+      workoutSessions,
+      workoutSets,
+    ],
   );
   const completedSessionIds = useMemo(
     () => new Set(workoutSessions.filter((session) => session.status === 'completed').map((session) => session.id)),
@@ -849,14 +1111,7 @@ function AnalysisSheet({
           </View>
 
           {mode === 'weekly' ? (
-            <Text style={styles.sheetCaption}>
-              {t('coach.weeklyMeta', {
-                end: metrics.periodEnd,
-                sets: metrics.completedSets,
-                start: metrics.periodStart,
-                workouts: metrics.completedWorkouts,
-              })}
-            </Text>
+            <WeeklyMetricsPanel colors={colors} locale={locale} metrics={metrics} styles={styles} t={t} />
           ) : exerciseAnalytics.length > 0 ? (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.sheetChipRow}>
               {exerciseAnalytics.map((exercise) => {
@@ -1114,6 +1369,38 @@ function createStyles(colors: ThemeColors, chatAccent: string) {
     sheetTabText: { color: colors.textSecondary, fontSize: 14 },
     sheetTabTextSelected: { color: colors.text, fontWeight: '600' },
     sheetCaption: { color: colors.textSecondary, ...Type.caption, lineHeight: 19 },
+    /**
+     * Kompakt metrik alanı: her metrik AYRI büyük kart değildir; tek bir yüzey
+     * içinde etiket/değer satırları ince ayraçlarla dizilir. Zemin ve ayraç
+     * `constants/theme.ts` sistemindendir.
+     */
+    metricPanel: {
+      backgroundColor: colors.card,
+      borderRadius: Layout.radiusMedium,
+      gap: 12,
+      padding: 14,
+    },
+    metricPeriod: { color: colors.textSecondary, ...Type.footnote },
+    metricList: { gap: 10 },
+    metricRow: { alignItems: 'baseline', flexDirection: 'row', gap: 12, justifyContent: 'space-between' },
+    // Uzun Türkçe etiket ve büyük Dynamic Type ölçeğinde etiket sarılır, değer sağda kalır.
+    metricLabel: { color: colors.textSecondary, flexShrink: 1, fontSize: 14 },
+    metricValueWrap: { alignItems: 'baseline', flexDirection: 'row', flexShrink: 0, gap: 8 },
+    metricValue: { color: colors.text, fontSize: 16, fontWeight: '600', fontVariant: ['tabular-nums'] },
+    metricChange: { fontSize: 12, fontWeight: '600', fontVariant: ['tabular-nums'] },
+    disciplineRow: {
+      borderTopColor: colors.separator,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      gap: 8,
+      paddingTop: 12,
+    },
+    disciplineSegments: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+    disciplineSegment: { alignItems: 'center', flexDirection: 'row', gap: 6 },
+    disciplineDot: { borderRadius: 4, height: 8, width: 8 },
+    disciplineSegmentText: { color: colors.textSecondary, fontSize: 13 },
+    metricEmpty: { gap: 6 },
+    metricEmptyTitle: { color: colors.text, fontSize: 15, fontWeight: '600' },
+    metricEmptyBody: { color: colors.textSecondary, ...Type.caption, lineHeight: 19 },
     sheetChipRow: { flexGrow: 0 },
     sheetChip: {
       borderColor: colors.separator,
