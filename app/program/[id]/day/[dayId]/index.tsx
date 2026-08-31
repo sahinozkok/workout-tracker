@@ -345,6 +345,15 @@ export default function WorkoutDayScreen() {
     dayExercises.find((exercise) => exercise.id === selectedExerciseId) ??
     dayExercises.find((exercise) => exercise.id === currentExerciseId) ??
     dayExercises[0];
+  /**
+   * Aktif panel kardiyoda seçili kardiyo satırını, güç egzersizinde mevcut set
+   * satırını gösterir. Geçiş anahtarı yalnız egzersiz kimliği ve takip türünden
+   * oluşur; timer durumu, input değeri veya saat tick'i paneli remount etmez.
+   */
+  const activePanelExercise = activeCardioExercise ?? activeExercise;
+  const activeExerciseTransitionKey = activePanelExercise
+    ? `${activePanelExercise.id}:${activePanelExercise.trackingMode}`
+    : 'none';
   const activeExerciseName = activeExercise
     ? getProgramExerciseName(activeExercise.exerciseId, activeExercise.customExerciseName)
     : '';
@@ -1832,8 +1841,14 @@ export default function WorkoutDayScreen() {
               KARDİYO PANELİ — set paneliyle AYNI konumda, aynı ritimde.
               Set paneli hiç render edilmez: iki panel asla üst üste binmez.
             */}
-            {activeCardioExercise && (
-              <View style={styles.activeSetBlock}>
+            {activePanelExercise && (
+              <MotionSwap
+                pace="calm"
+                style={styles.activeExerciseSwap}
+                transitionKey={activeExerciseTransitionKey}>
+                <>
+                  {activeCardioExercise && (
+                    <View style={styles.activeSetBlock}>
                 <Text style={styles.activeSetLabel}>
                   {activeCardioExercise.trackingMode === 'duration'
                     ? t('day.targetDurationLabel', {
@@ -2132,11 +2147,11 @@ export default function WorkoutDayScreen() {
                     </Pressable>
                   )}
                 </MotionSwap>
-              </View>
-            )}
+                    </View>
+                  )}
 
-            {!activeCardioExercise && activeExercise && (
-              <View style={styles.activeSetBlock}>
+                  {!activeCardioExercise && activeExercise && (
+                    <View style={styles.activeSetBlock}>
                 <Text style={styles.activeSetLabel}>
                   {t('day.setOfTotal', {
                     // Ekstra sette gerçek sıra gösterilir (4/3, 5/3); disiplin
@@ -2361,7 +2376,10 @@ export default function WorkoutDayScreen() {
                     </View>
                   </View>
                 )}
-              </View>
+                    </View>
+                  )}
+                </>
+              </MotionSwap>
             )}
 
             {averageDurationSeconds !== undefined && (
@@ -2745,6 +2763,8 @@ type FeatureColors = {
 function createStyles(colors: ThemeColors, feature: FeatureColors) {
   return StyleSheet.create({
     activeSetBlock: { alignItems: 'center', gap: 10, paddingTop: 18 },
+    /** Egzersiz/takip türü değişirken büyük aktif panelin yerleşim sınırı. */
+    activeExerciseSwap: { alignSelf: 'stretch' },
     /**
      * Kardiyo kontrol aşamasının tek geçiş sınırı — YALNIZ yerleşim. MotionSwap
      * bu stili kendi Animated.View'ine uygular; aşama içerikleri onun doğrudan

@@ -43,13 +43,18 @@ function check(name, fn) {
 }
 
 // ---------------------------------------------------------------------------
-// Tek MotionSwap sınırını çıkar.
+// Kardiyo aşamalarına ait MotionSwap sınırını doğrudan kararlı phase key'inden
+// çıkar. Ekranda ayrıca egzersiz türü/kimliği değişimini yumuşatan dış sınır
+// bulunabilir; bu harness yalnız iç kardiyo aşamasını ölçer.
 // ---------------------------------------------------------------------------
 const swapOpenTags = code.match(/<MotionSwap[\s>]/g) ?? [];
-const swapStart = code.indexOf('<MotionSwap');
+const phaseKeyIndex = code.indexOf('transitionKey={activityPhase}');
+const swapStart = phaseKeyIndex === -1 ? -1 : code.lastIndexOf('<MotionSwap', phaseKeyIndex);
 const swapOpen = swapStart === -1 ? '' : code.slice(swapStart, code.indexOf('>', swapStart) + 1);
 const swapBody =
-  swapStart === -1 ? '' : code.slice(code.indexOf('>', swapStart) + 1, code.indexOf('</MotionSwap>'));
+  swapStart === -1
+    ? ''
+    : code.slice(code.indexOf('>', swapStart) + 1, code.indexOf('</MotionSwap>', phaseKeyIndex));
 
 // ---------------------------------------------------------------------------
 // 1. Aşama anahtarı YALNIZ idle/tracking/finishing'ten türetilir.
@@ -83,9 +88,13 @@ check('2. activityTimer.status phase key’e girmiyor', () => {
 // ---------------------------------------------------------------------------
 // 3. Tek SAKİN MotionSwap kontrol aşamalarını sarıyor.
 // ---------------------------------------------------------------------------
-check('3. Tek MotionSwap + pace="calm" kontrol aşamalarını sarıyor', () => {
-  assert.ok(swapOpenTags.length === 1, `tam olarak bir MotionSwap beklenir: ${swapOpenTags.length}`);
-  assert.ok((code.match(/<\/MotionSwap>/g) ?? []).length === 1, 'MotionSwap bir kez kapanmalı');
+check('3. Tek kardiyo phase MotionSwap + pace="calm" kontrol aşamalarını sarıyor', () => {
+  assert.ok(phaseKeyIndex >= 0, 'activityPhase geçiş anahtarı bulunamadı');
+  assert.equal(
+    (code.match(/transitionKey=\{activityPhase\}/g) ?? []).length,
+    1,
+    'activityPhase için tek MotionSwap beklenir',
+  );
   assert.ok(/pace="calm"/.test(swapOpen), 'MotionSwap pace="calm" kullanmalı');
   // Üç kontrol aşaması da bu sınırın ALTINDA: bitirme formu ve kontroller.
   assert.ok(/isFinishingActivity && \(/.test(swapBody), 'bitirme adımı MotionSwap altında olmalı');
@@ -93,8 +102,8 @@ check('3. Tek MotionSwap + pace="calm" kontrol aşamalarını sarıyor', () => {
   for (const handler of ['startActivityMeasurement', 'finishActivityMeasurement', 'submitActivity']) {
     assert.ok(swapBody.includes(handler), `${handler} kontrolü MotionSwap altında değil`);
   }
-  // Ekranın kalanında ikinci bir MotionSwap yok (kardiyo için tek sınır).
-  assert.ok(swapOpenTags.length === 1, 'birden çok MotionSwap sınırı var');
+  // Dış egzersiz geçişi olsa da kardiyo aşamasının kendi sınırı tektir.
+  assert.ok(swapOpenTags.length >= 1, 'MotionSwap sınırı bulunamadı');
 });
 
 // ---------------------------------------------------------------------------
