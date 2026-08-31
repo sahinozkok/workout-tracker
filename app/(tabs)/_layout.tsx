@@ -11,7 +11,6 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { getOnAccentColor } from '@/constants/color-presets';
 import {
   MotionDuration,
   MotionEasing,
@@ -31,6 +30,22 @@ const coachMascotSource = require('../../assets/images/ai-coach-mascot.png');
  * Feather'daki -1/-2 düzeltmelerine gerek kalmaz.
  */
 const TAB_ICON_SIZE = 24;
+
+/**
+ * SEÇİLİ Rosea'yı, BOYUTUNU DEĞİŞTİRMEDEN optik olarak kalınlaştıran katman
+ * ofsetleri (pt). Faux-bold: aynı görselin merkez kopyası + dört yönde ~0.5 pt
+ * ötelenmiş simetrik kopyaları aynı kutuda üst üste çizilir. Ofset bilinçli
+ * olarak küçük; daha büyüğü Rosea'yı bulanıklaştırır. Yalnız seçili sekmede
+ * kullanılır ve tek ikon olduğu için katman sayısı beşle sınırlıdır.
+ */
+const COACH_THICKEN_OFFSET = 0.5;
+const COACH_LAYER_OFFSETS = [
+  { x: 0, y: 0 },
+  { x: -COACH_THICKEN_OFFSET, y: 0 },
+  { x: COACH_THICKEN_OFFSET, y: 0 },
+  { x: 0, y: -COACH_THICKEN_OFFSET },
+  { x: 0, y: COACH_THICKEN_OFFSET },
+];
 
 /**
  * Sekme ikonu seçildiğinde küçük bir ölçek geri bildirimi verir.
@@ -146,24 +161,26 @@ export default function TabLayout() {
             <TabIconFeedback focused={focused}>
               {focused ? (
                 /**
-                 * SEÇİLİ Rosea. Diğer sekmelerin seçili DOLU Ionicons ikonlarıyla
-                 * optik olarak uyumlu olması için maskot, aktif sekme rengiyle
-                 * (`color`) TAMAMEN DOLU, kompakt bir madalyona oturur. Madalyon
-                 * mevcut 42 pt Rosea kutusundan daha dardır; "ayrı büyük buton"
-                 * gibi durmaz ve tab bar yüksekliği/ritmi değişmez.
-                 *
-                 * Rosea görseli/asset'i DEĞİŞMEDİ; yalnızca seçili zemin eklendi.
-                 * Maskot, dolu zeminde açık ve koyu temada net kontrastla
-                 * görünmesi için mevcut `getOnAccentColor` ile on-accent renge
-                 * boyanır (aksi hâlde accent üstünde accent tint kaybolurdu).
+                 * SEÇİLİ Rosea. Arka plan, daire, pill veya madalyon YOK. Aynı
+                 * Rosea görseli, seçilmemiş hâlle BİREBİR aynı 30×42 kutu içinde
+                 * merkez + dört yönde ~0.5 pt ofsetli kopyalarla üst üste çizilip
+                 * çizgi optik olarak KALINLAŞTIRILIR (faux-bold). Rosea büyümez,
+                 * yer değiştirmez, kırpılma biçimi (`cover`) ve tint rengi (aktif
+                 * `color`) korunur; katmanlar aynı kutuda absolute yerleşir.
                  */
-                <View style={[styles.coachMedallion, { backgroundColor: color }]}>
-                  <Image
-                    contentFit="contain"
-                    source={coachMascotSource}
-                    style={styles.coachMascotSelected}
-                    tintColor={getOnAccentColor(color)}
-                  />
+                <View style={{ height: (size ?? 24) + 6, width: (size ?? 24) + 18 }}>
+                  {COACH_LAYER_OFFSETS.map((offset) => (
+                    <Image
+                      contentFit="cover"
+                      key={`${offset.x}:${offset.y}`}
+                      source={coachMascotSource}
+                      style={[
+                        StyleSheet.absoluteFill,
+                        { transform: [{ translateX: offset.x }, { translateY: offset.y }] },
+                      ]}
+                      tintColor={color}
+                    />
+                  ))}
                 </View>
               ) : (
                 /* SEÇİLMEMİŞ Rosea görünümü MEVCUT hâliyle korunur. */
@@ -192,25 +209,3 @@ export default function TabLayout() {
     </Tabs>
   );
 }
-
-const styles = StyleSheet.create({
-  /**
-   * SEÇİLİ Rosea madalyonu. Kompakt bir daire (34 pt): standart 24 pt filled
-   * ikonların optik ağırlığına yakın, mevcut mascot kutusundan (30×42) daha
-   * geniş değil. Zemin rengi çağıran tarafından aktif sekme rengiyle inline
-   * verilir; burada yeni renk sabiti yoktur. `radiusPill` ile tam daire.
-   */
-  coachMedallion: {
-    alignItems: 'center',
-    borderRadius: Layout.radiusPill,
-    height: TAB_ICON_SIZE + 10,
-    justifyContent: 'center',
-    overflow: 'hidden',
-    width: TAB_ICON_SIZE + 10,
-  },
-  /** Maskot dolu madalyonda tamamen görünür; oranı korunur (`contain`). */
-  coachMascotSelected: {
-    height: TAB_ICON_SIZE - 2,
-    width: TAB_ICON_SIZE + 6,
-  },
-});

@@ -102,44 +102,82 @@ check('C1. Coach standart ikon değil, özel görsel', () => {
   assert(/<Image\b/.test(coachBlock), 'coach görseli yok');
 });
 
-check('C2. Mascot asset ve SEÇİLMEMİŞ görünüm birebir korunuyor', () => {
+/**
+ * Coach dalını focused/unfocused parçalarına ayırır. Sözleşme taramaları GERÇEK
+ * JSX'i ölçer: dış ölçü, katman sayısı, ofsetler ve "madalyon yok" iddiası
+ * yorum metnine değil koda bakar.
+ */
+const coachBlock = layout.slice(
+  layout.indexOf('name="coach"'),
+  layout.indexOf('name="profile"'),
+);
+const coachElseIdx = coachBlock.indexOf(') : (');
+const coachFocused = coachBlock.slice(coachBlock.indexOf('focused ? ('), coachElseIdx);
+const coachUnfocused = coachBlock.slice(coachElseIdx);
+/** Mevcut Rosea dış kutusu: 30 × 42 (size tabanı 24). */
+const OUTER_BOX = /height: \(size \?\? 24\) \+ 6, width: \(size \?\? 24\) \+ 18/;
+
+check('C2. Coach dış kutusu focused ve unfocused BİREBİR aynı', () => {
+  assert(coachElseIdx > 0, 'coach focused/unfocused dalları bulunamadı');
+  assert(OUTER_BOX.test(coachFocused), 'seçili Rosea dış kutusu (30×42) değişmiş');
+  assert(OUTER_BOX.test(coachUnfocused), 'seçilmemiş Rosea dış kutusu (30×42) değişmiş');
+  // İki daldaki dış ölçü ifadesi birebir aynı string olmalı.
+  assert(
+    coachFocused.match(OUTER_BOX)[0] === coachUnfocused.match(OUTER_BOX)[0],
+    'focused ve unfocused dış ölçüleri aynı değil',
+  );
+});
+
+check('C3. SEÇİLMEMİŞ Rosea mevcut hâliyle korunuyor (cover + colors.icon)', () => {
   assert(/const coachMascotSource = require\('\.\.\/\.\.\/assets\/images\/ai-coach-mascot\.png'\)/.test(layout),
     'mascot asset yolu değişmiş');
-  assert(/source=\{coachMascotSource\}/.test(layout), 'mascot source bağlanmamış');
-  // Seçilmemiş dal: cover + mevcut ölçüler + colors.icon tinti (mevcut hâl).
+  assert(/contentFit="cover"/.test(coachUnfocused), 'seçilmemiş mascot cover değil');
+  assert(/source=\{coachMascotSource\}/.test(coachUnfocused), 'seçilmemiş mascot source bağlanmamış');
+  assert(/tintColor=\{colors\.icon\}/.test(coachUnfocused), 'seçilmemiş mascot tinti colors.icon değil');
+});
+
+check('C4. SEÇİLİ Rosea: aktif renkle birden çok katman, arka plansız faux-bold', () => {
+  // Aktif renkle BİRDEN ÇOK aynı asset katmanı: ofset dizisi üzerinde map.
+  assert(/COACH_LAYER_OFFSETS\.map\(/.test(coachFocused), 'seçili Rosea katmanları ofset dizisi üzerinden çizilmiyor');
+  assert(/source=\{coachMascotSource\}/.test(coachFocused), 'seçili katman aynı mascot asset’ini kullanmıyor');
+  assert(/tintColor=\{color\}/.test(coachFocused), 'seçili katman aktif sekme rengini (color) kullanmıyor');
+  assert(/contentFit="cover"/.test(coachFocused), 'seçili katman kırpılma biçimini (cover) korumuyor');
+  assert(/StyleSheet\.absoluteFill/.test(coachFocused), 'katmanlar aynı kutuda absolute yerleşmiyor');
   assert(
-    /contentFit="cover"[\s\S]*?source=\{coachMascotSource\}[\s\S]*?height: \(size \?\? 24\) \+ 6, width: \(size \?\? 24\) \+ 18[\s\S]*?tintColor=\{colors\.icon\}/.test(layout),
-    'seçilmemiş mascot cover/ölçü/tint korunmamış',
+    /transform: \[\{ translateX: offset\.x \}, \{ translateY: offset\.y \}\]/.test(coachFocused),
+    'katman ofsetleri transform ile uygulanmıyor',
   );
-});
 
-check('C3. SEÇİLİ Rosea, aktif sekme rengiyle TAMAMEN DOLU kompakt madalyona oturur', () => {
-  // Zemin, aktif sekme rengiyle (color) inline ve tam opak dolu — yeni sabit yok.
-  assert(/backgroundColor: color/.test(layout), 'seçili madalyon aktif sekme rengini kullanmıyor');
-  assert(/styles\.coachMedallion/.test(layout), 'seçili madalyon stili bağlanmamış');
-  const medallion = layout.slice(
-    layout.indexOf('coachMedallion: {'),
-    layout.indexOf('coachMascotSelected: {'),
-  );
-  assert(medallion.length > 0, 'coachMedallion stili bulunamadı');
-  assert(/borderRadius: Layout\.radiusPill/.test(medallion), 'madalyon tam daire (radiusPill) değil');
-  assert(/overflow: 'hidden'/.test(medallion), 'madalyon taşmayı kırpmıyor');
-  // Kompakt: madalyon çapı 24 pt ikon optik ağırlığına yakın ve mevcut mascot
-  // kutusundan (size+18 = 42) DAHA GENİŞ DEĞİL → "ayrı büyük buton" değil.
-  const width = /width: TAB_ICON_SIZE \+ (\d+)/.exec(medallion);
-  assert(width, 'madalyon genişliği TAB_ICON_SIZE türevinden gelmiyor');
-  assert(24 + Number(width[1]) <= 42, `madalyon mevcut mascot kutusundan geniş (büyük buton riski): ${24 + Number(width[1])}pt`);
-  assert(/height: TAB_ICON_SIZE \+ /.test(medallion), 'madalyon yüksekliği TAB_ICON_SIZE türevinden gelmiyor');
-});
+  // Ofset küçük: 0.5–0.75 pt aralığında (daha fazlası bulanıklaştırır).
+  const offsetMatch = /const COACH_THICKEN_OFFSET = (0\.\d+);/.exec(layout);
+  assert(offsetMatch, 'COACH_THICKEN_OFFSET tanımlı değil');
+  const magnitude = Number(offsetMatch[1]);
+  assert(magnitude >= 0.5 && magnitude <= 0.75, `ofset 0.5–0.75 aralığında değil: ${magnitude}`);
 
-check('C4. Maskot dolu zeminde on-accent kontrastıyla çizilir; yeni renk sabiti yok', () => {
-  // Accent zemin üstünde accent tint kaybolurdu; on-accent ile net kontrast.
-  assert(/tintColor=\{getOnAccentColor\(color\)\}/.test(layout), 'seçili maskot on-accent tint kullanmıyor');
-  assert(/getOnAccentColor/.test(layout) && /from '@\/constants\/color-presets'/.test(layout),
-    'getOnAccentColor mevcut yardımcıdan import edilmemiş');
-  // Seçiliyken de aynı asset ve oranı korunur (contain — maskot tam görünür).
-  assert(/contentFit="contain"[\s\S]*?source=\{coachMascotSource\}/.test(layout), 'seçili maskot contain ile tam görünmüyor');
-  // Alt bar dosyasına YENİ renk sabiti (hex) / gradient / gölge / glow eklenmemiş.
+  // Katmanlar: merkez + dört yön (beş) ve SİMETRİK.
+  const arrayStart = layout.indexOf('const COACH_LAYER_OFFSETS = [');
+  assert(arrayStart >= 0, 'COACH_LAYER_OFFSETS tanımlı değil');
+  const offsetsArray = layout.slice(arrayStart, layout.indexOf('];', arrayStart));
+  const entries = offsetsArray.match(/\{ x: [^}]+, y: [^}]+\}/g) ?? [];
+  assert(entries.length === 5, `beş katman (merkez + dört yön) beklenir: ${entries.length}`);
+  for (const needle of [
+    '{ x: 0, y: 0 }',
+    '{ x: -COACH_THICKEN_OFFSET, y: 0 }',
+    '{ x: COACH_THICKEN_OFFSET, y: 0 }',
+    '{ x: 0, y: -COACH_THICKEN_OFFSET }',
+    '{ x: 0, y: COACH_THICKEN_OFFSET }',
+  ]) {
+    assert(offsetsArray.includes(needle), `simetrik ofset eksik: ${needle}`);
+  }
+
+  // Arka plan / daire / pill / madalyon / border / kaldırılan yardımcı YOK.
+  assert(!/backgroundColor/.test(coachBlock), 'seçili Rosea’ya arka plan eklenmiş');
+  assert(!/opacity:/.test(coachBlock), 'seçili Rosea’ya opacity zemini eklenmiş');
+  assert(!/coachMedallion/.test(layout), 'madalyon stili hâlâ duruyor');
+  assert(!/getOnAccentColor/.test(layout), 'kaldırılması gereken getOnAccentColor hâlâ kullanılıyor');
+  assert(!/borderRadius|radiusPill/.test(layout), 'daire/pill/madalyon köşe yarıçapı hâlâ var');
+  assert(!/\bborder(?!Top)/.test(coachBlock), 'seçili Rosea’ya border eklenmiş');
+  // Yeni renk sabiti (hex), gradient, gölge veya glow yok.
   assert(!/#[0-9A-Fa-f]{3,8}/.test(layout), 'alt bar dosyasına sabit renk (hex) eklenmiş');
   assert(!/gradient|shadow|elevation:\s*[1-9]|shadowColor|shadowOpacity/i.test(layout), 'gradient/gölge/glow eklenmiş');
 });
