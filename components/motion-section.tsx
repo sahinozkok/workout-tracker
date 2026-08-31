@@ -51,8 +51,9 @@ type MotionSwapProps = PropsWithChildren<{
    *
    *   * `default` — bugüne kadarki davranış. Yazılmazsa bu geçerlidir, yani
    *     mevcut bütün `MotionSwap` kullanıcıları etkilenmez.
-   *   * `calm` — disiplin takvimleri için. Daha uzun süre, çok daha kısa dikey
-   *     mesafe; `emphasis` bu tempoda okunmaz, kendi karakterini tanımlar.
+   *   * `calm` — daha uzun süre ve sakin çıkış. Varsayılan `subtle` çok kısa
+   *     mesafe kullanır; `clear` büyük panel değişimlerinde görünür fakat yine
+   *     sakin bir giriş mesafesi seçer.
    */
   pace?: 'default' | 'calm';
   style?: StyleProp<ViewStyle>;
@@ -88,7 +89,7 @@ function getDefaultSwapMotion(isHeavy: boolean, isClear: boolean) {
  * Ağır içerikte (yıl ızgarası) layout animasyonu BİLİNÇLİ olarak yoktur:
  * `LinearTransition` 365 hücrelik ızgarayı yeniden ölçtürür.
  */
-function getCalmSwapMotion(isHeavy: boolean) {
+function getCalmSwapMotion(isHeavy: boolean, isClear: boolean) {
   return {
     entering: isHeavy
       ? FadeIn.duration(MotionCalmDuration.heavyEnter).easing(MotionEasing.standard)
@@ -96,7 +97,7 @@ function getCalmSwapMotion(isHeavy: boolean) {
           .easing(MotionEasing.standard)
           .withInitialValues({
             opacity: 0,
-            transform: [{ translateY: MotionDistance.calmSwap }],
+            transform: [{ translateY: isClear ? MotionDistance.section : MotionDistance.calmSwap }],
           }),
     exiting: FadeOut.duration(
       isHeavy ? MotionCalmDuration.heavyExit : MotionCalmDuration.exit,
@@ -105,6 +106,27 @@ function getCalmSwapMotion(isHeavy: boolean) {
       ? undefined
       : LinearTransition.duration(MotionCalmDuration.layout).easing(MotionEasing.standard),
   };
+}
+
+/**
+ * İçeriği remount etmeden yalnız boyut/konum değişimini yumuşatır. Büyük ve
+ * farklı yükseklikteki alternatif panellerde, anahtarlı MotionSwap'ın dışında
+ * kararlı kalarak aşağıdaki içeriğin aniden sıçramasını önler.
+ */
+export function MotionLayout({ children, style }: Omit<MotionSectionProps, 'delay'>) {
+  const reduceMotion = useReducedMotion();
+
+  return (
+    <Animated.View
+      layout={
+        reduceMotion
+          ? undefined
+          : LinearTransition.duration(MotionCalmDuration.layout).easing(MotionEasing.standard)
+      }
+      style={style}>
+      {children}
+    </Animated.View>
+  );
 }
 
 /** Aynı alandaki alternatif içerikler arasında kısa bir geçiş uygular. */
@@ -120,7 +142,7 @@ export function MotionSwap({
   const isHeavy = contentWeight === 'heavy';
   const isClear = emphasis === 'clear' && !isHeavy;
   const motion =
-    pace === 'calm' ? getCalmSwapMotion(isHeavy) : getDefaultSwapMotion(isHeavy, isClear);
+    pace === 'calm' ? getCalmSwapMotion(isHeavy, isClear) : getDefaultSwapMotion(isHeavy, isClear);
 
   return (
     <Animated.View

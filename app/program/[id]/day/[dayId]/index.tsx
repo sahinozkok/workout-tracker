@@ -19,7 +19,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { MotionPressable } from '@/components/motion-pressable';
-import { MotionCollapsible, MotionSwap } from '@/components/motion-section';
+import { MotionCollapsible, MotionLayout, MotionSwap } from '@/components/motion-section';
 import { ProgramDetailScroll } from '@/components/program-detail-scroll';
 import ProgramExerciseList from '@/components/program-exercise-list';
 import { WorkoutVisualPicker } from '@/components/workout-visual-picker';
@@ -1842,11 +1842,13 @@ export default function WorkoutDayScreen() {
               Set paneli hiç render edilmez: iki panel asla üst üste binmez.
             */}
             {activePanelExercise && (
-              <MotionSwap
-                pace="calm"
-                style={styles.activeExerciseSwap}
-                transitionKey={activeExerciseTransitionKey}>
-                <>
+              <MotionLayout style={styles.activeExerciseLayout}>
+                <MotionSwap
+                  emphasis="clear"
+                  pace="calm"
+                  style={styles.activeExerciseSwap}
+                  transitionKey={activeExerciseTransitionKey}>
+                  <>
                   {activeCardioExercise && (
                     <View style={styles.activeSetBlock}>
                 <Text style={styles.activeSetLabel}>
@@ -2378,8 +2380,9 @@ export default function WorkoutDayScreen() {
                 )}
                     </View>
                   )}
-                </>
-              </MotionSwap>
+                  </>
+                </MotionSwap>
+              </MotionLayout>
             )}
 
             {averageDurationSeconds !== undefined && (
@@ -2763,7 +2766,9 @@ type FeatureColors = {
 function createStyles(colors: ThemeColors, feature: FeatureColors) {
   return StyleSheet.create({
     activeSetBlock: { alignItems: 'center', gap: 10, paddingTop: 18 },
-    /** Egzersiz/takip türü değişirken büyük aktif panelin yerleşim sınırı. */
+    /** Panel yüksekliği değişirken aşağıdaki listenin sıçramasını engeller. */
+    activeExerciseLayout: { alignSelf: 'stretch', overflow: 'hidden' },
+    /** Egzersiz/takip türü değişirken anahtarlı içerik sınırı. */
     activeExerciseSwap: { alignSelf: 'stretch' },
     /**
      * Kardiyo kontrol aşamasının tek geçiş sınırı — YALNIZ yerleşim. MotionSwap

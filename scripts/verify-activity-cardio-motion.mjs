@@ -211,7 +211,7 @@ check('9. Ekranda ham animasyon veya yeni motion altyapısı yok', () => {
   assert.ok(!/\.duration\(|\.easing\(|withTiming|withSpring|withInitialValues/.test(code), 'ekrana ham süre/easing/mesafe yazılmış');
   // Motion yalnız MEVCUT helperlardan gelir.
   assert.ok(
-    /import \{ MotionCollapsible, MotionSwap \} from '@\/components\/motion-section'/.test(code),
+    /import \{ MotionCollapsible, MotionLayout, MotionSwap \} from '@\/components\/motion-section'/.test(code),
     'MotionSwap/MotionCollapsible mevcut helperdan import edilmemiş',
   );
   assert.ok(/from '@\/components\/motion-pressable'/.test(code), 'MotionPressable helperı kaybolmuş');

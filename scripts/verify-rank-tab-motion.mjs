@@ -92,7 +92,7 @@ check(/pace="calm"/.test(swapOpen), 'Sekme geçişi pace="calm" kullanmalı (dah
 // Calm tempo helper'da tanımlı ve pace="calm" iken gerçekten seçiliyor.
 check(/function getCalmSwapMotion\(/.test(motionSection), 'calm tempo fonksiyonu helper’da olmalı');
 check(
-  /pace === 'calm' \? getCalmSwapMotion\(isHeavy\) : getDefaultSwapMotion/.test(motionSection),
+  /pace === 'calm' \? getCalmSwapMotion\(isHeavy, isClear\) : getDefaultSwapMotion/.test(motionSection),
   'MotionSwap pace="calm" iken calm tempoya geçmeli',
 );
 
@@ -110,7 +110,7 @@ check(
 check(/exiting: FadeOut\.duration/.test(calmBody), 'calm çıkış yalnız sade fade olmalı');
 check(!/FadeOutUp/.test(calmBody), 'calm tempoda sert FadeOutUp kullanılmamalı');
 check(
-  /translateY: MotionDistance\.calmSwap/.test(calmBody),
+  /isClear \? MotionDistance\.section : MotionDistance\.calmSwap/.test(calmBody),
   'calm regular giriş yalnız küçük (calmSwap) dikey mesafeyi kullanmalı',
 );
 

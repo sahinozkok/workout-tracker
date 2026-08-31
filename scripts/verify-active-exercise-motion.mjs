@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const raw = readFileSync(join(ROOT, 'app/program/[id]/day/[dayId]/index.tsx'), 'utf8');
+const motionSection = readFileSync(join(ROOT, 'components/motion-section.tsx'), 'utf8');
 const code = raw
   .replace(/\/\*[\s\S]*?\*\//g, ' ')
   .replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ')
@@ -41,6 +42,7 @@ check('geçiş anahtarı yalnız egzersiz kimliği ve takip türünden oluşuyor
 });
 
 check('dış panel geçişi mevcut sakin MotionSwap kullanıyor', () => {
+  assert.match(outerOpen, /emphasis="clear"/);
   assert.match(outerOpen, /pace="calm"/);
   assert.match(outerOpen, /style=\{styles\.activeExerciseSwap\}/);
   assert.match(outerOpen, /transitionKey=\{activeExerciseTransitionKey\}/);
@@ -61,9 +63,29 @@ check('iç kardiyo phase animasyonu bağımsız kalıyor', () => {
   assert.equal((panel.match(/transitionKey=\{activityPhase\}/g) ?? []).length, 1);
 });
 
-check('dış wrapper yalnız yerleşim taşıyor', () => {
+check('kararlı dış wrapper yükseklik sıçramasını yumuşatıyor', () => {
+  assert.match(panel, /<MotionLayout style=\{styles\.activeExerciseLayout\}>[\s\S]*?<MotionSwap/);
+  assert.match(
+    code,
+    /activeExerciseLayout:\s*\{\s*alignSelf: 'stretch',\s*overflow: 'hidden'\s*\}/,
+  );
   assert.match(code, /activeExerciseSwap:\s*\{\s*alignSelf: 'stretch'\s*\}/);
+  assert.doesNotMatch(code, /activeExerciseLayout:\s*\{[^}]*backgroundColor/);
   assert.doesNotMatch(code, /activeExerciseSwap:\s*\{[^}]*backgroundColor/);
+});
+
+check('MotionLayout mevcut tokenlarla ve Reduce Motion kapısıyla çalışıyor', () => {
+  assert.match(
+    motionSection,
+    /export function MotionLayout[\s\S]*?useReducedMotion\(\)[\s\S]*?reduceMotion\s*\?\s*undefined\s*:\s*LinearTransition\.duration\(MotionCalmDuration\.layout\)\.easing\(MotionEasing\.standard\)/,
+  );
+});
+
+check('clear calm geçiş görünür mesafe kullanırken subtle calm değişmiyor', () => {
+  assert.match(
+    motionSection,
+    /translateY:\s*isClear\s*\?\s*MotionDistance\.section\s*:\s*MotionDistance\.calmSwap/,
+  );
 });
 
 check('tüm egzersizler seçim davranışı korunuyor', () => {
@@ -78,7 +100,7 @@ check('ekranda yeni ham animasyon altyapısı yok', () => {
   assert.doesNotMatch(code, /from 'react-native-reanimated'|LayoutAnimation|withTiming|withSpring/);
   assert.match(
     code,
-    /import \{ MotionCollapsible, MotionSwap \} from '@\/components\/motion-section'/,
+    /import \{ MotionCollapsible, MotionLayout, MotionSwap \} from '@\/components\/motion-section'/,
   );
 });
 
