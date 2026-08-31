@@ -1,4 +1,4 @@
-import { Feather } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { Tabs } from 'expo-router';
 import { PropsWithChildren, useEffect } from 'react';
@@ -23,6 +23,13 @@ import { useAppTheme } from '@/hooks/use-app-theme';
 import { useFeatureColor } from '@/hooks/use-feature-colors';
 
 const coachMascotSource = require('../../assets/images/ai-coach-mascot.png');
+
+/**
+ * Dört standart sekme ikonunun ORTAK optik boyutu. Ionicons ailesi tek çizgi
+ * kalınlığında çizildiği için her ikon aynı pikselde tutarlı görünür; eski
+ * Feather'daki -1/-2 düzeltmelerine gerek kalmaz.
+ */
+const TAB_ICON_SIZE = 24;
 
 /**
  * Sekme ikonu seçildiğinde küçük bir ölçek geri bildirimi verir.
@@ -103,7 +110,7 @@ export default function TabLayout() {
           title: t('tabs.home'),
           tabBarIcon: ({ color, focused, size }) => (
             <TabIconFeedback focused={focused}>
-              <Feather name="home" size={(size ?? 24) - 2} color={color} />
+              <Ionicons name={focused ? 'home' : 'home-outline'} size={size ?? TAB_ICON_SIZE} color={color} />
             </TabIconFeedback>
           ),
         }}
@@ -114,7 +121,7 @@ export default function TabLayout() {
           title: t('tabs.programs'),
           tabBarIcon: ({ color, focused, size }) => (
             <TabIconFeedback focused={focused}>
-              <Feather name="activity" size={(size ?? 24) - 1} color={color} />
+              <Ionicons name={focused ? 'barbell' : 'barbell-outline'} size={size ?? TAB_ICON_SIZE} color={color} />
             </TabIconFeedback>
           ),
         }}
@@ -125,7 +132,7 @@ export default function TabLayout() {
           title: t('tabs.history'),
           tabBarIcon: ({ color, focused, size }) => (
             <TabIconFeedback focused={focused}>
-              <Feather name="clock" size={(size ?? 24) - 1} color={color} />
+              <Ionicons name={focused ? 'time' : 'time-outline'} size={size ?? TAB_ICON_SIZE} color={color} />
             </TabIconFeedback>
           ),
         }}
@@ -153,7 +160,7 @@ export default function TabLayout() {
           title: t('tabs.profile'),
           tabBarIcon: ({ color, focused, size }) => (
             <TabIconFeedback focused={focused}>
-              <Feather name="user" size={(size ?? 24) - 1} color={color} />
+              <Ionicons name={focused ? 'person' : 'person-outline'} size={size ?? TAB_ICON_SIZE} color={color} />
             </TabIconFeedback>
           ),
         }}
