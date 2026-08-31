@@ -50,11 +50,16 @@ import {
   ACTIVITY_DISTANCE_METERS_MIN,
   ACTIVITY_DURATION_SECONDS_MAX,
   ACTIVITY_DURATION_SECONDS_MIN,
+  classifyRpe,
+  describeRpeInput,
   formatMetersAsKilometers,
+  formatRpeWithBand,
   parseKilometersToMeters,
   parseMinutesToSeconds,
   parseOptionalKilometersToMeters,
   parseOptionalRpe,
+  type RpeBand,
+  rpeBandLabelKey,
   TARGET_DISTANCE_METERS_MAX,
   TARGET_DISTANCE_METERS_MIN,
   TARGET_DURATION_SECONDS_MAX,
@@ -300,6 +305,19 @@ export default function WorkoutDayScreen() {
         existingActivityRecord.durationSeconds,
       )
     : undefined;
+  /**
+   * RPE (algılanan zorluk) bant açıklaması CANLI türetilir. Sınıflandırma TEK
+   * ORTAK saf yardımcıdan (`classifyRpe`) gelir; strength ve kardiyo alanları
+   * aynı çekirdeği kullanır. Kendi parse yolları korunur (strength çok ondalık
+   * kabul eder, kardiyo tek ondalık) — validasyon/kayıt davranışı değişmez.
+   */
+  const strengthRpeValue = parseNumberInput(rpeInput);
+  const strengthRpeBand: RpeBand | undefined =
+    strengthRpeValue !== undefined && strengthRpeValue >= 0 && strengthRpeValue <= 10
+      ? classifyRpe(strengthRpeValue)
+      : undefined;
+  const activityRpeBand = describeRpeInput(activityRpeInput);
+
   // Program sırasındaki ilk tamamlanmamış egzersiz.
   const currentExerciseId = dayExercises.find(
     (exercise) => (completedSetCounts[getSetProgressKey(todayKey, exercise.id)] ?? 0) < exercise.targetSets,
@@ -1888,11 +1906,11 @@ export default function WorkoutDayScreen() {
 
                 <View style={styles.activityFieldRow}>
                   <Text style={styles.activityFieldLabel}>
-                    {t('day.rpe')} · {t('day.optional')}
+                    {t('rpe.label')} · {t('day.optional')}
                   </Text>
                   <TextInput
-                    accessibilityHint={t('day.rpeHint')}
-                    accessibilityLabel={t('day.rpe')}
+                    accessibilityHint={t('rpe.description')}
+                    accessibilityLabel={`${t('rpe.label')}, ${t('day.optional')}`}
                     editable={canCompleteSets && !isActivityPending}
                     keyboardType="decimal-pad"
                     maxLength={4}
@@ -1906,7 +1924,11 @@ export default function WorkoutDayScreen() {
                   <Text style={styles.activityFieldUnit} />
                 </View>
 
-                <Text style={styles.activityHint}>{t('day.rpeHint')}</Text>
+                {activityRpeBand && (
+                  <Text style={styles.activityRpeBand}>{t(rpeBandLabelKey(activityRpeBand))}</Text>
+                )}
+
+                <Text style={styles.activityHint}>{t('rpe.description')}</Text>
 
                 {/* Tempo TÜRETİLİR; hiçbir yerde saklanmaz. */}
                 {activePaceSecondsPerKm !== undefined && (
@@ -2202,19 +2224,29 @@ export default function WorkoutDayScreen() {
                       </Text>
                     )}
 
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>{t('day.rpe')}</Text>
-                      <TextInput
-                        accessibilityLabel={t('day.rpe')}
-                        editable={canCompleteSets && !pendingExerciseId}
-                        keyboardType="decimal-pad"
-                        maxLength={4}
-                        onChangeText={setRpeInput}
-                        placeholder={t('day.optional')}
-                        placeholderTextColor={colors.textTertiary}
-                        style={styles.detailInput}
-                        value={rpeInput}
-                      />
+                    <View style={styles.rpeField}>
+                      <View style={styles.rpeLabelRow}>
+                        <Text style={styles.rpeLabel}>{t('rpe.label')}</Text>
+                        <Text style={styles.rpeOptional}>{t('day.optional')}</Text>
+                      </View>
+                      <View style={styles.rpeInputRow}>
+                        <TextInput
+                          accessibilityHint={t('rpe.description')}
+                          accessibilityLabel={`${t('rpe.label')}, ${t('day.optional')}`}
+                          editable={canCompleteSets && !pendingExerciseId}
+                          keyboardType="decimal-pad"
+                          maxLength={4}
+                          onChangeText={setRpeInput}
+                          placeholder={t('day.optional')}
+                          placeholderTextColor={colors.textTertiary}
+                          style={styles.detailInput}
+                          value={rpeInput}
+                        />
+                        {strengthRpeBand && (
+                          <Text style={styles.rpeBandText}>{t(rpeBandLabelKey(strengthRpeBand))}</Text>
+                        )}
+                      </View>
+                      <Text style={styles.rpeDescription}>{t('rpe.description')}</Text>
                     </View>
 
                     {activeSetRecords.length > 0 && (
@@ -2236,7 +2268,7 @@ export default function WorkoutDayScreen() {
                             </Text>
                             {workoutSet.rpe !== undefined && (
                               <Text style={styles.completedSetRpe}>
-                                RPE {formatDecimal(workoutSet.rpe, locale)}
+                                {formatRpeWithBand(workoutSet.rpe, t, locale)}
                               </Text>
                             )}
                           </View>
@@ -2636,7 +2668,7 @@ function formatSetPerformance(
   const parts = [
     workoutSet.weightKg === undefined ? t('day.bodyweight') : `${formatDecimal(workoutSet.weightKg, locale)} kg`,
     workoutSet.repetitions === undefined ? undefined : t('day.repsValue', { count: workoutSet.repetitions }),
-    workoutSet.rpe === undefined ? undefined : `RPE ${formatDecimal(workoutSet.rpe, locale)}`,
+    workoutSet.rpe === undefined ? undefined : formatRpeWithBand(workoutSet.rpe, t, locale),
   ];
   return parts.filter(Boolean).join(' · ');
 }
@@ -2693,6 +2725,7 @@ function createStyles(colors: ThemeColors, feature: FeatureColors) {
       textAlign: 'right',
     },
     activityFieldUnit: { color: colors.textSecondary, fontSize: 13, minWidth: 20 },
+    activityRpeBand: { color: colors.text, fontSize: 13, fontWeight: '600', textAlign: 'right' },
     activityHint: { color: colors.textTertiary, fontSize: 12, lineHeight: 16, textAlign: 'center' },
     activityPace: {
       color: colors.textSecondary,
@@ -2815,15 +2848,27 @@ function createStyles(colors: ThemeColors, feature: FeatureColors) {
     detailsArea: { alignSelf: 'stretch', gap: 12 },
     detailRow: { alignItems: 'center', flexDirection: 'row', gap: 12 },
     detailLabel: { color: colors.textSecondary, fontSize: 13, width: 46 },
+    /**
+     * RPE alanı: uzun Türkçe etiket ve Dynamic Type için etiket ÜSTTE, girdi
+     * altta yığılır; dar bir yan sütuna sıkışmaz. Açıklama Details açıkken
+     * her zaman görünür — ayrı kart/modal yok.
+     */
+    rpeField: { alignSelf: 'stretch', gap: 8 },
+    rpeLabelRow: { alignItems: 'baseline', flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    rpeLabel: { color: colors.textSecondary, flexShrink: 1, fontSize: 13, fontWeight: '600' },
+    rpeOptional: { color: colors.textTertiary, fontSize: 12 },
+    rpeInputRow: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+    rpeBandText: { color: colors.text, fontSize: 13, fontWeight: '600' },
+    rpeDescription: { color: colors.textTertiary, fontSize: 12, lineHeight: 16 },
     detailInput: {
       backgroundColor: colors.background,
       borderColor: colors.inputBorder,
       borderRadius: Layout.radiusSmall,
       borderWidth: StyleSheet.hairlineWidth,
       color: colors.text,
-      flex: 1,
       fontSize: 15,
       minHeight: Layout.minTouchSize,
+      minWidth: 96,
       paddingHorizontal: 12,
     },
     detailActions: { flexDirection: 'row', gap: 10 },

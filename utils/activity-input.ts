@@ -164,6 +164,68 @@ export function parseOptionalRpe(raw: string): ParseResult<number | undefined> {
   return ok(value);
 }
 
+/**
+ * RPE (algılanan zorluk) SINIFLANDIRMASI — TEK doğruluk kaynağı.
+ *
+ * Active Workout (strength + kardiyo) ve History AYNI bantları buradan okur;
+ * hiçbir ekran bu eşikleri kopyalamaz. Yalnızca sayısal bandı döndürür; görünen
+ * metin locale katmanında (`rpe.bands.*`) çözülür — çekirdek dilden bağımsız
+ * kalır ve saftır.
+ *
+ * Bantlar (üst sınır dahil):
+ *   0           → rest
+ *   0 < v ≤ 2   → veryEasy
+ *   2 < v ≤ 4   → easy
+ *   4 < v ≤ 6   → moderate
+ *   6 < v ≤ 8   → hard
+ *   8 < v ≤ 9   → veryHard
+ *   9 < v ≤ 10  → max
+ */
+export type RpeBand = 'rest' | 'veryEasy' | 'easy' | 'moderate' | 'hard' | 'veryHard' | 'max';
+
+export function classifyRpe(value: number): RpeBand | undefined {
+  if (!Number.isFinite(value) || value < RPE_MIN || value > RPE_MAX) return undefined;
+  if (value === 0) return 'rest';
+  if (value <= 2) return 'veryEasy';
+  if (value <= 4) return 'easy';
+  if (value <= 6) return 'moderate';
+  if (value <= 8) return 'hard';
+  if (value <= 9) return 'veryHard';
+  return 'max';
+}
+
+/**
+ * Ham girdiden CANLI bant. Mevcut `parseOptionalRpe` validasyonunu AYNEN
+ * kullanır: boş ya da geçersiz değer açıklama üretmez (`undefined` döner),
+ * kayıt/validasyon davranışı değişmez.
+ */
+export function describeRpeInput(raw: string): RpeBand | undefined {
+  const parsed = parseOptionalRpe(raw);
+  if (!parsed.ok || parsed.value === undefined) return undefined;
+  return classifyRpe(parsed.value);
+}
+
+/** Bant → locale anahtarı. Etiket eşlemesi de tek yerde yaşar. */
+export function rpeBandLabelKey(band: RpeBand): string {
+  return `rpe.bands.${band}`;
+}
+
+/**
+ * Kayıtlı bir RPE değerini `8 · Zor` biçiminde yazar — History ve tamamlanmış
+ * set listesinin ORTAK biçimi. `translate` ve `locale` dışarıdan verilir;
+ * fonksiyon saf kalır ve sınıflandırmayı `classifyRpe` üzerinden yapar.
+ * Bant çözülemezse yalnız sayı döner (eski `—`/gizleme davranışı çağıranda).
+ */
+export function formatRpeWithBand(
+  value: number,
+  translate: (key: string) => string,
+  locale: string,
+): string {
+  const formatted = value.toLocaleString(locale, { maximumFractionDigits: 2 });
+  const band = classifyRpe(value);
+  return band ? `${formatted} · ${translate(rpeBandLabelKey(band))}` : formatted;
+}
+
 /** Metre → kilometre metni. Girdi alanlarını mevcut kayıtla doldurmak için. */
 export function formatMetersAsKilometers(meters: number): string {
   const whole = Math.trunc(meters / 1000);

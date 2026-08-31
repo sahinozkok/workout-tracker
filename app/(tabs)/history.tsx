@@ -27,7 +27,7 @@ import {
   countUniqueExercises,
   summarizeSessionActivity,
 } from '@/utils/activity-history';
-import { formatMetersAsKilometers } from '@/utils/activity-input';
+import { formatMetersAsKilometers, formatRpeWithBand } from '@/utils/activity-input';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import { useFeatureColor } from '@/hooks/use-feature-colors';
 import {
@@ -490,6 +490,11 @@ function SessionHistoryRow({
   const sessionDate = dateFromKey(session.dateKey);
   const exerciseGroups = groupSetsByExercise(sets);
   const activityEntries = buildActivityHistoryEntries(activityRecords);
+  // RPE açıklaması bu detay bloğunda YALNIZ BİR KEZ gösterilir; her satırda
+  // uzun açıklama tekrar edilmez. Yalnız gerçekten RPE varsa görünür.
+  const hasAnyRpe =
+    exerciseGroups.some((group) => group.sets.some((workoutSet) => workoutSet.rpe !== undefined)) ||
+    activityEntries.some((entry) => entry.rpe !== undefined);
   const summary = summarizeSessionActivity({
     activityRecords,
     durationSeconds: session.accumulatedDurationSeconds,
@@ -564,6 +569,8 @@ function SessionHistoryRow({
             )}
           </View>
 
+          {hasAnyRpe && <Text style={styles.rpeNote}>{t('rpe.historyNote')}</Text>}
+
           {exerciseGroups.length > 0 ? (
             exerciseGroups.map((group) => (
               <View key={group.key} style={styles.exerciseGroup}>
@@ -578,7 +585,7 @@ function SessionHistoryRow({
                   <Text style={[styles.tableHeaderText, styles.setColumn]}>{t('history.set')}</Text>
                   <Text style={styles.tableHeaderText}>{t('history.kg')}</Text>
                   <Text style={styles.tableHeaderText}>{t('history.reps')}</Text>
-                  <Text style={styles.tableHeaderText}>{t('history.rpe')}</Text>
+                  <Text style={[styles.tableHeaderText, styles.rpeColumn]}>{t('history.rpe')}</Text>
                 </View>
 
                 {group.sets.map((workoutSet) => (
@@ -591,8 +598,12 @@ function SessionHistoryRow({
                         {workoutSet.weightKg === undefined ? '—' : formatDecimal(workoutSet.weightKg, locale)}
                       </Text>
                       <Text style={styles.setValue}>{workoutSet.repetitions ?? '—'}</Text>
-                      <Text style={styles.setValue}>
-                        {workoutSet.rpe === undefined ? '—' : formatDecimal(workoutSet.rpe, locale)}
+                      <Text
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.75}
+                        numberOfLines={1}
+                        style={[styles.setValue, styles.rpeColumn]}>
+                        {workoutSet.rpe === undefined ? '—' : formatRpeWithBand(workoutSet.rpe, t, locale)}
                       </Text>
                     </View>
 
@@ -717,8 +728,8 @@ function ActivityHistoryRow({
 
       {entry.rpe !== undefined && (
         <View style={styles.activityDetailRow}>
-          <Text style={styles.activityDetailLabel}>{t('history.rpe')}</Text>
-          <Text style={styles.activityDetailValue}>{formatDecimal(entry.rpe, locale)}</Text>
+          <Text style={styles.activityDetailLabel}>{t('rpe.label')}</Text>
+          <Text style={styles.activityDetailValue}>{formatRpeWithBand(entry.rpe, t, locale)}</Text>
         </View>
       )}
     </View>
@@ -833,6 +844,8 @@ function createStyles(colors: ThemeColors, historyAccent: string) {
       textAlign: 'center',
     },
     setColumn: { flex: 0.5, textAlign: 'left' },
+    // `8 · Maksimum` gibi açıklamalı değerler küçük ekranda tek satır kalır.
+    rpeColumn: { flex: 1.6 },
     setRow: {
       alignItems: 'center',
       borderTopColor: colors.separator,
@@ -863,6 +876,7 @@ function createStyles(colors: ThemeColors, historyAccent: string) {
     },
     noSetDetails: { alignItems: 'center', flexDirection: 'row', gap: 8 },
     noSetDetailsText: { color: colors.textSecondary, flex: 1, ...Type.footnote, lineHeight: 15 },
+    rpeNote: { color: colors.textTertiary, ...Type.footnote, lineHeight: 15 },
     progressStack: { gap: 16 },
     /** Gelişimdeki sade aktivite bölümü — grafik yok, kart yığını yok. */
     activitySection: {

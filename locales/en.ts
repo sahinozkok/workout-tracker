@@ -226,7 +226,7 @@ export const en: TranslationSchema = {
     setOfTotal: 'SET {current} / {total}',
     kgUnit: 'kg',
     repsUnit: 'reps',
-    details: 'Details',
+    details: 'Set details',
     dayOptions: 'Day options',
     loading: 'Loading workout day…',
     notFound: 'Program or workout day not found.',
@@ -340,7 +340,6 @@ export const en: TranslationSchema = {
     clearActivity: 'Clear record',
     clearActivityTitle: 'Clear record',
     clearActivityBody: 'Your recorded activity for {name} will be deleted. Rewards you earned are not taken back.',
-    rpeHint: 'RPE shows how hard the workout felt (0–10).',
     durationRequired: 'Enter the duration in minutes and seconds.',
     durationInvalid: 'Seconds must be 0–59; do not use decimals.',
     durationRange: 'Duration must be between 1 second and 24 hours.',
@@ -393,6 +392,21 @@ export const en: TranslationSchema = {
     accessibilityOvertime: 'Target rest time is over, {seconds} seconds past.',
     notificationTitle: 'Your rest is over',
     notificationBody: '{name}: you are ready for the next set.',
+  },
+  rpe: {
+    label: 'Perceived effort (RPE)',
+    description:
+      'RPE describes how hard a set or activity felt to you. 0 is rest, 5–6 moderate, 7–8 hard, 9 very hard, 10 maximum effort. It is an optional, personal rating.',
+    historyNote: 'RPE is your perceived effort (0–10).',
+    bands: {
+      rest: 'Rest',
+      veryEasy: 'Very easy',
+      easy: 'Easy',
+      moderate: 'Moderate',
+      hard: 'Hard',
+      veryHard: 'Very hard',
+      max: 'Max effort',
+    },
   },
   history: {
     activityCount: '{count} activity',

@@ -225,7 +225,7 @@ export const tr = {
     setOfTotal: 'SET {current} / {total}',
     kgUnit: 'kg',
     repsUnit: 'tekrar',
-    details: 'Detaylar',
+    details: 'Set ayrıntıları',
     dayOptions: 'Gün seçenekleri',
     loading: 'Antrenman günü yükleniyor…',
     notFound: 'Program veya antrenman günü bulunamadı.',
@@ -339,7 +339,6 @@ export const tr = {
     clearActivity: 'Kaydı temizle',
     clearActivityTitle: 'Kaydı temizle',
     clearActivityBody: '{name} için kaydettiğin aktivite silinecek. Kazandığın ödüller geri alınmaz.',
-    rpeHint: 'RPE, antrenmanın ne kadar zor hissettirdiğini gösterir (0–10).',
     durationRequired: 'Süreyi dakika ve saniye olarak gir.',
     durationInvalid: 'Saniye 0–59 arasında olmalı; ondalık değer kullanma.',
     durationRange: 'Süre 1 saniye ile 24 saat arasında olmalı.',
@@ -392,6 +391,21 @@ export const tr = {
     accessibilityOvertime: 'Hedef mola süresi doldu, {seconds} saniye aşıldı.',
     notificationTitle: 'Mola süren bitti',
     notificationBody: '{name}: sıradaki sete hazırsın.',
+  },
+  rpe: {
+    label: 'Algılanan zorluk (RPE)',
+    description:
+      'RPE, bir setin ya da aktivitenin sana ne kadar zor hissettirdiğini anlatır. 0 dinlenme, 5–6 orta, 7–8 zor, 9 çok zor, 10 maksimum çabadır. İsteğe bağlı ve kişisel bir değerlendirmedir.',
+    historyNote: 'RPE, algılanan zorluktur (0–10).',
+    bands: {
+      rest: 'Dinlenme',
+      veryEasy: 'Çok kolay',
+      easy: 'Kolay',
+      moderate: 'Orta',
+      hard: 'Zor',
+      veryHard: 'Çok zor',
+      max: 'Maksimum',
+    },
   },
   history: {
     activityCount: '{count} aktivite',

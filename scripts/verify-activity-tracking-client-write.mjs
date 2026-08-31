@@ -107,12 +107,16 @@ const {
   ACTIVITY_DURATION_SECONDS_MIN,
   TARGET_DURATION_SECONDS_MAX,
   TARGET_DURATION_SECONDS_MIN,
+  classifyRpe,
+  describeRpeInput,
   formatMetersAsKilometers,
+  formatRpeWithBand,
   parseKilometersToMeters,
   parseMinutesSecondsToSeconds,
   parseMinutesToSeconds,
   parseOptionalKilometersToMeters,
   parseOptionalRpe,
+  rpeBandLabelKey,
   splitSecondsIntoFields,
 } = input;
 const { buildProgramExerciseInsertPayload, buildProgramExerciseTargetUpdatePayload } = exercises;
@@ -262,6 +266,53 @@ check('C2. numeric(3,1) sözleşmesi: ikinci ondalık REDDEDİLİR', () => {
   // Sunucu 7.25'i sessizce yuvarlardı; istemci hiç göndermez.
   assertEqual(parseOptionalRpe('7.25').reason, 'invalid', '7.25 kabul edildi');
   assertDeepEqual(parseOptionalRpe('7.2'), { ok: true, value: 7.2 }, 'tek ondalık');
+});
+
+check('C3. classifyRpe BANT SINIRLARI (üst sınır dahil)', () => {
+  const cases = [
+    [0, 'rest'],
+    [2, 'veryEasy'],
+    [2.1, 'easy'],
+    [4, 'easy'],
+    [4.1, 'moderate'],
+    [6, 'moderate'],
+    [6.1, 'hard'],
+    [8, 'hard'],
+    [8.1, 'veryHard'],
+    [9, 'veryHard'],
+    [9.1, 'max'],
+    [10, 'max'],
+  ];
+  for (const [value, band] of cases) {
+    assertEqual(classifyRpe(value), band, `RPE ${value} bandı`);
+  }
+});
+
+check('C4. classifyRpe aralık dışı ve geçersiz → undefined', () => {
+  assertEqual(classifyRpe(-0.1), undefined, 'negatif');
+  assertEqual(classifyRpe(10.1), undefined, 'üst sınır aşımı');
+  assertEqual(classifyRpe(Number.NaN), undefined, 'NaN');
+  assertEqual(classifyRpe(Number.POSITIVE_INFINITY), undefined, 'Infinity');
+});
+
+check('C5. describeRpeInput boş/geçersiz açıklama üretmez; ondalık çalışır', () => {
+  assertEqual(describeRpeInput(''), undefined, 'boş');
+  assertEqual(describeRpeInput('   '), undefined, 'boşluk');
+  assertEqual(describeRpeInput('abc'), undefined, 'metin');
+  assertEqual(describeRpeInput('12'), undefined, 'aralık dışı');
+  assertEqual(describeRpeInput('7.25'), undefined, 'ikinci ondalık reddedilir');
+  assertEqual(describeRpeInput('0'), 'rest', 'sıfır dinlenme');
+  assertEqual(describeRpeInput('7,5'), 'hard', 'virgüllü ondalık');
+  assertEqual(describeRpeInput('8.1'), 'veryHard', 'ondalık bant');
+});
+
+check('C6. rpeBandLabelKey ve formatRpeWithBand ORTAK biçim üretir', () => {
+  assertEqual(rpeBandLabelKey('hard'), 'rpe.bands.hard', 'bant anahtarı');
+  const translate = (key) => `<${key}>`;
+  assertEqual(formatRpeWithBand(8, translate, 'en-US'), '8 · <rpe.bands.hard>', '8 · Zor biçimi');
+  assertEqual(formatRpeWithBand(5.5, translate, 'en-US'), '5.5 · <rpe.bands.moderate>', 'ondalık biçim');
+  // Sınıflandırılamayan (aralık dışı) değerde yalnız sayı — çağıran gizleme/— yapar.
+  assertEqual(formatRpeWithBand(11, translate, 'en-US'), '11', 'aralık dışı yalnız sayı');
 });
 
 // ===========================================================================
@@ -752,7 +803,11 @@ check('K10. Erişilebilirlik — 44 pt, VoiceOver etiketi, renk TEK sinyal deği
   assert(/accessibilityValue=\{\{ text: activityTimerAccessibilityText \}\}/.test(panel),
     'kronometre değeri VoiceOver’a bildirilmiyor');
   assert(/accessibilityLabel=\{t\('day\.actualDistance'\)\}/.test(panel), 'mesafe etiketi yok');
-  assert(/accessibilityLabel=\{t\('day\.rpe'\)\}/.test(panel), 'RPE etiketi yok');
+  // RPE ana etiketi artık ORTAK `rpe.label` ("Algılanan zorluk (RPE)") anahtarından gelir.
+  assert(
+    /accessibilityLabel=\{`\$\{t\('rpe\.label'\)\}, \$\{t\('day\.optional'\)\}`\}/.test(panel),
+    'RPE etiketi ve isteğe bağlı bilgisi VoiceOver’da yok',
+  );
   assert(/accessibilityState=\{\{ busy: isActivityPending, disabled: isActivityDisabled \}\}/.test(panel),
     'CTA yükleme/kapalı durumu bildirilmiyor');
   assert(/minHeight: Layout\.minTouchSize/.test(screen), 'kardiyo alanları 44 pt değil');
@@ -770,7 +825,7 @@ check('K12. Bütün yeni kullanıcı metinleri LOKALİZE', () => {
     'trackingModeSetsReps', 'trackingModeDuration', 'trackingModeDistance', 'trackingModeLabel',
     'trackingModeLocked', 'targetDuration', 'targetDistance', 'actualDuration', 'actualDistance',
     'minutesUnit', 'secondsUnit', 'kmUnit', 'paceUnit', 'paceLabel', 'saveActivity',
-    'updateActivity', 'clearActivity', 'clearActivityTitle', 'clearActivityBody', 'rpeHint',
+    'updateActivity', 'clearActivity', 'clearActivityTitle', 'clearActivityBody',
     'durationRequired', 'durationInvalid', 'durationRange', 'distanceRequired', 'distanceInvalid',
     'distanceRange', 'activitySaveFailed', 'activityDeleteFailed', 'targetDurationLabel',
     'targetDistanceLabel', 'activityDoneLabel', 'optional',
@@ -859,6 +914,70 @@ check('K20. Aktif ekran ilerlemeyi strength-only sayaçtan değil ortak çekirde
   assert(/total: dayProgress\.targetUnits/.test(screen), 'üst bar tür-farkında hedefi göstermiyor');
   assert(/dayProgress\.doneUnits \/ dayProgress\.targetUnits/.test(screen), 'ilerleme çubuğu tür-farkında değil');
   assert(/const hasProgress = dayProgress\.hasProgress;/.test(screen), 'kardiyo partial ilerlemesi ekran durumuna bağlanmıyor');
+});
+
+// ===========================================================================
+console.log('\n=== L. RPE etiket ve sınıflandırma sözleşmesi (kaynak) ===');
+// ===========================================================================
+
+const history = source('app/(tabs)/history.tsx');
+
+check('L1. Sınıflandırma TEK saf yardımcıda; ekranlar eşikleri kopyalamaz', () => {
+  const core = source('utils/activity-input.ts');
+  assert(/export function classifyRpe\(/.test(core), 'classifyRpe çekirdekte yok');
+  // Ekranlar kendi bant eşiklerini üretmez; ortak yardımcıyı çağırır.
+  assert(!/=== 'rest'|<= 2|<= 4|<= 6|<= 8/.test(history), 'History bant eşiği kopyalamış');
+});
+
+check('L2. Active Workout strength ve kardiyo ORTAK yardımcıyı kullanır', () => {
+  assert(/describeRpeInput\(activityRpeInput\)/.test(screen), 'kardiyo canlı bant ortak yardımcıdan değil');
+  assert(/classifyRpe\(strengthRpeValue\)/.test(screen), 'strength canlı bant ortak yardımcıdan değil');
+  assert(/formatRpeWithBand\(/.test(screen), 'tamamlanan set/oturum RPE ortak biçimi kullanmıyor');
+  assert(/rpeBandLabelKey\(/.test(screen), 'bant etiketi ortak anahtardan gelmiyor');
+});
+
+check('L3. History açıklamalı değeri kullanır ve TEK KEZ kısa not gösterir', () => {
+  assert(/formatRpeWithBand\(workoutSet\.rpe/.test(history), 'set tablosu 8 · Zor biçimi kullanmıyor');
+  assert(/formatRpeWithBand\(entry\.rpe/.test(history), 'aktivite RPE biçimi kullanmıyor');
+  assert(/t\('rpe\.historyNote'\)/.test(history), 'History kısa RPE notu yok');
+  // Not YALNIZ RPE varken ve BİR kez; her satırda uzun açıklama tekrarlanmaz.
+  assert(/const hasAnyRpe =/.test(history), 'RPE varlığı kapısı yok');
+  assert(!/t\('rpe\.description'\)/.test(history), 'History satır/blokta uzun açıklama tekrarlıyor');
+  assert(/numberOfLines=\{1\}/.test(history), 'açıklamalı RPE küçük ekranda tek satıra sabitlenmemiş');
+  assert(/rpeColumn: \{ flex: 1\.6 \}/.test(history), 'RPE sütununa açıklama için yeterli alan ayrılmamış');
+});
+
+check('L4. Kullanıcıya görünen etiket ORTAK ve JSX’te sabit değil', () => {
+  // "Set details" düğmesi ve "Perceived effort (RPE)" etiketi çeviriden gelir.
+  assert(/t\('day\.details'\)/.test(screen), 'Set ayrıntıları düğmesi çeviriden gelmiyor');
+  assert(/t\('rpe\.label'\)/.test(screen), 'RPE ana etiketi çeviriden gelmiyor');
+  assert(/t\('rpe\.description'\)/.test(screen), 'RPE açıklaması Active Workout’ta görünmüyor');
+  // Ham "RPE {" ön eki artık kullanıcıya gösterilmez.
+  assert(!/RPE \{formatDecimal/.test(screen), 'çıplak "RPE n" hâlâ gösteriliyor');
+});
+
+check('L5. TR/EN anahtarları eksiksiz (rpe.label/description/historyNote/bands + details)', () => {
+  for (const src of [tr, en]) {
+    assert(/rpe: \{/.test(src), 'rpe ad alanı yok');
+    for (const key of ['label:', 'description:', 'historyNote:', 'bands: {']) {
+      assert(src.includes(key), `rpe.${key} eksik`);
+    }
+    for (const band of ['rest:', 'veryEasy:', 'easy:', 'moderate:', 'hard:', 'veryHard:', 'max:']) {
+      assert(src.includes(band), `bant eksik: ${band}`);
+    }
+  }
+  assert(/details: 'Set ayrıntıları'/.test(tr), 'TR "Set ayrıntıları" değil');
+  assert(/details: 'Set details'/.test(en), 'EN "Set details" değil');
+  assert(/label: 'Algılanan zorluk \(RPE\)'/.test(tr), 'TR ana etiket yanlış');
+  assert(/label: 'Perceived effort \(RPE\)'/.test(en), 'EN ana etiket yanlış');
+});
+
+check('L6. RPE 0–10 ve isteğe bağlılık sözleşmesi korunur (sabitler)', () => {
+  const core = source('utils/activity-input.ts');
+  assert(/export const RPE_MIN = 0;/.test(core), 'RPE_MIN 0 değil');
+  assert(/export const RPE_MAX = 10;/.test(core), 'RPE_MAX 10 değil');
+  // İsteğe bağlılık: boş girdi geçerli (undefined) kalır.
+  assertDeepEqual(parseOptionalRpe(''), { ok: true, value: undefined }, 'boş RPE isteğe bağlı');
 });
 
 // ---------------------------------------------------------------------------
