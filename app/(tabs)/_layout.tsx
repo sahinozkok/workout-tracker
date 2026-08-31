@@ -11,6 +11,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { withAlpha } from '@/constants/color-presets';
 import {
   MotionDuration,
   MotionEasing,
@@ -33,12 +34,19 @@ const TAB_ICON_SIZE = 24;
 
 /**
  * SEÇİLİ Rosea'yı, BOYUTUNU DEĞİŞTİRMEDEN optik olarak kalınlaştıran katman
- * ofsetleri (pt). Faux-bold: aynı görselin merkez kopyası + dört yönde ~0.5 pt
+ * ofsetleri (pt). Faux-bold: aynı görselin merkez kopyası + dört yönde ~0.35 pt
  * ötelenmiş simetrik kopyaları aynı kutuda üst üste çizilir. Ofset bilinçli
- * olarak küçük; daha büyüğü Rosea'yı bulanıklaştırır. Yalnız seçili sekmede
- * kullanılır ve tek ikon olduğu için katman sayısı beşle sınırlıdır.
+ * olarak çok küçük; daha büyüğü Rosea'yı bulanıklaştırır ve fazla parlatır.
+ * Yalnız seçili sekmede kullanılır ve tek ikon olduğu için katman sayısı beşle
+ * sınırlıdır.
  */
-const COACH_THICKEN_OFFSET = 0.5;
+const COACH_THICKEN_OFFSET = 0.35;
+/**
+ * Çevre kalınlaştırma katmanlarının opaklığı. Merkez katman aktif rengi TAM
+ * kullanır; dört çevre katmanı yalnız yumuşak optik kalınlık için düşük alfayla
+ * çizilir, böylece sembol floresan gibi aşırı parlamaz.
+ */
+const COACH_EDGE_ALPHA = 0.22;
 const COACH_LAYER_OFFSETS = [
   { x: 0, y: 0 },
   { x: -COACH_THICKEN_OFFSET, y: 0 },
@@ -163,24 +171,32 @@ export default function TabLayout() {
                 /**
                  * SEÇİLİ Rosea. Arka plan, daire, pill veya madalyon YOK. Aynı
                  * Rosea görseli, seçilmemiş hâlle BİREBİR aynı 30×42 kutu içinde
-                 * merkez + dört yönde ~0.5 pt ofsetli kopyalarla üst üste çizilip
+                 * merkez + dört yönde ~0.35 pt ofsetli kopyalarla üst üste çizilip
                  * çizgi optik olarak KALINLAŞTIRILIR (faux-bold). Rosea büyümez,
-                 * yer değiştirmez, kırpılma biçimi (`cover`) ve tint rengi (aktif
-                 * `color`) korunur; katmanlar aynı kutuda absolute yerleşir.
+                 * yer değiştirmez ve kırpılma biçimi (`cover`) korunur.
+                 *
+                 * TINT AYRIMI: yalnız MERKEZ katman aktif rengi (`color`) TAM
+                 * kullanır — diğer seçili ikonlarla aynı renk. Dört ÇEVRE katmanı
+                 * `withAlpha(color, COACH_EDGE_ALPHA)` ile düşük alfada çizilir;
+                 * böylece yalnız yumuşak bir kalınlık verir, sembolü floresan
+                 * gibi parlatmaz. Katmanlar aynı kutuda absolute yerleşir.
                  */
                 <View style={{ height: (size ?? 24) + 6, width: (size ?? 24) + 18 }}>
-                  {COACH_LAYER_OFFSETS.map((offset) => (
-                    <Image
-                      contentFit="cover"
-                      key={`${offset.x}:${offset.y}`}
-                      source={coachMascotSource}
-                      style={[
-                        StyleSheet.absoluteFill,
-                        { transform: [{ translateX: offset.x }, { translateY: offset.y }] },
-                      ]}
-                      tintColor={color}
-                    />
-                  ))}
+                  {COACH_LAYER_OFFSETS.map((offset) => {
+                    const isCenter = offset.x === 0 && offset.y === 0;
+                    return (
+                      <Image
+                        contentFit="cover"
+                        key={`${offset.x}:${offset.y}`}
+                        source={coachMascotSource}
+                        style={[
+                          StyleSheet.absoluteFill,
+                          { transform: [{ translateX: offset.x }, { translateY: offset.y }] },
+                        ]}
+                        tintColor={isCenter ? color : withAlpha(color, COACH_EDGE_ALPHA)}
+                      />
+                    );
+                  })}
                 </View>
               ) : (
                 /* SEÇİLMEMİŞ Rosea görünümü MEVCUT hâliyle korunur. */

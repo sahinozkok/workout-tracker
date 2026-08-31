@@ -136,11 +136,10 @@ check('C3. SEÇİLMEMİŞ Rosea mevcut hâliyle korunuyor (cover + colors.icon)'
   assert(/tintColor=\{colors\.icon\}/.test(coachUnfocused), 'seçilmemiş mascot tinti colors.icon değil');
 });
 
-check('C4. SEÇİLİ Rosea: aktif renkle birden çok katman, arka plansız faux-bold', () => {
-  // Aktif renkle BİRDEN ÇOK aynı asset katmanı: ofset dizisi üzerinde map.
+check('C4. SEÇİLİ Rosea: merkez tam renk, çevre düşük alfa; arka plansız faux-bold', () => {
+  // BİRDEN ÇOK aynı asset katmanı: ofset dizisi üzerinde map.
   assert(/COACH_LAYER_OFFSETS\.map\(/.test(coachFocused), 'seçili Rosea katmanları ofset dizisi üzerinden çizilmiyor');
   assert(/source=\{coachMascotSource\}/.test(coachFocused), 'seçili katman aynı mascot asset’ini kullanmıyor');
-  assert(/tintColor=\{color\}/.test(coachFocused), 'seçili katman aktif sekme rengini (color) kullanmıyor');
   assert(/contentFit="cover"/.test(coachFocused), 'seçili katman kırpılma biçimini (cover) korumuyor');
   assert(/StyleSheet\.absoluteFill/.test(coachFocused), 'katmanlar aynı kutuda absolute yerleşmiyor');
   assert(
@@ -148,11 +147,28 @@ check('C4. SEÇİLİ Rosea: aktif renkle birden çok katman, arka plansız faux-
     'katman ofsetleri transform ile uygulanmıyor',
   );
 
-  // Ofset küçük: 0.5–0.75 pt aralığında (daha fazlası bulanıklaştırır).
+  // TINT AYRIMI: yalnız MERKEZ katman tam `color`; dört ÇEVRE katmanı düşük alfa.
+  assert(/const isCenter = offset\.x === 0 && offset\.y === 0/.test(coachFocused), 'merkez/çevre katman ayrımı yok');
+  assert(
+    /tintColor=\{isCenter \? color : withAlpha\(color, COACH_EDGE_ALPHA\)\}/.test(coachFocused),
+    'merkez tam color / çevre withAlpha(color, düşük) ayrımı yok',
+  );
+  // Eski "tüm katmanlar tintColor={color}" sözleşmesi KALMAMALI (floresan riski).
+  assert(!/tintColor=\{color\}/.test(coachFocused), 'katmanların tümü hâlâ tam color kullanıyor');
+  // withAlpha MEVCUT yardımcıdan alınmalı.
+  assert(/import \{ withAlpha \} from '@\/constants\/color-presets'/.test(layout), 'withAlpha color-presets’ten import edilmemiş');
+
+  // Çevre alfası düşük ve yumuşak: ~0.20–0.25 aralığı (öneri 0.22).
+  const alphaMatch = /const COACH_EDGE_ALPHA = (0\.\d+);/.exec(layout);
+  assert(alphaMatch, 'COACH_EDGE_ALPHA tanımlı değil');
+  const alpha = Number(alphaMatch[1]);
+  assert(alpha >= 0.2 && alpha <= 0.25, `çevre alfası ~0.20–0.25 değil: ${alpha}`);
+
+  // Ofset çok küçük: ~0.35 pt (0.3–0.4). Daha fazlası bulanıklaştırır/parlatır.
   const offsetMatch = /const COACH_THICKEN_OFFSET = (0\.\d+);/.exec(layout);
   assert(offsetMatch, 'COACH_THICKEN_OFFSET tanımlı değil');
   const magnitude = Number(offsetMatch[1]);
-  assert(magnitude >= 0.5 && magnitude <= 0.75, `ofset 0.5–0.75 aralığında değil: ${magnitude}`);
+  assert(magnitude >= 0.3 && magnitude <= 0.4, `ofset ~0.35 (0.3–0.4) değil: ${magnitude}`);
 
   // Katmanlar: merkez + dört yön (beş) ve SİMETRİK.
   const arrayStart = layout.indexOf('const COACH_LAYER_OFFSETS = [');
