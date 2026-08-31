@@ -19,6 +19,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { MotionPressable } from '@/components/motion-pressable';
+import { MotionCollapsible, MotionSwap } from '@/components/motion-section';
 import { ProgramDetailScroll } from '@/components/program-detail-scroll';
 import ProgramExerciseList from '@/components/program-exercise-list';
 import { WorkoutVisualPicker } from '@/components/workout-visual-picker';
@@ -317,6 +318,24 @@ export default function WorkoutDayScreen() {
       ? classifyRpe(strengthRpeValue)
       : undefined;
   const activityRpeBand = describeRpeInput(activityRpeInput);
+
+  /**
+   * KARDİYO KONTROL AŞAMASI — geçişleri açıklayan TEK kararlı anahtar.
+   *
+   *   * `idle`      : timer yok, bitirme formu kapalı  → Başlat düğmesi
+   *   * `tracking`  : timer var, bitirme formu kapalı  → Duraklat/Devam + Bitir
+   *   * `finishing` : bitirme formu açık               → mesafe/RPE onayı
+   *
+   * `activityTimer.status` (running/paused) BİLİNÇLİ olarak anahtara GİRMEZ:
+   * duraklat/devam et yalnız etiket değiştirir, timer'ı veya bitirme formu
+   * girişlerini remount ETMEZ. Kronometre değeri bu anahtarın DIŞINDADIR;
+   * her saniye güncellenen sayı yeniden giriş animasyonu almaz.
+   */
+  const activityPhase: 'idle' | 'tracking' | 'finishing' = isFinishingActivity
+    ? 'finishing'
+    : activityTimer
+      ? 'tracking'
+      : 'idle';
 
   // Program sırasındaki ilk tamamlanmamış egzersiz.
   const currentExerciseId = dayExercises.find(
@@ -1858,219 +1877,261 @@ export default function WorkoutDayScreen() {
                             ? t('day.activityPausedState')
                             : t('day.activityRunningState')}
                   </Text>
-                  {activityProgress?.status === 'paused' && !activityProgress.isTargetReached && (
-                    <Text style={styles.activityTimerState}>{t('day.activityPausedState')}</Text>
-                  )}
+                  {/*
+                    Duraklatıldı satırı MotionCollapsible ile girer/çıkar; böylece
+                    kronometrenin ALTINDAKİ içerik ansızın zıplamaz. Kronometre
+                    DEĞERİ bu sarmalın DIŞINDA kaldığı için animasyon almaz.
+                  */}
+                  {activityProgress?.status === 'paused' && !activityProgress.isTargetReached ? (
+                    <MotionCollapsible>
+                      <Text style={styles.activityTimerState}>{t('day.activityPausedState')}</Text>
+                    </MotionCollapsible>
+                  ) : null}
                 </View>
-
-                {/* Kayıtlı ölçüm özeti — yeni ölçüm başlamadan önce görünür. */}
-                {!activityTimer && existingActivityRecord && (
-                  <Text style={styles.activityHint}>
-                    {t('day.savedActivitySummary')} ·{' '}
-                    {formatActivityTimerValue(existingActivityRecord.durationSeconds)}
-                    {existingActivityRecord.distanceMeters === undefined
-                      ? ''
-                      : ` · ${formatMetersAsKilometers(existingActivityRecord.distanceMeters)} ${t('day.kmUnit')}`}
-                  </Text>
-                )}
 
                 {/*
-                  BİTİRME ADIMI — yeni modal yığını YOK; aynı panelin içinde
-                  compact onay. Ölçülen süre yukarıdaki kronometrede görünür ve
-                  DEĞİŞTİRİLEMEZ; burada yalnız mesafe ve RPE girilir.
+                  KONTROL AŞAMASI — tek sakin MotionSwap.
+
+                  Aşama anahtarı YALNIZ `activityPhase` (idle/tracking/finishing);
+                  `activityTimer.status` (running/paused) anahtara GİRMEZ. Böylece
+                  Duraklat/Devam Et timer'ı veya bitirme formu girişlerini remount
+                  ETMEZ: TextInput odağı ve değerleri (state'te tutulur) korunur.
+                  Kronometre bu sınırın DIŞINDADIR; değeri animasyon almaz. Reduce
+                  Motion `MotionSwap`/`MotionCollapsible` içinde otomatik çalışır,
+                  burada yeni kapı kurulmaz.
+
+                  Küçük koşullu satırlar (hata/RPE bandı/tempo) girip çıkarken alt
+                  alanlar zıplamasın diye `MotionCollapsible` kullanır. Aynı bölge
+                  AYRICA `MotionSection` ile sarılmaz (çift animasyon yok).
                 */}
-                {isFinishingActivity && (
-                  <>
-                <View style={styles.activityFieldRow}>
-                  <Text style={styles.activityFieldLabel}>
-                    {t('day.actualDistance')}
-                    {activeCardioExercise.trackingMode === 'duration'
-                      ? ` · ${t('day.optional')}`
-                      : ''}
-                  </Text>
-                  <TextInput
-                    accessibilityHint={t('day.kmUnit')}
-                    accessibilityLabel={t('day.actualDistance')}
-                    editable={canCompleteSets && !isActivityPending}
-                    keyboardType="decimal-pad"
-                    maxLength={7}
-                    onChangeText={setActivityDistanceInput}
-                    placeholder="—"
-                    placeholderTextColor={colors.textTertiary}
-                    selectTextOnFocus
-                    style={styles.activityFieldInput}
-                    value={activityDistanceInput}
-                  />
-                  <Text style={styles.activityFieldUnit}>{t('day.kmUnit')}</Text>
-                </View>
-
-                <View style={styles.activityFieldRow}>
-                  <Text style={styles.activityFieldLabel}>
-                    {t('rpe.label')} · {t('day.optional')}
-                  </Text>
-                  <TextInput
-                    accessibilityHint={t('rpe.description')}
-                    accessibilityLabel={`${t('rpe.label')}, ${t('day.optional')}`}
-                    editable={canCompleteSets && !isActivityPending}
-                    keyboardType="decimal-pad"
-                    maxLength={4}
-                    onChangeText={setActivityRpeInput}
-                    placeholder="—"
-                    placeholderTextColor={colors.textTertiary}
-                    selectTextOnFocus
-                    style={styles.activityFieldInput}
-                    value={activityRpeInput}
-                  />
-                  <Text style={styles.activityFieldUnit} />
-                </View>
-
-                {activityRpeBand && (
-                  <Text style={styles.activityRpeBand}>{t(rpeBandLabelKey(activityRpeBand))}</Text>
-                )}
-
-                <Text style={styles.activityHint}>{t('rpe.description')}</Text>
-
-                {/* Tempo TÜRETİLİR; hiçbir yerde saklanmaz. */}
-                {activePaceSecondsPerKm !== undefined && (
-                  <Text style={styles.activityPace}>
-                    {t('day.paceLabel')} · {formatDuration(Math.round(activePaceSecondsPerKm))}{' '}
-                    {t('day.paceUnit')}
-                  </Text>
-                )}
-
-                {activityError && <Text style={styles.validationError}>{activityError}</Text>}
-
-                <MotionPressable
-                  accessibilityLabel={t('day.activityDoneLabel', { name: activeCardioExerciseName })}
-                  accessibilityRole="button"
-                  accessibilityState={{ busy: isActivityPending, disabled: isActivityDisabled }}
-                  disabled={isActivityDisabled}
-                  onPress={() => void submitActivity()}
-                  style={[
-                    styles.completeSetPill,
-                    isActivityDisabled && styles.completeSetPillDisabled,
-                  ]}>
-                  {isActivityPending ? (
-                    <ActivityIndicator color={colors.background} size="small" />
-                  ) : (
-                    <Text style={styles.completeSetPillText}>
-                      {canCompleteSets
-                        ? t('day.saveAndFinishActivity')
-                        : !workoutSession
-                          ? t('day.startFirst')
-                          : workoutSession.status === 'paused'
-                            ? t('day.workoutPaused')
-                            : t('day.availableOnScheduledDay')}
+                <MotionSwap
+                  pace="calm"
+                  style={styles.activityPhaseSwap}
+                  transitionKey={activityPhase}>
+                  {/* Kayıtlı ölçüm özeti — yeni ölçüm başlamadan önce görünür. */}
+                  {!activityTimer && existingActivityRecord && (
+                    <Text style={styles.activityHint}>
+                      {t('day.savedActivitySummary')} ·{' '}
+                      {formatActivityTimerValue(existingActivityRecord.durationSeconds)}
+                      {existingActivityRecord.distanceMeters === undefined
+                        ? ''
+                        : ` · ${formatMetersAsKilometers(existingActivityRecord.distanceMeters)} ${t('day.kmUnit')}`}
                     </Text>
                   )}
-                </MotionPressable>
 
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={isActivityPending}
-                  onPress={() => setIsFinishingActivity(false)}
-                  style={({ pressed }) => [styles.activitySecondaryButton, pressed && styles.pressed]}>
-                  <Text style={styles.activitySecondaryText}>{t('day.backToWorkout')}</Text>
-                </Pressable>
-                  </>
-                )}
+                  {/*
+                    BİTİRME ADIMI — yeni modal yığını YOK; aynı panelin içinde
+                    compact onay. Ölçülen süre yukarıdaki kronometrede görünür ve
+                    DEĞİŞTİRİLEMEZ; burada yalnız mesafe ve RPE girilir. Alan
+                    değerleri state'te tutulduğu için aşama değişiminde kaybolmaz.
+                  */}
+                  {isFinishingActivity && (
+                    <>
+                      <View style={styles.activityFieldRow}>
+                        <Text style={styles.activityFieldLabel}>
+                          {t('day.actualDistance')}
+                          {activeCardioExercise.trackingMode === 'duration'
+                            ? ` · ${t('day.optional')}`
+                            : ''}
+                        </Text>
+                        <TextInput
+                          accessibilityHint={t('day.kmUnit')}
+                          accessibilityLabel={t('day.actualDistance')}
+                          editable={canCompleteSets && !isActivityPending}
+                          keyboardType="decimal-pad"
+                          maxLength={7}
+                          onChangeText={setActivityDistanceInput}
+                          placeholder="—"
+                          placeholderTextColor={colors.textTertiary}
+                          selectTextOnFocus
+                          style={styles.activityFieldInput}
+                          value={activityDistanceInput}
+                        />
+                        <Text style={styles.activityFieldUnit}>{t('day.kmUnit')}</Text>
+                      </View>
 
-                {/*
-                  KRONOMETRE KONTROLLERİ — bitirme adımında gizlenir.
-                  `Duraklat`/`Devam et` ikincil çerçeveli, `Bitir` birincil dolu
-                  düğmedir; ikisi görsel olarak net ayrılır. Yıkıcı renk YALNIZ
-                  ölçüm iptalinde kullanılır.
-                */}
-                {!isFinishingActivity && (
-                  <>
-                    {activityError && <Text style={styles.validationError}>{activityError}</Text>}
+                      <View style={styles.activityFieldRow}>
+                        <Text style={styles.activityFieldLabel}>
+                          {t('rpe.label')} · {t('day.optional')}
+                        </Text>
+                        <TextInput
+                          accessibilityHint={t('rpe.description')}
+                          accessibilityLabel={`${t('rpe.label')}, ${t('day.optional')}`}
+                          editable={canCompleteSets && !isActivityPending}
+                          keyboardType="decimal-pad"
+                          maxLength={4}
+                          onChangeText={setActivityRpeInput}
+                          placeholder="—"
+                          placeholderTextColor={colors.textTertiary}
+                          selectTextOnFocus
+                          style={styles.activityFieldInput}
+                          value={activityRpeInput}
+                        />
+                        <Text style={styles.activityFieldUnit} />
+                      </View>
 
-                    {!activityTimer ? (
+                      {activityRpeBand && (
+                        <MotionCollapsible>
+                          <Text style={styles.activityRpeBand}>
+                            {t(rpeBandLabelKey(activityRpeBand))}
+                          </Text>
+                        </MotionCollapsible>
+                      )}
+
+                      <Text style={styles.activityHint}>{t('rpe.description')}</Text>
+
+                      {/* Tempo TÜRETİLİR; hiçbir yerde saklanmaz. */}
+                      {activePaceSecondsPerKm !== undefined && (
+                        <MotionCollapsible>
+                          <Text style={styles.activityPace}>
+                            {t('day.paceLabel')} · {formatDuration(Math.round(activePaceSecondsPerKm))}{' '}
+                            {t('day.paceUnit')}
+                          </Text>
+                        </MotionCollapsible>
+                      )}
+
+                      {activityError && (
+                        <MotionCollapsible>
+                          <Text style={styles.validationError}>{activityError}</Text>
+                        </MotionCollapsible>
+                      )}
+
                       <MotionPressable
                         accessibilityLabel={t('day.activityDoneLabel', { name: activeCardioExerciseName })}
                         accessibilityRole="button"
-                        accessibilityState={{ disabled: isActivityDisabled }}
+                        accessibilityState={{ busy: isActivityPending, disabled: isActivityDisabled }}
                         disabled={isActivityDisabled}
-                        onPress={() => void startActivityMeasurement()}
+                        onPress={() => void submitActivity()}
                         style={[
                           styles.completeSetPill,
                           isActivityDisabled && styles.completeSetPillDisabled,
                         ]}>
-                        <Text style={styles.completeSetPillText}>
-                          {canCompleteSets
-                            ? existingActivityRecord
-                              ? t('day.remeasureActivity')
-                              : t('day.startActivity')
-                            : !workoutSession
-                              ? t('day.startFirst')
-                              : workoutSession.status === 'paused'
-                                ? t('day.workoutPaused')
-                                : t('day.availableOnScheduledDay')}
-                        </Text>
+                        {isActivityPending ? (
+                          <ActivityIndicator color={colors.background} size="small" />
+                        ) : (
+                          <Text style={styles.completeSetPillText}>
+                            {canCompleteSets
+                              ? t('day.saveAndFinishActivity')
+                              : !workoutSession
+                                ? t('day.startFirst')
+                                : workoutSession.status === 'paused'
+                                  ? t('day.workoutPaused')
+                                  : t('day.availableOnScheduledDay')}
+                          </Text>
+                        )}
                       </MotionPressable>
-                    ) : (
-                      <View style={styles.activityControls}>
-                        <Pressable
-                          accessibilityRole="button"
-                          disabled={isActivityPending}
-                          onPress={() =>
-                            void (activityTimer.status === 'running'
-                              ? pauseActivityMeasurement()
-                              : resumeActivityMeasurement())
-                          }
-                          style={({ pressed }) => [
-                            styles.activitySecondaryButton,
-                            pressed && styles.pressed,
-                          ]}>
-                          <Text
-                            adjustsFontSizeToFit
-                            minimumFontScale={0.9}
-                            numberOfLines={1}
-                            style={[styles.activitySecondaryText, styles.activityButtonText]}>
-                            {activityTimer.status === 'running'
-                              ? t('day.pauseActivity')
-                              : t('day.resumeActivity')}
-                          </Text>
-                        </Pressable>
-                        <MotionPressable
-                          accessibilityRole="button"
-                          disabled={isActivityPending}
-                          onPress={() => void finishActivityMeasurement()}
-                          style={[styles.completeSetPill, styles.activityPrimaryButton]}>
-                          <Text
-                            adjustsFontSizeToFit
-                            minimumFontScale={0.9}
-                            numberOfLines={1}
-                            style={[styles.completeSetPillText, styles.activityButtonText]}>
-                            {t('day.finishActivity')}
-                          </Text>
-                        </MotionPressable>
-                      </View>
-                    )}
 
-                    {activityTimer && (
                       <Pressable
-                        accessibilityLabel={t('day.cancelMeasurement')}
                         accessibilityRole="button"
                         disabled={isActivityPending}
-                        onPress={confirmCancelMeasurement}
-                        style={({ pressed }) => [styles.clearActivityButton, pressed && styles.pressed]}>
-                        <Text style={styles.clearActivityText}>{t('day.cancelMeasurement')}</Text>
+                        onPress={() => setIsFinishingActivity(false)}
+                        style={({ pressed }) => [styles.activitySecondaryButton, pressed && styles.pressed]}>
+                        <Text style={styles.activitySecondaryText}>{t('day.backToWorkout')}</Text>
                       </Pressable>
-                    )}
-                  </>
-                )}
+                    </>
+                  )}
 
-                {existingActivityRecord && !activityTimer && !isFinishingActivity && (
-                  <Pressable
-                    accessibilityLabel={t('day.clearActivity')}
-                    accessibilityRole="button"
-                    disabled={isActivityPending}
-                    onPress={confirmClearActivity}
-                    style={({ pressed }) => [styles.clearActivityButton, pressed && styles.pressed]}>
-                    <Text style={styles.clearActivityText}>{t('day.clearActivity')}</Text>
-                  </Pressable>
-                )}
+                  {/*
+                    KRONOMETRE KONTROLLERİ — bitirme adımında gizlenir.
+                    `Duraklat`/`Devam et` ikincil çerçeveli, `Bitir` birincil dolu
+                    düğme; ikisi görsel olarak net ayrılır. Duraklat/Devam Et yalnız
+                    etiket değiştirir (aşama anahtarı değişmez) → remount YOK.
+                  */}
+                  {!isFinishingActivity && (
+                    <>
+                      {activityError && (
+                        <MotionCollapsible>
+                          <Text style={styles.validationError}>{activityError}</Text>
+                        </MotionCollapsible>
+                      )}
+
+                      {!activityTimer ? (
+                        <MotionPressable
+                          accessibilityLabel={t('day.activityDoneLabel', { name: activeCardioExerciseName })}
+                          accessibilityRole="button"
+                          accessibilityState={{ disabled: isActivityDisabled }}
+                          disabled={isActivityDisabled}
+                          onPress={() => void startActivityMeasurement()}
+                          style={[
+                            styles.completeSetPill,
+                            isActivityDisabled && styles.completeSetPillDisabled,
+                          ]}>
+                          <Text style={styles.completeSetPillText}>
+                            {canCompleteSets
+                              ? existingActivityRecord
+                                ? t('day.remeasureActivity')
+                                : t('day.startActivity')
+                              : !workoutSession
+                                ? t('day.startFirst')
+                                : workoutSession.status === 'paused'
+                                  ? t('day.workoutPaused')
+                                  : t('day.availableOnScheduledDay')}
+                          </Text>
+                        </MotionPressable>
+                      ) : (
+                        <View style={styles.activityControls}>
+                          <Pressable
+                            accessibilityRole="button"
+                            disabled={isActivityPending}
+                            onPress={() =>
+                              void (activityTimer.status === 'running'
+                                ? pauseActivityMeasurement()
+                                : resumeActivityMeasurement())
+                            }
+                            style={({ pressed }) => [
+                              styles.activitySecondaryButton,
+                              pressed && styles.pressed,
+                            ]}>
+                            <Text
+                              adjustsFontSizeToFit
+                              minimumFontScale={0.9}
+                              numberOfLines={1}
+                              style={[styles.activitySecondaryText, styles.activityButtonText]}>
+                              {activityTimer.status === 'running'
+                                ? t('day.pauseActivity')
+                                : t('day.resumeActivity')}
+                            </Text>
+                          </Pressable>
+                          <MotionPressable
+                            accessibilityRole="button"
+                            disabled={isActivityPending}
+                            onPress={() => void finishActivityMeasurement()}
+                            style={[styles.completeSetPill, styles.activityPrimaryButton]}>
+                            <Text
+                              adjustsFontSizeToFit
+                              minimumFontScale={0.9}
+                              numberOfLines={1}
+                              style={[styles.completeSetPillText, styles.activityButtonText]}>
+                              {t('day.finishActivity')}
+                            </Text>
+                          </MotionPressable>
+                        </View>
+                      )}
+
+                      {activityTimer && (
+                        <Pressable
+                          accessibilityLabel={t('day.cancelMeasurement')}
+                          accessibilityRole="button"
+                          disabled={isActivityPending}
+                          onPress={confirmCancelMeasurement}
+                          style={({ pressed }) => [styles.clearActivityButton, pressed && styles.pressed]}>
+                          <Text style={styles.clearActivityText}>{t('day.cancelMeasurement')}</Text>
+                        </Pressable>
+                      )}
+                    </>
+                  )}
+
+                  {existingActivityRecord && !activityTimer && !isFinishingActivity && (
+                    <Pressable
+                      accessibilityLabel={t('day.clearActivity')}
+                      accessibilityRole="button"
+                      disabled={isActivityPending}
+                      onPress={confirmClearActivity}
+                      style={({ pressed }) => [styles.clearActivityButton, pressed && styles.pressed]}>
+                      <Text style={styles.clearActivityText}>{t('day.clearActivity')}</Text>
+                    </Pressable>
+                  )}
+                </MotionSwap>
               </View>
             )}
 
@@ -2684,6 +2745,15 @@ type FeatureColors = {
 function createStyles(colors: ThemeColors, feature: FeatureColors) {
   return StyleSheet.create({
     activeSetBlock: { alignItems: 'center', gap: 10, paddingTop: 18 },
+    /**
+     * Kardiyo kontrol aşamasının tek geçiş sınırı — YALNIZ yerleşim. MotionSwap
+     * bu stili kendi Animated.View'ine uygular; aşama içerikleri onun doğrudan
+     * flex çocuklarıdır. `alignItems: 'center'` + `alignSelf: 'stretch'` panelin
+     * tam genişlik/ortalama davranışını (`activeSetBlock` ile aynı) korur; `gap:
+     * 10` mevcut panel ritmini birebir sürdürür, böylece düğme aralıkları ve son
+     * düzeltilen yatay hizalama değişmez.
+     */
+    activityPhaseSwap: { alignItems: 'center', alignSelf: 'stretch', gap: 10 },
     activeSetLabel: { color: feature.activeSecondary, fontSize: 12, fontWeight: '600', letterSpacing: 0.6 },
     activeExerciseName: { color: colors.text, fontSize: 24, fontWeight: '600', textAlign: 'center' },
     activeValues: { alignItems: 'baseline', flexDirection: 'row', gap: 20, marginTop: 6 },
