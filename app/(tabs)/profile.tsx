@@ -118,8 +118,8 @@ export default function ProfileScreen() {
   const [uploadingKind, setUploadingKind] = useState<ProfileImageKind>();
   const scrollRef = useRef<ScrollView>(null);
   const scrollYRef = useRef(0);
-  const editorAnchorYRef = useRef(0);
-  const editorAnchorHeightRef = useRef(0);
+  const editorHeightRef = useRef(0);
+  const scrollContentHeightRef = useRef(0);
   const scrollViewportHeightRef = useRef(0);
   const closeEditorTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // Yüklenmiş ama henüz "Profili kaydet" ile kalıcılaşmamış dosyalar.
@@ -175,10 +175,12 @@ export default function ProfileScreen() {
     [],
   );
 
-  const handleEditorAnchorLayout = useCallback((event: LayoutChangeEvent) => {
-    const { height, y } = event.nativeEvent.layout;
-    editorAnchorYRef.current = y;
-    editorAnchorHeightRef.current = height;
+  const handleEditorLayout = useCallback((event: LayoutChangeEvent) => {
+    editorHeightRef.current = event.nativeEvent.layout.height;
+  }, []);
+
+  const handleScrollContentSizeChange = useCallback((_width: number, height: number) => {
+    scrollContentHeightRef.current = height;
   }, []);
 
   const handleScrollLayout = useCallback((event: LayoutChangeEvent) => {
@@ -189,16 +191,23 @@ export default function ProfileScreen() {
     (afterClose?: () => void) => {
       if (closeEditorTimerRef.current) clearTimeout(closeEditorTimerRef.current);
 
-      // Form kaldırılınca sayfanın erişebileceği en alt kaydırma noktası,
-      // Edit/Ayarlar satırının altı + content padding'idir. Önce tam olarak bu
-      // yeni maksimum noktaya kaydırılır; ardından form kaldırılır. Böylece
-      // iOS'un içeriği kısalınca yaptığı ani ScrollView clamp'i görünmez.
-      const collapsedContentHeight =
-        editorAnchorYRef.current + editorAnchorHeightRef.current + PROFILE_CONTENT_BOTTOM_PADDING;
+      // Form artık kimlik alanının hemen altında; altında ilerleme, program,
+      // disiplin ve arkadaşlar bölümleri de bulunur. Bu yüzden eski
+      // "Edit/Ayarlar satırı + alt padding" hesabı geçerli değildir. Açık
+      // içeriğin gerçek yüksekliğinden yalnız form yüksekliği çıkarılır; önce
+      // yeni maksimum noktaya kaydırılıp sonra form kaldırılır. Böylece iOS'un
+      // içerik kısalınca yaptığı ani ScrollView clamp'i görünmez.
+      const collapsedContentHeight = Math.max(
+        0,
+        scrollContentHeightRef.current - editorHeightRef.current,
+      );
       const targetY = Math.max(0, collapsedContentHeight - scrollViewportHeightRef.current);
-      const hasMeasuredViewport = scrollViewportHeightRef.current > 0;
+      const hasMeasuredLayout =
+        scrollViewportHeightRef.current > 0 &&
+        scrollContentHeightRef.current > 0 &&
+        editorHeightRef.current > 0;
       const shouldScrollFirst =
-        !reduceMotion && hasMeasuredViewport && scrollYRef.current > targetY + 8;
+        !reduceMotion && hasMeasuredLayout && scrollYRef.current > targetY + 8;
 
       if (!shouldScrollFirst) {
         setIsProfileEditorOpen(false);
@@ -433,6 +442,7 @@ export default function ProfileScreen() {
           keyboardShouldPersistTaps="handled"
           onLayout={handleScrollLayout}
           onScroll={handleProfileScroll}
+          onContentSizeChange={handleScrollContentSizeChange}
           ref={scrollRef}
           scrollEventThrottle={16}
           showsVerticalScrollIndicator={false}>
@@ -478,6 +488,9 @@ export default function ProfileScreen() {
             </View>
           </View>
 
+          {/* KİMLİK — ekranın kişisel başlığı. Görünen ad ANA başlık; kullanıcı
+              adı ve bio ikincil, rahat okunur. Düzenle/Ayarlar kimliğe yakın,
+              kompakt ve dengeli durur ve düzenleyici hemen altında açılır. */}
           <MotionSection style={styles.profileSummary}>
             <Text numberOfLines={1} style={styles.summaryUsername}>
               @{draft.username || t('profile.usernamePlaceholder')}
@@ -485,121 +498,34 @@ export default function ProfileScreen() {
             <Text numberOfLines={2} style={styles.summaryName}>
               {draft.displayName || t('profile.displayNamePlaceholder')}
             </Text>
+            {draft.bio.trim() ? (
+              <Text style={styles.summaryBio}>{draft.bio.trim()}</Text>
+            ) : null}
 
-            {/* Level rozeti (ömür boyu XP) ve rank rozeti (sezon disiplini)
-                YAN YANA durur ama iki AYRI sistemdir. Rank rozeti yalnızca
-                sunucudan gerçek bir sezon özeti geldiğinde çizilir. */}
-            <View style={styles.levelIdentityRow}>
-              <View style={styles.levelPill}>
-                <Text style={styles.levelPillIcon}>❀</Text>
-                <Text style={styles.levelPillText}>{t('rewards.levelLabel', { level: levelProgress.level })}</Text>
-              </View>
-              {rankSeason && (
-                <RankBadge
-                  onPress={() => router.push('/rank')}
-                  rankId={rankSeason.currentRank}
-                  rp={rankSeason.currentRp}
-                />
-              )}
+            {/* Düzenle mevcut açılır düzenleyiciyi açar; Ayarlar `/settings`e gider. */}
+            <View style={styles.headerActions}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ expanded: isProfileEditorOpen }}
+                onPress={handleProfileEditorToggle}
+                style={({ pressed }) => [styles.editProfileButton, pressed && styles.pressed]}>
+                <Ionicons name="pencil-outline" size={13} color={colors.text} />
+                <Text style={styles.editProfileLabel}>{t('common.edit')}</Text>
+              </Pressable>
+
+              <Pressable
+                accessibilityLabel={t('profile.settings')}
+                accessibilityRole="button"
+                onPress={() => router.push('/settings')}
+                style={({ pressed }) => [styles.settingsButton, pressed && styles.pressed]}>
+                <Ionicons name="settings-outline" size={19} color={colors.textSecondary} />
+              </Pressable>
             </View>
-
-            <View style={styles.levelSection}>
-              <LevelProgressRing
-                accentColor={profileAccent.color}
-                fillColor={profileAccent.color}
-                level={levelProgress.level}
-                message={draft.bio.trim() || undefined}
-                revealToken={levelRevealToken}
-                xpForNextLevel={levelProgress.xpForNextLevel}
-                xpIntoLevel={levelProgress.xpIntoLevel}
-              />
-            </View>
-
-            <ProfileProofStats
-              accentColor={profileAccent.color}
-              dayStreak={disciplineStreak}
-              onDayStreakPress={() => router.push('/streaks')}
-              roseBalance={levelProgress.roseBalance}
-              workoutDays={completedWorkoutDayCount}
-            />
-
-            {/* Sezon rozetleri: rank rozeti YENİDEN ÇİZİLMEZ, yalnızca
-                kozmetik başarı rozetleri gösterilir. Veri zaten mount olan
-                `RankContext`ten gelir; yeni sorgu açılmaz. Hata durumunda
-                vitrin sessizce gizlenir ve profil çalışmaya devam eder. */}
-            <ProfileAchievementShowcase
-              accentColor={profileAccent.color}
-              entries={profileShowcaseEntries}
-              hasError={hasAchievementsError || hasShowcaseSelectionError}
-              /* Seçim hazır olmadan otomatik vitrinmiş gibi YANLIŞ rozet
-                 gösterilmez: hazır olana kadar yükleniyor durumunda kalır. */
-              isLoading={isAchievementsLoading || !isShowcaseSelectionReady}
-              onPress={() => router.push('/rank-showcase')}
-              preserveOrder
-            />
-
           </MotionSection>
-
-          {/* Paylaşılan aktif program: achievement bölümü ile disiplin kartı
-              ARASINDA. Yalnızca opt-in açık ve aktif program varken görünür;
-              aksi hâlde bileşen null döner ve akış aynen korunur. Arkadaşların
-              göreceği sunumun BİREBİR aynısıdır (aynı ortak bileşen). */}
-          {ownSharedProgram && (
-            <MotionSection delay={40} style={styles.sharedProgramSection}>
-              <ProfileSharedProgram accentColor={profileAccent.color} program={ownSharedProgram} />
-            </MotionSection>
-          )}
-
-          {/* Disiplin kartı düzenleme formunun dışındadır; form kapalıyken de
-              görünür ve mevcut kullanıcı için etkileşimlidir. Profil ekranına
-              **özel** bir bileşen kullanılır: Ana Sayfa takvimiyle hiçbir stil
-              veya ölçü paylaşmaz, yalnızca gerçek veri ve tarih hesaplarını
-              paylaşır. Bu sayede karttaki hiçbir değişiklik Ana Sayfa'yı
-              etkileyemez. */}
-          <MotionSection delay={40} style={styles.calendarSection}>
-            <ProfileDisciplineCard accentColor={profileAccent.color} collapsible />
-          </MotionSection>
-
-          {/* Arkadaşlar: yeni sekme eklenmez; kök Stack'teki /friends ekranına gider. */}
-          <MotionSection delay={80}>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => router.push('/friends')}
-            style={({ pressed }) => [styles.friendsRow, pressed && styles.pressed]}>
-            <View style={styles.friendsIcon}>
-              <Ionicons name="people-outline" size={18} color={colors.textSecondary} />
-            </View>
-            <View style={styles.friendsText}>
-              <Text style={styles.friendsTitle}>{t('friends.profileRow')}</Text>
-              <Text style={styles.friendsCaption}>{t('friends.profileRowCaption')}</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
-          </Pressable>
-          </MotionSection>
-
-          <View onLayout={handleEditorAnchorLayout}>
-          <MotionSection delay={120} style={styles.headerActions}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ expanded: isProfileEditorOpen }}
-              onPress={handleProfileEditorToggle}
-              style={({ pressed }) => [styles.editProfileButton, pressed && styles.pressed]}>
-              <Ionicons name="pencil-outline" size={13} color={colors.text} />
-              <Text style={styles.editProfileLabel}>{t('common.edit')}</Text>
-            </Pressable>
-
-            <Pressable
-              accessibilityLabel={t('profile.settings')}
-              accessibilityRole="button"
-              onPress={() => router.push('/settings')}
-              style={({ pressed }) => [styles.settingsButton, pressed && styles.pressed]}>
-              <Ionicons name="settings-outline" size={19} color={colors.textSecondary} />
-            </Pressable>
-          </MotionSection>
-          </View>
 
           {isProfileEditorOpen && (
-            <MotionCollapsible style={styles.editorSection}>
+            <View onLayout={handleEditorLayout}>
+              <MotionCollapsible style={styles.editorSection}>
               <Text style={styles.introText}>{t('profile.intro')}</Text>
 
               <View style={styles.mediaEditorRow}>
@@ -774,8 +700,110 @@ export default function ProfileScreen() {
                 ]}>
                 <Text style={styles.saveButtonText}>{isSaving ? t('common.saving') : t('profile.save')}</Text>
               </MotionPressable>
-            </MotionCollapsible>
+              </MotionCollapsible>
+            </View>
           )}
+
+          <View style={styles.sectionDivider} />
+
+          {/* İLERLEME — level (ömür boyu XP) ve sezon rank AYRI sistemlerdir;
+              yan yana durur ama aynı bilgi tekrar edilmez. Halka level
+              ilerlemesini, rozet sezon rank'ını gösterir. Rank verisi yoksa rozet
+              HİÇ çizilmez (istemci rank uydurmaz). */}
+          <MotionSection delay={40} style={styles.progressSection}>
+            <View style={styles.levelIdentityRow}>
+              <View style={styles.levelPill}>
+                <Text style={styles.levelPillIcon}>❀</Text>
+                <Text style={styles.levelPillText}>{t('rewards.levelLabel', { level: levelProgress.level })}</Text>
+              </View>
+              {rankSeason && (
+                <RankBadge
+                  onPress={() => router.push('/rank')}
+                  rankId={rankSeason.currentRank}
+                  rp={rankSeason.currentRp}
+                />
+              )}
+            </View>
+
+            <View style={styles.levelSection}>
+              <LevelProgressRing
+                accentColor={profileAccent.color}
+                fillColor={profileAccent.color}
+                level={levelProgress.level}
+                revealToken={levelRevealToken}
+                xpForNextLevel={levelProgress.xpForNextLevel}
+                xpIntoLevel={levelProgress.xpIntoLevel}
+              />
+            </View>
+
+            <ProfileProofStats
+              accentColor={profileAccent.color}
+              dayStreak={disciplineStreak}
+              onDayStreakPress={() => router.push('/streaks')}
+              roseBalance={levelProgress.roseBalance}
+              workoutDays={completedWorkoutDayCount}
+            />
+          </MotionSection>
+
+          <View style={styles.sectionDivider} />
+
+          {/* Sezon rozetleri: rank rozeti YENİDEN ÇİZİLMEZ, yalnızca kozmetik
+              başarı rozetleri gösterilir. Veri mount olan `RankContext`ten gelir;
+              yeni sorgu açılmaz. Hata durumunda vitrin sessizce gizlenir ve profil
+              çalışmaya devam eder. */}
+          <MotionSection delay={80} style={styles.showcaseSection}>
+            <ProfileAchievementShowcase
+              accentColor={profileAccent.color}
+              entries={profileShowcaseEntries}
+              hasError={hasAchievementsError || hasShowcaseSelectionError}
+              /* Seçim hazır olmadan otomatik vitrinmiş gibi YANLIŞ rozet
+                 gösterilmez: hazır olana kadar yükleniyor durumunda kalır. */
+              isLoading={isAchievementsLoading || !isShowcaseSelectionReady}
+              onPress={() => router.push('/rank-showcase')}
+              preserveOrder
+            />
+          </MotionSection>
+
+          {/* Paylaşılan aktif program: yalnızca opt-in açık VE aktif program
+              varken görünür; aksi hâlde bileşen hiç render edilmez ve akış aynen
+              korunur. Arkadaşların göreceği sunumun BİREBİR aynısıdır (aynı ortak
+              bileşen; veri/işlev sözleşmesi değişmez). */}
+          {ownSharedProgram && (
+            <>
+              <View style={styles.sectionDivider} />
+              <MotionSection delay={40} style={styles.sharedProgramSection}>
+                <ProfileSharedProgram accentColor={profileAccent.color} program={ownSharedProgram} />
+              </MotionSection>
+            </>
+          )}
+
+          <View style={styles.sectionDivider} />
+          {/* Disiplin: Profil ekranına ÖZEL bileşen; Ana Sayfa takvimiyle hiçbir
+              stil veya ölçü paylaşmaz, yalnızca gerçek veri ve tarih hesaplarını
+              paylaşır. Profil akışının bir bölümü gibi durur, dev bağımsız kart
+              değildir. Açılır/kapanır davranışı korunur. */}
+          <MotionSection delay={40} style={styles.calendarSection}>
+            <ProfileDisciplineCard accentColor={profileAccent.color} collapsible />
+          </MotionSection>
+
+          <View style={styles.sectionDivider} />
+          {/* Arkadaşlar: yeni sekme eklenmez; kök Stack'teki /friends ekranına
+              gider. Profil akışının sonunda sade bir navigasyon satırıdır. */}
+          <MotionSection delay={80} style={styles.friendsSection}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => router.push('/friends')}
+              style={({ pressed }) => [styles.friendsRow, pressed && styles.pressed]}>
+              <View style={styles.friendsIcon}>
+                <Ionicons name="people-outline" size={18} color={colors.textSecondary} />
+              </View>
+              <View style={styles.friendsText}>
+                <Text style={styles.friendsTitle}>{t('friends.profileRow')}</Text>
+                <Text style={styles.friendsCaption}>{t('friends.profileRowCaption')}</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+            </Pressable>
+          </MotionSection>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -898,6 +926,16 @@ function createStyles(
       fontSize: 30,
       fontWeight: '600',
       lineHeight: 36,
+      textAlign: 'center',
+    },
+    // Bio kimlik alanında, görünen adın hemen altında ikincil hiyerarşide ve
+    // rahat okunur. Halka `message` olarak TEKRAR gösterilmez (tek yer).
+    summaryBio: {
+      color: colors.textSecondary,
+      fontSize: 14,
+      lineHeight: 20,
+      marginTop: 2,
+      paddingHorizontal: 8,
       textAlign: 'center',
     },
     levelIdentityRow: {
@@ -1046,7 +1084,6 @@ function createStyles(
       borderWidth: StyleSheet.hairlineWidth,
       flexDirection: 'row',
       gap: 10,
-      marginTop: 24,
       minHeight: 54,
       paddingHorizontal: 12,
       paddingVertical: 9,
@@ -1062,10 +1099,25 @@ function createStyles(
     friendsText: { flex: 1, gap: 1 },
     friendsTitle: { color: colors.text, fontSize: 13, fontWeight: '600' },
     friendsCaption: { color: colors.textSecondary, fontSize: 10, lineHeight: 13 },
-    // Takvim ekranın diğer bölümleriyle aynı yatay payı kullanır; içerik
-    // genişliği kompakt ölçüleri belirler.
-    calendarSection: { marginTop: 8, paddingHorizontal: Layout.screenPadding },
-    sharedProgramSection: { marginTop: 8, paddingHorizontal: Layout.screenPadding },
+    /**
+     * Bölümler büyük yuvarlak kartlar yerine boşluk + ince ayırıcı ile ayrılır.
+     * Ayırıcı tema `separator` rengini ve `StyleSheet.hairlineWidth`i kullanır;
+     * yeni renk/gölge getirmez. Ekran yatay payıyla hizalıdır.
+     */
+    sectionDivider: {
+      backgroundColor: colors.separator,
+      height: StyleSheet.hairlineWidth,
+      marginHorizontal: Layout.screenPadding,
+      marginVertical: 20,
+    },
+    // İlerleme bölümü: level + rank + halka + kanıt şeridi tek, ortalı akışta.
+    progressSection: { alignItems: 'center', paddingHorizontal: Layout.screenPadding },
+    showcaseSection: { paddingHorizontal: Layout.screenPadding },
+    friendsSection: { alignItems: 'center' },
+    // Takvim ve paylaşılan program ekranın diğer bölümleriyle aynı yatay payı
+    // kullanır; içerik genişliği kompakt ölçüleri belirler.
+    calendarSection: { paddingHorizontal: Layout.screenPadding },
+    sharedProgramSection: { paddingHorizontal: Layout.screenPadding },
     pressed: { opacity: 0.6 },
   });
 }
