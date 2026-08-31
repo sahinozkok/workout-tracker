@@ -33,7 +33,7 @@ import { ProfileDisciplineCard } from '@/components/profile-discipline-card';
 import { ProfileSharedProgram } from '@/components/profile-shared-program';
 import { MotionCollapsible, MotionSection } from '@/components/motion-section';
 import { MotionDuration } from '@/constants/motion';
-import { Fonts, Layout, ThemeColors, Type } from '@/constants/theme';
+import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useLanguage } from '@/context/language-context';
 import { useProfile } from '@/context/profile-context';
@@ -482,7 +482,9 @@ export default function ProfileScreen() {
             <Text numberOfLines={1} style={styles.summaryUsername}>
               @{draft.username || t('profile.usernamePlaceholder')}
             </Text>
-            <Text style={styles.summaryName}>{draft.displayName || t('profile.displayNamePlaceholder')}</Text>
+            <Text numberOfLines={2} style={styles.summaryName}>
+              {draft.displayName || t('profile.displayNamePlaceholder')}
+            </Text>
 
             {/* Level rozeti (ömür boyu XP) ve rank rozeti (sezon disiplini)
                 YAN YANA durur ama iki AYRI sistemdir. Rank rozeti yalnızca
@@ -884,21 +886,19 @@ function createStyles(
     },
     avatarImage: { height: '100%', width: '100%' },
     avatarLetter: { color: colors.primarySoftText, fontSize: 28, fontWeight: '500' },
-    profileSummary: { alignItems: 'center', gap: 8, paddingHorizontal: Layout.screenPadding, paddingBottom: 18 },
+    profileSummary: { alignItems: 'center', gap: 6, paddingHorizontal: Layout.screenPadding, paddingBottom: 18 },
     summaryUsername: {
       color: profile.accent,
-      fontSize: 11,
-      fontWeight: '700',
-      letterSpacing: 2.1,
+      fontSize: 13,
+      fontWeight: '500',
       marginTop: -18,
-      textTransform: 'uppercase',
     },
     summaryName: {
       color: isDark ? colors.text : '#42283A',
-      fontFamily: Fonts.serif,
-      fontSize: 38,
-      fontWeight: '700',
-      lineHeight: 44,
+      fontSize: 30,
+      fontWeight: '600',
+      lineHeight: 36,
+      textAlign: 'center',
     },
     levelIdentityRow: {
       alignItems: 'center',
@@ -932,7 +932,7 @@ function createStyles(
       flexDirection: 'row',
       gap: 6,
       justifyContent: 'center',
-      minHeight: 38,
+      minHeight: Layout.minTouchSize,
       paddingHorizontal: 16,
     },
     editProfileLabel: { color: colors.text, fontSize: 12, fontWeight: '600' },
@@ -1058,7 +1058,7 @@ function createStyles(
       justifyContent: 'center',
       width: 34,
     },
-    levelSection: { marginTop: 16, width: '100%' },
+    levelSection: { marginTop: 24, width: '100%' },
     friendsText: { flex: 1, gap: 1 },
     friendsTitle: { color: colors.text, fontSize: 13, fontWeight: '600' },
     friendsCaption: { color: colors.textSecondary, fontSize: 10, lineHeight: 13 },

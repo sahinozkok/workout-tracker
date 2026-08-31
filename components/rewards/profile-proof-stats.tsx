@@ -60,30 +60,31 @@ export function ProfileProofStats({
           flex: 1,
           flexDirection: 'row',
           gap: 8,
+          minHeight: 44,
           minWidth: 0,
         },
         pressed: { opacity: 0.6 },
         iconCircle: {
           alignItems: 'center',
-          borderRadius: 15,
-          height: 30,
+          borderRadius: 16,
+          height: 32,
           justifyContent: 'center',
-          width: 30,
+          width: 32,
         },
-        statCopy: { flex: 1, gap: 1, minWidth: 0 },
+        statCopy: { flex: 1, gap: 2, minWidth: 0 },
         value: {
           color: colors.text,
-          fontSize: 14,
+          fontSize: 17,
           fontVariant: ['tabular-nums'],
-          fontWeight: '700',
-          lineHeight: 16,
+          fontWeight: '600',
+          lineHeight: 20,
         },
         label: {
           color: colors.textSecondary,
-          fontSize: 7.5,
-          fontWeight: '700',
-          letterSpacing: 0.45,
-          lineHeight: 10,
+          fontSize: 10,
+          fontWeight: '600',
+          letterSpacing: 0.4,
+          lineHeight: 13,
           textTransform: 'uppercase',
         },
       }),
@@ -143,11 +144,11 @@ export function ProfileProofStats({
     const content = (
       <>
         <View style={[styles.iconCircle, { backgroundColor }]}>
-          <Ionicons color={color} name={icon} size={14} />
+          <Ionicons color={color} name={icon} size={16} />
         </View>
         <View style={styles.statCopy}>
           <Text style={styles.value}>{value}</Text>
-          <Text adjustsFontSizeToFit minimumFontScale={0.78} numberOfLines={1} style={styles.label}>
+          <Text adjustsFontSizeToFit minimumFontScale={0.85} numberOfLines={1} style={styles.label}>
             {label}
           </Text>
         </View>
