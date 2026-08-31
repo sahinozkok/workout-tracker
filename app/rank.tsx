@@ -8,6 +8,7 @@ import { MotionPressable } from '@/components/motion-pressable';
 import { MotionSection } from '@/components/motion-section';
 import { AchievementDetailSheet } from '@/components/ranks/achievement-detail-sheet';
 import { ACHIEVEMENT_ICONS } from '@/components/ranks/achievement-icons';
+import { AchievementMedallion } from '@/components/ranks/achievement-medallion';
 import { getRankColor, getRankSoftBackground, useRankName } from '@/components/ranks/rank-badge';
 import { RankEmblem } from '@/components/ranks/rank-emblem';
 import { SeasonAchievementKey, toRankRpDisplay } from '@/constants/rank-experience';
@@ -19,7 +20,7 @@ import {
   RANK_RP,
   rpToNextRank,
 } from '@/constants/ranks';
-import { getOnAccentColor } from '@/constants/color-presets';
+import { getOnAccentColor, withAlpha } from '@/constants/color-presets';
 import { Layout, ThemeColors } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { useRanks } from '@/context/rank-context';
@@ -251,6 +252,7 @@ export default function RankScreen() {
               achievements={achievements}
               colors={colors}
               hasError={hasAchievementsError}
+              isDark={isDark}
               isLoading={isAchievementsLoading}
               locale={locale}
               onRetry={() => void loadAchievements()}
@@ -500,6 +502,7 @@ function AchievementsGrid({
   achievements,
   colors,
   hasError,
+  isDark,
   isLoading,
   locale,
   onRetry,
@@ -510,6 +513,7 @@ function AchievementsGrid({
   achievements: SeasonAchievement[];
   colors: ThemeColors;
   hasError: boolean;
+  isDark: boolean;
   isLoading: boolean;
   locale: string;
   onRetry: () => void;
@@ -556,14 +560,46 @@ function AchievementsGrid({
     );
   }
 
+  /**
+   * ÖZET — yalnızca sunum bilgisi.
+   *
+   * Kazanılan sayısı mevcut `isUnlocked` değerlerinden sayılır; yeni başarı
+   * mantığı, eşik veya hedef ÜRETİLMEZ. Genel çizginin dolumu kazanılan/toplam
+   * oranıdır ve güvenli biçimde 0–1 aralığına sınırlıdır.
+   */
+  const earnedCount = achievements.filter((entry) => entry.isUnlocked).length;
+  const totalCount = achievements.length;
+  const summaryRatio = totalCount > 0 ? Math.min(1, Math.max(0, earnedCount / totalCount)) : 0;
+
   return (
     <>
+      <View
+        accessible
+        accessibilityLabel={t('ranks.achievements.summaryA11y', {
+          earned: earnedCount,
+          total: totalCount,
+        })}
+        style={styles.achievementsSummary}>
+        <Text style={styles.achievementsSummaryText}>
+          {t('ranks.achievements.summaryLabel', { earned: earnedCount, total: totalCount })}
+        </Text>
+        <View style={[styles.achievementsSummaryTrack, { backgroundColor: colors.surfaceMuted }]}>
+          <View
+            style={[
+              styles.achievementsSummaryFill,
+              { backgroundColor: accent, width: `${Math.round(summaryRatio * 100)}%` },
+            ]}
+          />
+        </View>
+      </View>
+
       <View style={styles.achievementsGrid}>
         {achievements.map((achievement) => (
           <AchievementBadge
             accent={accent}
             achievement={achievement}
             colors={colors}
+            isDark={isDark}
             key={achievement.key}
             locale={locale}
             onOpen={setOpenKey}
@@ -593,10 +629,20 @@ function AchievementsGrid({
   );
 }
 
+/**
+ * Tek başarı rozet KUTUSU — iki sütunlu koleksiyonun bir hücresi.
+ *
+ * Yatay küçük kart değil, dikey rozet kutusu: üstte ortak medallion, altında en
+ * fazla iki satırlık ad, ardından duruma göre kilitli ilerleme (metin + ince
+ * çizgi) veya açılma tarihi/"Açıldı" metni. Hiçbir ilerleme HESAPLANMAZ; dolum
+ * oranı yalnızca sunucudan gelen `currentProgress` / `targetProgress` ile
+ * bulunur ve güvenli biçimde 0–1 aralığına sınırlanır.
+ */
 function AchievementBadge({
   accent,
   achievement,
   colors,
+  isDark,
   locale,
   onOpen,
   styles,
@@ -605,6 +651,7 @@ function AchievementBadge({
   accent: string;
   achievement: SeasonAchievement;
   colors: ThemeColors;
+  isDark: boolean;
   locale: string;
   onOpen: (key: SeasonAchievementKey) => void;
   styles: ReturnType<typeof createStyles>;
@@ -617,11 +664,9 @@ function AchievementBadge({
     target: targetProgress,
   });
   const unlockedLabel = unlockedAt ? formatUnlockedAt(unlockedAt, locale) : undefined;
-
-  // Alt satır: açılmışsa tarih (yoksa "açıldı"), kilitliyse ilerleme.
-  const detail = isUnlocked
-    ? (unlockedLabel ?? t('ranks.achievements.unlocked'))
-    : progressLabel;
+  const unlockedDetail = unlockedLabel ?? t('ranks.achievements.unlocked');
+  const progressRatio =
+    targetProgress > 0 ? Math.min(1, Math.max(0, currentProgress / targetProgress)) : 0;
 
   return (
     <MotionPressable
@@ -641,20 +686,38 @@ function AchievementBadge({
       }
       accessibilityRole="button"
       onPress={() => onOpen(key)}
-      style={[styles.achievementCard, !isUnlocked && styles.achievementCardLocked]}>
-      <Ionicons
-        color={isUnlocked ? accent : colors.textTertiary}
-        name={ACHIEVEMENT_ICONS[key]}
-        size={20}
-      />
-      <View style={styles.achievementText}>
-        <Text numberOfLines={2} style={[styles.achievementName, !isUnlocked && styles.achievementNameLocked]}>
-          {name}
-        </Text>
+      style={[
+        styles.achievementCard,
+        { borderColor: isUnlocked ? withAlpha(accent, isDark ? 0.5 : 0.35) : colors.separator },
+        !isUnlocked && styles.achievementCardLocked,
+      ]}>
+      <AchievementMedallion accent={accent} icon={ACHIEVEMENT_ICONS[key]} isUnlocked={isUnlocked} />
+
+      <Text
+        numberOfLines={2}
+        style={[styles.achievementName, !isUnlocked && styles.achievementNameLocked]}>
+        {name}
+      </Text>
+
+      {isUnlocked ? (
         <Text numberOfLines={1} style={styles.achievementDetail}>
-          {detail}
+          {unlockedDetail}
         </Text>
-      </View>
+      ) : (
+        <View style={styles.achievementProgress}>
+          <Text numberOfLines={1} style={styles.achievementDetail}>
+            {progressLabel}
+          </Text>
+          <View style={[styles.achievementTrack, { backgroundColor: colors.surfaceMuted }]}>
+            <View
+              style={[
+                styles.achievementFill,
+                { backgroundColor: accent, width: `${Math.round(progressRatio * 100)}%` },
+              ]}
+            />
+          </View>
+        </View>
+      )}
     </MotionPressable>
   );
 }
@@ -905,27 +968,53 @@ function createStyles(colors: ThemeColors) {
     weekRetryText: { fontSize: 13, fontWeight: '600' },
 
     achievementsBlock: { marginTop: 24 },
+
+    /**
+     * Koleksiyon özeti: kazanılan/toplam metni ve ince genel ilerleme çizgisi.
+     * Yalnızca sunum — sayılar `isUnlocked` değerlerinden gelir.
+     */
+    achievementsSummary: { gap: 8, marginBottom: 16 },
+    achievementsSummaryText: { color: colors.textSecondary, fontSize: 13, fontWeight: '600' },
+    achievementsSummaryTrack: { borderRadius: 2, height: 4, overflow: 'hidden', width: '100%' },
+    achievementsSummaryFill: { height: '100%' },
+
     achievementsGrid: {
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 8,
     },
-    /** İki sütun: küçük ekranlarda da taşmaz, metinler sarar. */
+    /**
+     * İki sütunlu rozet KUTUSU — dikey yerleşim: medallion, ad, durum. Genişlik
+     * %48; 375 pt ekranda iki sütun taşmadan sığar ve metinler sarar.
+     */
     achievementCard: {
       alignItems: 'center',
       backgroundColor: colors.card,
       borderRadius: Layout.radiusMedium,
-      flexDirection: 'row',
-      gap: 10,
-      minHeight: 64,
-      padding: 12,
+      borderWidth: StyleSheet.hairlineWidth,
+      gap: 8,
+      minHeight: 128,
+      padding: 14,
       width: '48%',
     },
-    achievementCardLocked: { opacity: 0.72 },
-    achievementText: { flexShrink: 1, gap: 2 },
-    achievementName: { color: colors.text, fontSize: 13, fontWeight: '600' },
+    achievementCardLocked: { opacity: 0.82 },
+    achievementName: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: '600',
+      textAlign: 'center',
+    },
     achievementNameLocked: { color: colors.textSecondary },
-    achievementDetail: { color: colors.textTertiary, fontSize: 11, fontWeight: '400' },
+    achievementDetail: {
+      color: colors.textTertiary,
+      fontSize: 11,
+      fontWeight: '400',
+      textAlign: 'center',
+    },
+    /** Kilitli kutuda ilerleme metni + ince çizgi. */
+    achievementProgress: { alignItems: 'center', alignSelf: 'stretch', gap: 6 },
+    achievementTrack: { borderRadius: 2, height: 4, overflow: 'hidden', width: '100%' },
+    achievementFill: { height: '100%' },
     achievementsState: { alignItems: 'center', gap: 8, justifyContent: 'center', minHeight: 64 },
     achievementsStateText: { color: colors.textSecondary, fontSize: 13, textAlign: 'center' },
     achievementsRetry: { justifyContent: 'center', minHeight: Layout.minTouchSize },

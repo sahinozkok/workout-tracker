@@ -1031,6 +1031,12 @@ export const en: TranslationSchema = {
       retry: 'Try again',
       unlockedA11y: '{name}: unlocked. Progress {current} of {target}.',
       lockedA11y: '{name}: locked. Progress {current} of {target}.',
+      /**
+       * Collection summary — presentation only. Counts come from existing
+       * `isUnlocked` values; no target or threshold is hardcoded here.
+       */
+      summaryLabel: '{earned} of {total} earned',
+      summaryA11y: '{earned} of {total} achievements earned.',
       detail: {
         statusUnlocked: 'Earned',
         statusInProgress: 'In progress',

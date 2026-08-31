@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import { useEffect } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, {
@@ -9,6 +8,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
+import { AchievementMedallion } from '@/components/ranks/achievement-medallion';
 import { ACHIEVEMENT_ICONS } from '@/components/ranks/achievement-icons';
 import { getOnAccentColor, withAlpha } from '@/constants/color-presets';
 import { MotionDuration, MotionEasing } from '@/constants/motion';
@@ -134,6 +134,17 @@ export function AchievementDetailSheet({
    * sayı gösterilmez.
    */
   const remaining = Math.max(0, targetProgress - currentProgress);
+  /**
+   * İnce ilerleme çizgisinin dolum oranı.
+   *
+   * Yalnızca sunucudan gelen `currentProgress` / `targetProgress` ile hesaplanır
+   * ve güvenli biçimde 0–1 aralığına sınırlandırılır: hedef sıfır/negatif ya da
+   * ilerleme hedefi aşmış gelse bile çizgi taşmaz.
+   */
+  const progressRatio =
+    targetProgress > 0 ? Math.min(1, Math.max(0, currentProgress / targetProgress)) : 0;
+  const progressMax = Math.max(0, targetProgress);
+  const progressNow = Math.min(progressMax, Math.max(0, currentProgress));
   const unit = REMAINING_UNIT[key];
   const remainingLabel = t(
     remaining === 1
@@ -181,21 +192,13 @@ export function AchievementDetailSheet({
             showsVerticalScrollIndicator={false}
             // Küçük iPhone ekranlarında içeriğin tamamı erişilebilir kalır.
             bounces={false}>
-            <View
-              style={[
-                styles.iconWrap,
-                {
-                  backgroundColor: isUnlocked
-                    ? withAlpha(accent, isDark ? 0.2 : 0.12)
-                    : colors.surfaceMuted,
-                },
-              ]}>
-              <Ionicons
-                color={isUnlocked ? accent : colors.textTertiary}
-                name={ACHIEVEMENT_ICONS[key]}
-                size={26}
-              />
-            </View>
+            {/* Üstte daha belirgin ortak medallion — rozet kutusuyla aynı dil. */}
+            <AchievementMedallion
+              accent={accent}
+              icon={ACHIEVEMENT_ICONS[key]}
+              isUnlocked={isUnlocked}
+              size={48}
+            />
 
             <Text accessibilityRole="header" style={styles.name}>
               {name}
@@ -214,6 +217,25 @@ export function AchievementDetailSheet({
             </View>
 
             <Text style={styles.description}>{description}</Text>
+
+            {/*
+              Kilitli rozette ince görsel ilerleme çizgisi. Dolum oranı yalnızca
+              sunucu alanlarından türer ve 0–1 aralığına sınırlıdır. Ekran
+              okuyucuya min/max/now olarak duyurulur.
+             */}
+            {!isUnlocked ? (
+              <View
+                accessibilityRole="progressbar"
+                accessibilityValue={{ max: progressMax, min: 0, now: progressNow }}
+                style={[styles.progressTrack, { backgroundColor: colors.surfaceMuted }]}>
+                <View
+                  style={[
+                    styles.progressFill,
+                    { backgroundColor: accent, width: `${Math.round(progressRatio * 100)}%` },
+                  ]}
+                />
+              </View>
+            ) : null}
 
             <View style={styles.rows}>
               <DetailRow
@@ -305,14 +327,16 @@ function createStyles(colors: ThemeColors) {
     },
     content: { alignItems: 'center', gap: 12, padding: 20 },
 
-    iconWrap: {
-      alignItems: 'center',
-      borderRadius: 26,
-      height: 52,
-      justifyContent: 'center',
-      width: 52,
-    },
     name: { color: colors.text, fontSize: 17, fontWeight: '600', textAlign: 'center' },
+
+    /** Kilitli rozetin ince ilerleme çizgisi — rank ekranındaki çubukla aynı ölçü. */
+    progressTrack: {
+      alignSelf: 'stretch',
+      borderRadius: 3,
+      height: 6,
+      overflow: 'hidden',
+    },
+    progressFill: { height: '100%' },
 
     statusPill: { borderRadius: 10, paddingHorizontal: 10, paddingVertical: 4 },
     statusText: { color: colors.textSecondary, fontSize: 11, fontWeight: '600' },

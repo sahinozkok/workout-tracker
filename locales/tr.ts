@@ -1036,6 +1036,12 @@ export const tr = {
       unlockedA11y: '{name}: açıldı. İlerleme {current} / {target}.',
       lockedA11y: '{name}: kilitli. İlerleme {current} / {target}.',
       /**
+       * Koleksiyon özeti — yalnızca sunum. Sayılar mevcut `isUnlocked`
+       * değerlerinden gelir; hiçbir hedef veya eşik burada SABİTLENMEZ.
+       */
+      summaryLabel: '{earned} / {total} başarı kazanıldı',
+      summaryA11y: '{total} başarının {earned} tanesi kazanıldı.',
+      /**
        * Rozet ayrıntı penceresi.
        *
        * Hiçbir hedef veya eşik sayısı burada SABİTLENMEZ: `{current}`,
