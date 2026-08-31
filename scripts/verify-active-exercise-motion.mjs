@@ -96,6 +96,18 @@ check('tüm egzersizler seçim davranışı korunuyor', () => {
   assert.match(code, /allDayExercises\.map\(\(exercise\) =>/);
 });
 
+check('set detayları kararlı yükseklik ve yumuşak giriş kullanıyor', () => {
+  assert.match(
+    panel,
+    /<MotionLayout style=\{styles\.detailsSection\}>[\s\S]*?isSetDetailsOpen && \([\s\S]*?<MotionCollapsible style=\{styles\.detailsArea\}>/,
+  );
+  assert.match(
+    code,
+    /detailsSection:\s*\{\s*alignItems: 'center',\s*alignSelf: 'stretch',\s*gap: 10,\s*overflow: 'hidden'\s*\}/,
+  );
+  assert.doesNotMatch(code, /isSetDetailsOpen && \(\s*<View style=\{styles\.detailsArea\}>/);
+});
+
 check('ekranda yeni ham animasyon altyapısı yok', () => {
   assert.doesNotMatch(code, /from 'react-native-reanimated'|LayoutAnimation|withTiming|withSpring/);
   assert.match(

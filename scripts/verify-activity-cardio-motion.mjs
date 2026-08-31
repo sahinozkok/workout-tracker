@@ -96,6 +96,11 @@ check('3. Tek kardiyo phase MotionSwap + pace="calm" kontrol aşamalarını sar�
     'activityPhase için tek MotionSwap beklenir',
   );
   assert.ok(/pace="calm"/.test(swapOpen), 'MotionSwap pace="calm" kullanmalı');
+  assert.ok(/emphasis="clear"/.test(swapOpen), 'büyük aşama değişimi görünür clear vurgusu kullanmalı');
+  assert.ok(
+    /<MotionLayout style=\{styles\.activityPhaseLayout\}>\s*<MotionSwap/.test(code),
+    'kardiyo aşaması kararlı MotionLayout sınırı içinde olmalı',
+  );
   // Üç kontrol aşaması da bu sınırın ALTINDA: bitirme formu ve kontroller.
   assert.ok(/isFinishingActivity && \(/.test(swapBody), 'bitirme adımı MotionSwap altında olmalı');
   assert.ok(/!isFinishingActivity && \(/.test(swapBody), 'kronometre kontrolleri MotionSwap altında olmalı');
@@ -104,6 +109,19 @@ check('3. Tek kardiyo phase MotionSwap + pace="calm" kontrol aşamalarını sar�
   }
   // Dış egzersiz geçişi olsa da kardiyo aşamasının kendi sınırı tektir.
   assert.ok(swapOpenTags.length >= 1, 'MotionSwap sınırı bulunamadı');
+});
+
+check('3b. Kardiyo aşama yüksekliği sakin biçimde değişiyor', () => {
+  assert.ok(
+    /activityPhaseLayout:\s*\{\s*alignSelf: 'stretch',\s*overflow: 'hidden'\s*\}/.test(code),
+    'activityPhaseLayout stretch + overflow hidden sözleşmesini korumalı',
+  );
+  assert.ok(
+    /export function MotionLayout[\s\S]*?LinearTransition\.duration\(MotionCalmDuration\.layout\)/.test(
+      motionSection,
+    ),
+    'MotionLayout sakin layout tokenını kullanmalı',
+  );
 });
 
 // ---------------------------------------------------------------------------

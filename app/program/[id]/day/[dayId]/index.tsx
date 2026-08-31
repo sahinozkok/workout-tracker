@@ -1921,10 +1921,12 @@ export default function WorkoutDayScreen() {
                   alanlar zıplamasın diye `MotionCollapsible` kullanır. Aynı bölge
                   AYRICA `MotionSection` ile sarılmaz (çift animasyon yok).
                 */}
-                <MotionSwap
-                  pace="calm"
-                  style={styles.activityPhaseSwap}
-                  transitionKey={activityPhase}>
+                <MotionLayout style={styles.activityPhaseLayout}>
+                  <MotionSwap
+                    emphasis="clear"
+                    pace="calm"
+                    style={styles.activityPhaseSwap}
+                    transitionKey={activityPhase}>
                   {/* Kayıtlı ölçüm özeti — yeni ölçüm başlamadan önce görünür. */}
                   {!activityTimer && existingActivityRecord && (
                     <Text style={styles.activityHint}>
@@ -2148,7 +2150,8 @@ export default function WorkoutDayScreen() {
                       <Text style={styles.clearActivityText}>{t('day.clearActivity')}</Text>
                     </Pressable>
                   )}
-                </MotionSwap>
+                  </MotionSwap>
+                </MotionLayout>
                     </View>
                   )}
 
@@ -2280,22 +2283,23 @@ export default function WorkoutDayScreen() {
                   )}
                 </MotionPressable>
 
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ expanded: isSetDetailsOpen }}
-                  hitSlop={8}
-                  onPress={() => setIsSetDetailsOpen((current) => !current)}
-                  style={({ pressed }) => [styles.detailsToggle, pressed && styles.pressed]}>
-                  <Text style={styles.detailsToggleText}>{t('day.details')}</Text>
-                  <Ionicons
-                    name={isSetDetailsOpen ? 'chevron-up' : 'chevron-down'}
-                    size={13}
-                    color={colors.textSecondary}
-                  />
-                </Pressable>
+                <MotionLayout style={styles.detailsSection}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: isSetDetailsOpen }}
+                    hitSlop={8}
+                    onPress={() => setIsSetDetailsOpen((current) => !current)}
+                    style={({ pressed }) => [styles.detailsToggle, pressed && styles.pressed]}>
+                    <Text style={styles.detailsToggleText}>{t('day.details')}</Text>
+                    <Ionicons
+                      name={isSetDetailsOpen ? 'chevron-up' : 'chevron-down'}
+                      size={13}
+                      color={colors.textSecondary}
+                    />
+                  </Pressable>
 
-                {isSetDetailsOpen && (
-                  <View style={styles.detailsArea}>
+                  {isSetDetailsOpen && (
+                    <MotionCollapsible style={styles.detailsArea}>
                     {activePreviousSet && (
                       <Text style={styles.previousSetText}>
                         {t('day.previousSet', { value: formatSetPerformance(activePreviousSet, t, locale) })}
@@ -2376,8 +2380,9 @@ export default function WorkoutDayScreen() {
                         </Pressable>
                       )}
                     </View>
-                  </View>
-                )}
+                    </MotionCollapsible>
+                  )}
+                </MotionLayout>
                     </View>
                   )}
                   </>
@@ -2770,6 +2775,8 @@ function createStyles(colors: ThemeColors, feature: FeatureColors) {
     activeExerciseLayout: { alignSelf: 'stretch', overflow: 'hidden' },
     /** Egzersiz/takip türü değişirken anahtarlı içerik sınırı. */
     activeExerciseSwap: { alignSelf: 'stretch' },
+    /** Başlat / takip / bitirme formu değişirken panel yüksekliğini korur. */
+    activityPhaseLayout: { alignSelf: 'stretch', overflow: 'hidden' },
     /**
      * Kardiyo kontrol aşamasının tek geçiş sınırı — YALNIZ yerleşim. MotionSwap
      * bu stili kendi Animated.View'ine uygular; aşama içerikleri onun doğrudan
@@ -2940,6 +2947,8 @@ function createStyles(colors: ThemeColors, feature: FeatureColors) {
       minHeight: Layout.minTouchSize,
     },
     detailsToggleText: { color: colors.textSecondary, fontSize: 13 },
+    /** Kapalıyken ek boşluk üretmez; açıkken detay alanıyla mevcut 10 pt ritmi korur. */
+    detailsSection: { alignItems: 'center', alignSelf: 'stretch', gap: 10, overflow: 'hidden' },
     detailsArea: { alignSelf: 'stretch', gap: 12 },
     detailRow: { alignItems: 'center', flexDirection: 'row', gap: 12 },
     detailLabel: { color: colors.textSecondary, fontSize: 13, width: 46 },
