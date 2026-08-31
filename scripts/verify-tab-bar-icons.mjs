@@ -102,13 +102,46 @@ check('C1. Coach standart ikon değil, özel görsel', () => {
   assert(/<Image\b/.test(coachBlock), 'coach görseli yok');
 });
 
-check('C2. Mascot source, ölçüler ve tint koşulu birebir', () => {
+check('C2. Mascot asset ve SEÇİLMEMİŞ görünüm birebir korunuyor', () => {
   assert(/const coachMascotSource = require\('\.\.\/\.\.\/assets\/images\/ai-coach-mascot\.png'\)/.test(layout),
     'mascot asset yolu değişmiş');
   assert(/source=\{coachMascotSource\}/.test(layout), 'mascot source bağlanmamış');
-  assert(/height: \(size \?\? 24\) \+ 6, width: \(size \?\? 24\) \+ 18/.test(layout), 'mascot ölçüleri değişmiş');
-  assert(/tintColor=\{focused \? color : colors\.icon\}/.test(layout), 'mascot tint koşulu değişmiş');
-  assert(/contentFit="cover"/.test(layout), 'mascot contentFit değişmiş');
+  // Seçilmemiş dal: cover + mevcut ölçüler + colors.icon tinti (mevcut hâl).
+  assert(
+    /contentFit="cover"[\s\S]*?source=\{coachMascotSource\}[\s\S]*?height: \(size \?\? 24\) \+ 6, width: \(size \?\? 24\) \+ 18[\s\S]*?tintColor=\{colors\.icon\}/.test(layout),
+    'seçilmemiş mascot cover/ölçü/tint korunmamış',
+  );
+});
+
+check('C3. SEÇİLİ Rosea, aktif sekme rengiyle TAMAMEN DOLU kompakt madalyona oturur', () => {
+  // Zemin, aktif sekme rengiyle (color) inline ve tam opak dolu — yeni sabit yok.
+  assert(/backgroundColor: color/.test(layout), 'seçili madalyon aktif sekme rengini kullanmıyor');
+  assert(/styles\.coachMedallion/.test(layout), 'seçili madalyon stili bağlanmamış');
+  const medallion = layout.slice(
+    layout.indexOf('coachMedallion: {'),
+    layout.indexOf('coachMascotSelected: {'),
+  );
+  assert(medallion.length > 0, 'coachMedallion stili bulunamadı');
+  assert(/borderRadius: Layout\.radiusPill/.test(medallion), 'madalyon tam daire (radiusPill) değil');
+  assert(/overflow: 'hidden'/.test(medallion), 'madalyon taşmayı kırpmıyor');
+  // Kompakt: madalyon çapı 24 pt ikon optik ağırlığına yakın ve mevcut mascot
+  // kutusundan (size+18 = 42) DAHA GENİŞ DEĞİL → "ayrı büyük buton" değil.
+  const width = /width: TAB_ICON_SIZE \+ (\d+)/.exec(medallion);
+  assert(width, 'madalyon genişliği TAB_ICON_SIZE türevinden gelmiyor');
+  assert(24 + Number(width[1]) <= 42, `madalyon mevcut mascot kutusundan geniş (büyük buton riski): ${24 + Number(width[1])}pt`);
+  assert(/height: TAB_ICON_SIZE \+ /.test(medallion), 'madalyon yüksekliği TAB_ICON_SIZE türevinden gelmiyor');
+});
+
+check('C4. Maskot dolu zeminde on-accent kontrastıyla çizilir; yeni renk sabiti yok', () => {
+  // Accent zemin üstünde accent tint kaybolurdu; on-accent ile net kontrast.
+  assert(/tintColor=\{getOnAccentColor\(color\)\}/.test(layout), 'seçili maskot on-accent tint kullanmıyor');
+  assert(/getOnAccentColor/.test(layout) && /from '@\/constants\/color-presets'/.test(layout),
+    'getOnAccentColor mevcut yardımcıdan import edilmemiş');
+  // Seçiliyken de aynı asset ve oranı korunur (contain — maskot tam görünür).
+  assert(/contentFit="contain"[\s\S]*?source=\{coachMascotSource\}/.test(layout), 'seçili maskot contain ile tam görünmüyor');
+  // Alt bar dosyasına YENİ renk sabiti (hex) / gradient / gölge / glow eklenmemiş.
+  assert(!/#[0-9A-Fa-f]{3,8}/.test(layout), 'alt bar dosyasına sabit renk (hex) eklenmiş');
+  assert(!/gradient|shadow|elevation:\s*[1-9]|shadowColor|shadowOpacity/i.test(layout), 'gradient/gölge/glow eklenmiş');
 });
 
 // ===========================================================================

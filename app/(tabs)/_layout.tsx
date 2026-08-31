@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { Tabs } from 'expo-router';
 import { PropsWithChildren, useEffect } from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import Animated, {
   useAnimatedStyle,
   useReducedMotion,
@@ -11,6 +11,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { getOnAccentColor } from '@/constants/color-presets';
 import {
   MotionDuration,
   MotionEasing,
@@ -143,13 +144,36 @@ export default function TabLayout() {
           title: t('tabs.coach'),
           tabBarIcon: ({ color, focused, size }) => (
             <TabIconFeedback focused={focused}>
-              {/* Rosea'nın özel görseli ve tint davranışı DEĞİŞMEDİ. */}
-              <Image
-                contentFit="cover"
-                source={coachMascotSource}
-                style={{ height: (size ?? 24) + 6, width: (size ?? 24) + 18 }}
-                tintColor={focused ? color : colors.icon}
-              />
+              {focused ? (
+                /**
+                 * SEÇİLİ Rosea. Diğer sekmelerin seçili DOLU Ionicons ikonlarıyla
+                 * optik olarak uyumlu olması için maskot, aktif sekme rengiyle
+                 * (`color`) TAMAMEN DOLU, kompakt bir madalyona oturur. Madalyon
+                 * mevcut 42 pt Rosea kutusundan daha dardır; "ayrı büyük buton"
+                 * gibi durmaz ve tab bar yüksekliği/ritmi değişmez.
+                 *
+                 * Rosea görseli/asset'i DEĞİŞMEDİ; yalnızca seçili zemin eklendi.
+                 * Maskot, dolu zeminde açık ve koyu temada net kontrastla
+                 * görünmesi için mevcut `getOnAccentColor` ile on-accent renge
+                 * boyanır (aksi hâlde accent üstünde accent tint kaybolurdu).
+                 */
+                <View style={[styles.coachMedallion, { backgroundColor: color }]}>
+                  <Image
+                    contentFit="contain"
+                    source={coachMascotSource}
+                    style={styles.coachMascotSelected}
+                    tintColor={getOnAccentColor(color)}
+                  />
+                </View>
+              ) : (
+                /* SEÇİLMEMİŞ Rosea görünümü MEVCUT hâliyle korunur. */
+                <Image
+                  contentFit="cover"
+                  source={coachMascotSource}
+                  style={{ height: (size ?? 24) + 6, width: (size ?? 24) + 18 }}
+                  tintColor={colors.icon}
+                />
+              )}
             </TabIconFeedback>
           ),
         }}
@@ -168,3 +192,25 @@ export default function TabLayout() {
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  /**
+   * SEÇİLİ Rosea madalyonu. Kompakt bir daire (34 pt): standart 24 pt filled
+   * ikonların optik ağırlığına yakın, mevcut mascot kutusundan (30×42) daha
+   * geniş değil. Zemin rengi çağıran tarafından aktif sekme rengiyle inline
+   * verilir; burada yeni renk sabiti yoktur. `radiusPill` ile tam daire.
+   */
+  coachMedallion: {
+    alignItems: 'center',
+    borderRadius: Layout.radiusPill,
+    height: TAB_ICON_SIZE + 10,
+    justifyContent: 'center',
+    overflow: 'hidden',
+    width: TAB_ICON_SIZE + 10,
+  },
+  /** Maskot dolu madalyonda tamamen görünür; oranı korunur (`contain`). */
+  coachMascotSelected: {
+    height: TAB_ICON_SIZE - 2,
+    width: TAB_ICON_SIZE + 6,
+  },
+});
