@@ -5,7 +5,7 @@ import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-nat
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { MotionPressable } from '@/components/motion-pressable';
-import { MotionSection } from '@/components/motion-section';
+import { MotionSection, MotionSwap } from '@/components/motion-section';
 import { AchievementDetailSheet } from '@/components/ranks/achievement-detail-sheet';
 import { ACHIEVEMENT_ICONS } from '@/components/ranks/achievement-icons';
 import { AchievementMedallion } from '@/components/ranks/achievement-medallion';
@@ -48,6 +48,15 @@ import { dateFromKey } from '@/utils/workout-schedule';
  */
 type RankTabKey = 'overview' | 'achievements' | 'history';
 const RANK_TAB_KEYS: readonly RankTabKey[] = ['overview', 'achievements', 'history'];
+
+/**
+ * Uzun liste içerebilen "ağır" sekmeler.
+ *
+ * Yalnızca sunum: geçiş sınırında (`MotionSwap`) bu sekmelerde `contentWeight`
+ * "heavy" olur ve layout animasyonu kapanır — geniş RP/arşiv listesi her
+ * geçişte yeniden ölçülmez. Diğer sekmeler normal içerik ağırlığıyla çalışır.
+ */
+const HEAVY_CONTENT_TABS: readonly RankTabKey[] = ['history'];
 
 export default function RankScreen() {
   const { colors, isDark } = useAppTheme();
@@ -204,9 +213,27 @@ export default function RankScreen() {
           />
         </MotionSection>
 
-        {activeTab === 'overview' ? (
-          <>
-            <MotionSection delay={120}>
+        {/*
+          Yerel sekme içeriği tek bir geçiş sınırı altında değişir. `MotionSwap`
+          `transitionKey` olarak doğrudan `activeTab` alır: sekmeye basıldığında
+          içerik sert biçimde değişmez, mevcut motion altyapısının kısa fade +
+          çok küçük dikey girişiyle yerleşir. Reduce Motion `MotionSwap` içinde
+          otomatik ele alınır.
+
+          İç dallarda AYRICA `MotionSection delay` KULLANILMAZ: tek geçiş sınırı
+          bu işi üstlenir, böylece aynı içerikte çift giriş animasyonu oluşmaz.
+          Sade `View` yalnızca yerleşim/boşluk taşır.
+
+          Geçmiş sekmesi uzun RP ve arşiv listeleri içerebildiği için ağır içerik
+          sayılır: `contentWeight="heavy"` ile layout animasyonu kapanır, uzun
+          liste yeniden ölçülmez. Genel ve Başarılar normal içerik ağırlığıyla
+          çalışır.
+         */}
+        <MotionSwap
+          contentWeight={HEAVY_CONTENT_TABS.includes(activeTab) ? 'heavy' : 'regular'}
+          transitionKey={activeTab}>
+          {activeTab === 'overview' ? (
+            <>
               <WeekFocusCard
                 colors={colors}
                 focus={weekFocus}
@@ -219,101 +246,101 @@ export default function RankScreen() {
                 todayColor={todayColor}
                 todayKey={todayKey}
               />
-            </MotionSection>
 
-            <MotionSection delay={160} style={styles.statList}>
-              <StatRow label={t('ranks.seasonEndsIn')} styles={styles} value={t('ranks.dayCount', { count: daysLeft })} />
-              <StatRow label={t('ranks.peakRank')} styles={styles} value={rankName(season.peakRank)} />
-              <StatRow label={t('ranks.workouts')} styles={styles} value={String(season.workoutsCompleted)} />
-              <StatRow
-                label={t('ranks.planCompletion')}
+              <View style={styles.statList}>
+                <StatRow label={t('ranks.seasonEndsIn')} styles={styles} value={t('ranks.dayCount', { count: daysLeft })} />
+                <StatRow label={t('ranks.peakRank')} styles={styles} value={rankName(season.peakRank)} />
+                <StatRow label={t('ranks.workouts')} styles={styles} value={String(season.workoutsCompleted)} />
+                <StatRow
+                  label={t('ranks.planCompletion')}
+                  styles={styles}
+                  value={t('ranks.planCompletionValue', {
+                    done: season.scheduledDaysCompleted,
+                    percent: planCompletion,
+                    total: season.scheduledDaysTotal,
+                  })}
+                />
+                <StatRow
+                  isLast
+                  label={t('ranks.longestStreak')}
+                  styles={styles}
+                  value={t('ranks.dayCount', { count: season.longestStreak })}
+                />
+              </View>
+            </>
+          ) : null}
+
+          {activeTab === 'achievements' ? (
+            <View style={styles.achievementsBlock}>
+              <Text style={styles.sectionLabel}>{t('ranks.achievements.title')}</Text>
+              <AchievementsGrid
+                accent={accent}
+                achievements={achievements}
+                colors={colors}
+                hasError={hasAchievementsError}
+                isDark={isDark}
+                isLoading={isAchievementsLoading}
+                locale={locale}
+                onRetry={() => void loadAchievements()}
                 styles={styles}
-                value={t('ranks.planCompletionValue', {
-                  done: season.scheduledDaysCompleted,
-                  percent: planCompletion,
-                  total: season.scheduledDaysTotal,
-                })}
+                t={t}
               />
-              <StatRow
-                isLast
-                label={t('ranks.longestStreak')}
-                styles={styles}
-                value={t('ranks.dayCount', { count: season.longestStreak })}
-              />
-            </MotionSection>
-          </>
-        ) : null}
+            </View>
+          ) : null}
 
-        {activeTab === 'achievements' ? (
-          <MotionSection delay={120} style={styles.achievementsBlock}>
-            <Text style={styles.sectionLabel}>{t('ranks.achievements.title')}</Text>
-            <AchievementsGrid
-              accent={accent}
-              achievements={achievements}
-              colors={colors}
-              hasError={hasAchievementsError}
-              isDark={isDark}
-              isLoading={isAchievementsLoading}
-              locale={locale}
-              onRetry={() => void loadAchievements()}
-              styles={styles}
-              t={t}
-            />
-          </MotionSection>
-        ) : null}
+          {activeTab === 'history' ? (
+            <>
+              <View style={styles.historyBlock}>
+                <Text style={styles.sectionLabel}>{t('ranks.recentActivity')}</Text>
 
-        {activeTab === 'history' ? (
-          <>
-            <MotionSection delay={120} style={styles.historyBlock}>
-              <Text style={styles.sectionLabel}>{t('ranks.recentActivity')}</Text>
+                {isEventsLoading && events.length === 0 ? (
+                  <View style={styles.historyLoading}>
+                    <ActivityIndicator color={colors.textSecondary} size="small" />
+                  </View>
+                ) : events.length === 0 ? (
+                  <Text style={styles.emptyText}>{t('ranks.noRecentActivity')}</Text>
+                ) : (
+                  events.map((event, index) => (
+                    <EventRow
+                      accent={accent}
+                      dangerColor={colors.danger}
+                      event={event}
+                      isLast={index === events.length - 1}
+                      key={event.id}
+                      locale={locale}
+                      styles={styles}
+                      t={t}
+                    />
+                  ))
+                )}
+              </View>
 
-              {isEventsLoading && events.length === 0 ? (
-                <View style={styles.historyLoading}>
-                  <ActivityIndicator color={colors.textSecondary} size="small" />
-                </View>
-              ) : events.length === 0 ? (
-                <Text style={styles.emptyText}>{t('ranks.noRecentActivity')}</Text>
-              ) : (
-                events.map((event, index) => (
-                  <EventRow
-                    accent={accent}
-                    dangerColor={colors.danger}
-                    event={event}
-                    isLast={index === events.length - 1}
-                    key={event.id}
-                    locale={locale}
-                    styles={styles}
-                    t={t}
-                  />
-                ))
-              )}
-            </MotionSection>
+              <View style={styles.historyBlock}>
+                <Text style={styles.sectionLabel}>{t('ranks.pastSeasons')}</Text>
 
-            <MotionSection delay={160} style={styles.historyBlock}>
-              <Text style={styles.sectionLabel}>{t('ranks.pastSeasons')}</Text>
-
-              {isHistoryLoading && history.length === 0 ? (
-                <View style={styles.historyLoading}>
-                  <ActivityIndicator color={colors.textSecondary} size="small" />
-                </View>
-              ) : history.length === 0 ? (
-                <Text style={styles.emptyText}>{t('ranks.noPastSeasons')}</Text>
-              ) : (
-                history.map((archive, index) => (
-                  <ArchiveRow
-                    archive={archive}
-                    isLast={index === history.length - 1}
-                    key={archive.seasonIndex}
-                    locale={locale}
-                    rankName={rankName}
-                    styles={styles}
-                    t={t}
-                  />
-                ))
-              )}
-            </MotionSection>
-          </>
-        ) : null}
+                {isHistoryLoading && history.length === 0 ? (
+                  <View style={styles.historyLoading}>
+                    <ActivityIndicator color={colors.textSecondary} size="small" />
+                  </View>
+                ) : history.length === 0 ? (
+                  <Text style={styles.emptyText}>{t('ranks.noPastSeasons')}</Text>
+                ) : (
+                  history.map((archive, index) => (
+                    <ArchiveRow
+                      archive={archive}
+                      isLast={index === history.length - 1}
+                      key={archive.seasonIndex}
+                      locale={locale}
+                      rankName={rankName}
+                      styles={styles}
+                      t={t}
+                    />
+                  ))
+                )}
+              </View>
+            </>
+          ) : null}
+        </MotionSwap>
       </ScrollView>
     </SafeAreaView>
   );
