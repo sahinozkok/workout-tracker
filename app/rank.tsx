@@ -216,21 +216,27 @@ export default function RankScreen() {
         {/*
           Yerel sekme içeriği tek bir geçiş sınırı altında değişir. `MotionSwap`
           `transitionKey` olarak doğrudan `activeTab` alır: sekmeye basıldığında
-          içerik sert biçimde değişmez, mevcut motion altyapısının kısa fade +
-          çok küçük dikey girişiyle yerleşir. Reduce Motion `MotionSwap` içinde
-          otomatik ele alınır.
+          içerik sert biçimde değişmez.
+
+          TEMPO — `pace="calm"`: sekme geçişi mevcut SAKİN tempoyu kullanır. Bu
+          tempo helper içinde tanımlıdır (daha okunur, biraz daha uzun süre ve
+          yalnız ~5 pt dikey giriş; çıkış sadece opaklık). Rank ekranına ham
+          süre/easing/mesafe YAZILMAZ; bütün değerler `MotionSwap`'ın kendi
+          tokenlarından gelir. Reduce Motion da yine `MotionSwap` içinde ele
+          alınır; burada tekrar kapı kurulmaz.
 
           İç dallarda AYRICA `MotionSection delay` KULLANILMAZ: tek geçiş sınırı
           bu işi üstlenir, böylece aynı içerikte çift giriş animasyonu oluşmaz.
           Sade `View` yalnızca yerleşim/boşluk taşır.
 
           Geçmiş sekmesi uzun RP ve arşiv listeleri içerebildiği için ağır içerik
-          sayılır: `contentWeight="heavy"` ile layout animasyonu kapanır, uzun
-          liste yeniden ölçülmez. Genel ve Başarılar normal içerik ağırlığıyla
-          çalışır.
+          sayılır: `contentWeight="heavy"` ile (calm tempoda) layout animasyonu
+          kapanır ve yalnız sakin fade kullanılır; uzun liste yeniden ölçülmez.
+          Genel ve Başarılar calm regular geçişle çalışır.
          */}
         <MotionSwap
           contentWeight={HEAVY_CONTENT_TABS.includes(activeTab) ? 'heavy' : 'regular'}
+          pace="calm"
           transitionKey={activeTab}>
           {activeTab === 'overview' ? (
             <>

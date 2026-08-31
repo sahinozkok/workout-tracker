@@ -82,6 +82,39 @@ check(
 );
 
 // ---------------------------------------------------------------------------
+// 2b. Sekme geçişi SAKİN (calm) tempoyla yumuşatılır.
+//
+// Rank ekranı tek `MotionSwap` sınırına `pace="calm"` bağlar. Değerler helper'ın
+// KENDİ tokenlarından gelir; ekrana ham süre/easing/mesafe YAZILMAZ (Bölüm 8).
+// ---------------------------------------------------------------------------
+check(/pace="calm"/.test(swapOpen), 'Sekme geçişi pace="calm" kullanmalı (daha okunur, yumuşak)');
+
+// Calm tempo helper'da tanımlı ve pace="calm" iken gerçekten seçiliyor.
+check(/function getCalmSwapMotion\(/.test(motionSection), 'calm tempo fonksiyonu helper’da olmalı');
+check(
+  /pace === 'calm' \? getCalmSwapMotion\(isHeavy\) : getDefaultSwapMotion/.test(motionSection),
+  'MotionSwap pace="calm" iken calm tempoya geçmeli',
+);
+
+// Calm tempo karakteri: overview/achievements (regular) kısa dikey giriş + calm
+// süre; history (heavy) YALNIZ sade fade ve layout animasyonu YOK.
+const calmBody = motionSection.slice(
+  motionSection.indexOf('function getCalmSwapMotion('),
+  motionSection.indexOf('export function MotionSwap'),
+);
+assert.ok(calmBody.length > 0, 'getCalmSwapMotion gövdesi bulunmalı');
+check(
+  /isHeavy\s*\?\s*undefined\s*:\s*LinearTransition/.test(calmBody),
+  'calm heavy içerikte (history) layout animasyonu kapalı olmalı',
+);
+check(/exiting: FadeOut\.duration/.test(calmBody), 'calm çıkış yalnız sade fade olmalı');
+check(!/FadeOutUp/.test(calmBody), 'calm tempoda sert FadeOutUp kullanılmamalı');
+check(
+  /translateY: MotionDistance\.calmSwap/.test(calmBody),
+  'calm regular giriş yalnız küçük (calmSwap) dikey mesafeyi kullanmalı',
+);
+
+// ---------------------------------------------------------------------------
 // 3. Üç koşullu sekme içeriği MotionSwap altında ve doğru kalmış.
 // ---------------------------------------------------------------------------
 for (const key of ['overview', 'achievements', 'history']) {
