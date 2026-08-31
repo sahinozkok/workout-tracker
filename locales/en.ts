@@ -1008,6 +1008,12 @@ export const en: TranslationSchema = {
     planCompletion: 'Plan completion',
     planCompletionValue: '{percent}% ({done}/{total})',
     longestStreak: 'Longest streak',
+    /** Local content tabs on the rank screen — presentation state, no new route. */
+    tabs: {
+      overview: 'Overview',
+      achievements: 'Achievements',
+      history: 'History',
+    },
     weekFocus: {
       title: 'THIS WEEK’S FOCUS',
       remaining: '{count} days left for the perfect week bonus.',

@@ -9,6 +9,7 @@ import { MotionSection } from '@/components/motion-section';
 import { AchievementDetailSheet } from '@/components/ranks/achievement-detail-sheet';
 import { ACHIEVEMENT_ICONS } from '@/components/ranks/achievement-icons';
 import { getRankColor, getRankSoftBackground, useRankName } from '@/components/ranks/rank-badge';
+import { RankEmblem } from '@/components/ranks/rank-emblem';
 import { SeasonAchievementKey, toRankRpDisplay } from '@/constants/rank-experience';
 import {
   daysRemainingInSeason,
@@ -40,6 +41,13 @@ import { dateFromKey } from '@/utils/workout-schedule';
  * Rank rengi yalnızca rozet, ilerleme çubuğu ve tek bir vurgu değerinde
  * kullanılır; gövde metinleri tema renklerinde kalır.
  */
+/**
+ * Rank ekranının yerel içerik sekmeleri. Yalnızca sunum içindir — route,
+ * bottom tab veya sorgu DEĞİLDİR. Varsayılan `overview`.
+ */
+type RankTabKey = 'overview' | 'achievements' | 'history';
+const RANK_TAB_KEYS: readonly RankTabKey[] = ['overview', 'achievements', 'history'];
+
 export default function RankScreen() {
   const { colors, isDark } = useAppTheme();
   const { locale, t } = useTranslation();
@@ -65,6 +73,13 @@ export default function RankScreen() {
   const todayKey = useLocalDateKey();
   const todayColor = useFeatureColor('todayHighlight', colors.primary).color;
   const styles = useMemo(() => createStyles(colors), [colors]);
+
+  /**
+   * Yalnızca sunum state'i: hangi yerel sekmenin görüneceğini seçer. Yeni route,
+   * bottom tab, sorgu veya RPC EKLEMEZ ve veri yüklemelerini koşullandırmaz —
+   * bütün `loadX` effect'leri sekmeden bağımsız çalışmaya devam eder.
+   */
+  const [activeTab, setActiveTab] = useState<RankTabKey>('overview');
 
   // Arşiv ve RP geçmişi yalnızca bu ekran açıldığında yüklenir; arka planda
   // polling YOKTUR.
@@ -150,11 +165,14 @@ export default function RankScreen() {
             accessible
             style={[styles.card, { backgroundColor: getRankSoftBackground(season.currentRank, isDark) }]}>
             <View style={styles.cardTopRow}>
-              <View style={styles.cardTitleGroup}>
-                <Text style={styles.cardEyebrow}>{t('ranks.currentRank')}</Text>
-                <Text style={[styles.cardRank, { color: accent }]}>
-                  {rankName(season.currentRank)}
-                </Text>
+              <View style={styles.cardIdentity}>
+                <RankEmblem color={accent} rankId={season.currentRank} variant="hero" />
+                <View style={styles.cardTitleGroup}>
+                  <Text style={styles.cardEyebrow}>{t('ranks.currentRank')}</Text>
+                  <Text numberOfLines={1} style={[styles.cardRank, { color: accent }]}>
+                    {rankName(season.currentRank)}
+                  </Text>
+                </View>
               </View>
               <Text style={[styles.cardRp, { color: accent }]}>
                 {t('ranks.rpValue', { rp: season.currentRp })}
@@ -176,106 +194,177 @@ export default function RankScreen() {
         </MotionSection>
 
         <MotionSection delay={80}>
-          <WeekFocusCard
-            colors={colors}
-            focus={weekFocus}
-            hasError={hasWeekFocusError}
-            isLoading={isWeekFocusLoading}
-            locale={locale}
-            onRetry={() => void loadWeekFocus()}
-            styles={styles}
-            t={t}
-            todayColor={todayColor}
-            todayKey={todayKey}
-          />
-        </MotionSection>
-
-        <MotionSection delay={120} style={styles.achievementsBlock}>
-          <Text style={styles.sectionLabel}>{t('ranks.achievements.title')}</Text>
-          <AchievementsGrid
+          <RankTabs
             accent={accent}
-            achievements={achievements}
-            colors={colors}
-            hasError={hasAchievementsError}
-            isLoading={isAchievementsLoading}
-            locale={locale}
-            onRetry={() => void loadAchievements()}
+            activeTab={activeTab}
+            onSelect={setActiveTab}
             styles={styles}
             t={t}
           />
         </MotionSection>
 
-        <MotionSection delay={160} style={styles.statList}>
-          <StatRow label={t('ranks.seasonEndsIn')} styles={styles} value={t('ranks.dayCount', { count: daysLeft })} />
-          <StatRow label={t('ranks.peakRank')} styles={styles} value={rankName(season.peakRank)} />
-          <StatRow label={t('ranks.workouts')} styles={styles} value={String(season.workoutsCompleted)} />
-          <StatRow
-            label={t('ranks.planCompletion')}
-            styles={styles}
-            value={t('ranks.planCompletionValue', {
-              done: season.scheduledDaysCompleted,
-              percent: planCompletion,
-              total: season.scheduledDaysTotal,
-            })}
-          />
-          <StatRow
-            isLast
-            label={t('ranks.longestStreak')}
-            styles={styles}
-            value={t('ranks.dayCount', { count: season.longestStreak })}
-          />
-        </MotionSection>
-
-        <MotionSection delay={200} style={styles.historyBlock}>
-          <Text style={styles.sectionLabel}>{t('ranks.recentActivity')}</Text>
-
-          {isEventsLoading && events.length === 0 ? (
-            <View style={styles.historyLoading}>
-              <ActivityIndicator color={colors.textSecondary} size="small" />
-            </View>
-          ) : events.length === 0 ? (
-            <Text style={styles.emptyText}>{t('ranks.noRecentActivity')}</Text>
-          ) : (
-            events.map((event, index) => (
-              <EventRow
-                accent={accent}
-                dangerColor={colors.danger}
-                event={event}
-                isLast={index === events.length - 1}
-                key={event.id}
+        {activeTab === 'overview' ? (
+          <>
+            <MotionSection delay={120}>
+              <WeekFocusCard
+                colors={colors}
+                focus={weekFocus}
+                hasError={hasWeekFocusError}
+                isLoading={isWeekFocusLoading}
                 locale={locale}
+                onRetry={() => void loadWeekFocus()}
                 styles={styles}
                 t={t}
+                todayColor={todayColor}
+                todayKey={todayKey}
               />
-            ))
-          )}
-        </MotionSection>
+            </MotionSection>
 
-        <MotionSection delay={240} style={styles.historyBlock}>
-          <Text style={styles.sectionLabel}>{t('ranks.pastSeasons')}</Text>
-
-          {isHistoryLoading && history.length === 0 ? (
-            <View style={styles.historyLoading}>
-              <ActivityIndicator color={colors.textSecondary} size="small" />
-            </View>
-          ) : history.length === 0 ? (
-            <Text style={styles.emptyText}>{t('ranks.noPastSeasons')}</Text>
-          ) : (
-            history.map((archive, index) => (
-              <ArchiveRow
-                archive={archive}
-                isLast={index === history.length - 1}
-                key={archive.seasonIndex}
-                locale={locale}
-                rankName={rankName}
+            <MotionSection delay={160} style={styles.statList}>
+              <StatRow label={t('ranks.seasonEndsIn')} styles={styles} value={t('ranks.dayCount', { count: daysLeft })} />
+              <StatRow label={t('ranks.peakRank')} styles={styles} value={rankName(season.peakRank)} />
+              <StatRow label={t('ranks.workouts')} styles={styles} value={String(season.workoutsCompleted)} />
+              <StatRow
+                label={t('ranks.planCompletion')}
                 styles={styles}
-                t={t}
+                value={t('ranks.planCompletionValue', {
+                  done: season.scheduledDaysCompleted,
+                  percent: planCompletion,
+                  total: season.scheduledDaysTotal,
+                })}
               />
-            ))
-          )}
-        </MotionSection>
+              <StatRow
+                isLast
+                label={t('ranks.longestStreak')}
+                styles={styles}
+                value={t('ranks.dayCount', { count: season.longestStreak })}
+              />
+            </MotionSection>
+          </>
+        ) : null}
+
+        {activeTab === 'achievements' ? (
+          <MotionSection delay={120} style={styles.achievementsBlock}>
+            <Text style={styles.sectionLabel}>{t('ranks.achievements.title')}</Text>
+            <AchievementsGrid
+              accent={accent}
+              achievements={achievements}
+              colors={colors}
+              hasError={hasAchievementsError}
+              isLoading={isAchievementsLoading}
+              locale={locale}
+              onRetry={() => void loadAchievements()}
+              styles={styles}
+              t={t}
+            />
+          </MotionSection>
+        ) : null}
+
+        {activeTab === 'history' ? (
+          <>
+            <MotionSection delay={120} style={styles.historyBlock}>
+              <Text style={styles.sectionLabel}>{t('ranks.recentActivity')}</Text>
+
+              {isEventsLoading && events.length === 0 ? (
+                <View style={styles.historyLoading}>
+                  <ActivityIndicator color={colors.textSecondary} size="small" />
+                </View>
+              ) : events.length === 0 ? (
+                <Text style={styles.emptyText}>{t('ranks.noRecentActivity')}</Text>
+              ) : (
+                events.map((event, index) => (
+                  <EventRow
+                    accent={accent}
+                    dangerColor={colors.danger}
+                    event={event}
+                    isLast={index === events.length - 1}
+                    key={event.id}
+                    locale={locale}
+                    styles={styles}
+                    t={t}
+                  />
+                ))
+              )}
+            </MotionSection>
+
+            <MotionSection delay={160} style={styles.historyBlock}>
+              <Text style={styles.sectionLabel}>{t('ranks.pastSeasons')}</Text>
+
+              {isHistoryLoading && history.length === 0 ? (
+                <View style={styles.historyLoading}>
+                  <ActivityIndicator color={colors.textSecondary} size="small" />
+                </View>
+              ) : history.length === 0 ? (
+                <Text style={styles.emptyText}>{t('ranks.noPastSeasons')}</Text>
+              ) : (
+                history.map((archive, index) => (
+                  <ArchiveRow
+                    archive={archive}
+                    isLast={index === history.length - 1}
+                    key={archive.seasonIndex}
+                    locale={locale}
+                    rankName={rankName}
+                    styles={styles}
+                    t={t}
+                  />
+                ))
+              )}
+            </MotionSection>
+          </>
+        ) : null}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+/**
+ * Sade, alt çizgili yerel sekme şeridi.
+ *
+ * SUNUM STATE'İ — sekme değişimi yalnızca hangi bölümün render edileceğini
+ * seçer; veri yüklemez, route açmaz, sorgu tetiklemez. Her sekme en az 44 pt
+ * dokunma yüksekliğindedir, `accessibilityRole="tab"` taşır ve seçili durumu
+ * erişilebilirlik ağacına `accessibilityState` ile bildirir. Seçili alt çizgi
+ * mevcut rank rengini (accent) kullanır; açık ve koyu temada çalışır.
+ */
+function RankTabs({
+  accent,
+  activeTab,
+  onSelect,
+  styles,
+  t,
+}: {
+  accent: string;
+  activeTab: RankTabKey;
+  onSelect: (tab: RankTabKey) => void;
+  styles: ReturnType<typeof createStyles>;
+  t: (key: string, params?: Record<string, string | number>) => string;
+}) {
+  return (
+    <View style={styles.tabBar}>
+      {RANK_TAB_KEYS.map((key) => {
+        const isActive = key === activeTab;
+        return (
+          <MotionPressable
+            accessibilityRole="tab"
+            accessibilityState={{ selected: isActive }}
+            key={key}
+            onPress={() => onSelect(key)}
+            style={styles.tab}>
+            <Text
+              numberOfLines={1}
+              style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
+              {t(`ranks.tabs.${key}`)}
+            </Text>
+            <View
+              style={[
+                styles.tabUnderline,
+                isActive ? { backgroundColor: accent } : undefined,
+              ]}
+            />
+          </MotionPressable>
+        );
+      })}
+    </View>
   );
 }
 
@@ -736,14 +825,46 @@ function createStyles(colors: ThemeColors) {
     dateRange: { color: colors.textSecondary, fontSize: 13, fontWeight: '400' },
 
     card: { borderRadius: Layout.radiusMedium, gap: 12, padding: 16 },
-    cardTopRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-    cardTitleGroup: { gap: 2 },
+    cardTopRow: { alignItems: 'center', flexDirection: 'row', gap: 12, justifyContent: 'space-between' },
+    cardIdentity: { alignItems: 'center', flexDirection: 'row', flexShrink: 1, gap: 12 },
+    cardTitleGroup: { flexShrink: 1, gap: 2 },
     cardEyebrow: { color: colors.textSecondary, fontSize: 11, fontWeight: '600' },
     cardRank: { fontSize: 17, fontWeight: '600' },
     cardRp: { fontSize: 17, fontWeight: '600' },
     track: { borderRadius: 3, height: 6, overflow: 'hidden', width: '100%' },
     fill: { height: '100%' },
     cardFootnote: { color: colors.textSecondary, fontSize: 13, fontWeight: '400' },
+
+    /**
+     * Sade alt çizgili sekme şeridi — pill veya ayrı kart DEĞİL. Alt kenardaki
+     * ince ayraç bütün sekmelerin altında ortak taban çizgisidir; seçili sekme
+     * onu accent renkli çizgiyle örter.
+     */
+    tabBar: {
+      borderBottomColor: colors.separator,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row',
+      marginTop: 16,
+    },
+    tab: {
+      alignItems: 'center',
+      flex: 1,
+      justifyContent: 'center',
+      minHeight: Layout.minTouchSize,
+      paddingHorizontal: 4,
+    },
+    tabLabel: { color: colors.textSecondary, fontSize: 13, fontWeight: '600' },
+    tabLabelActive: { color: colors.text },
+    /** Seçili sekmenin altındaki accent çizgi; taban ayraçla hizalanır. */
+    tabUnderline: {
+      backgroundColor: 'transparent',
+      borderRadius: 1,
+      bottom: -StyleSheet.hairlineWidth,
+      height: 2,
+      left: 0,
+      position: 'absolute',
+      right: 0,
+    },
 
     weekCard: {
       backgroundColor: colors.card,

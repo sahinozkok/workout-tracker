@@ -8,6 +8,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
+import { RankEmblem } from '@/components/ranks/rank-emblem';
 import { withAlpha } from '@/constants/color-presets';
 import { MotionDuration, MotionEasing } from '@/constants/motion';
 import { RankId, RANK_IDS, RANK_TIERS } from '@/constants/ranks';
@@ -93,7 +94,7 @@ export function RankBadge({ onPress, rankId, rp }: RankBadgeProps) {
 
   const content = (
     <Animated.View style={[styles.badge, animatedStyle]}>
-      <View style={styles.dot} />
+      <RankEmblem color={color} rankId={rankId} variant="compact" />
       <Text numberOfLines={1} style={styles.rankText}>
         {rankName(rankId)}
       </Text>
@@ -143,7 +144,6 @@ function createStyles(color: string, softBackground: string, isInteractive: bool
       paddingHorizontal: 12,
       paddingVertical: 6,
     },
-    dot: { backgroundColor: color, borderRadius: 4, height: 8, width: 8 },
     rankText: { color, fontSize: 11, fontWeight: '600' },
     rpText: { color, fontSize: 11, fontWeight: '400', opacity: 0.85 },
     pressed: { opacity: 0.6 },

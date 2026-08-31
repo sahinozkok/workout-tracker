@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { MotionSection } from '@/components/motion-section';
 import { getRankColor, useRankName } from '@/components/ranks/rank-badge';
+import { RankEmblem } from '@/components/ranks/rank-emblem';
 import {
   RANK_RP,
   RANK_STREAK_MILESTONES,
@@ -170,7 +171,7 @@ function TierRow({
       style={[styles.row, isLast && styles.rowLast]}>
       {/* Vurgu çizgisi: mevcut rank sade bir işaretle ayrılır. */}
       <View style={[styles.tierBar, { backgroundColor: isCurrent ? color : 'transparent' }]} />
-      <View style={[styles.tierDot, { backgroundColor: color }]} />
+      <RankEmblem color={color} rankId={rankId} variant="medium" />
       <Text numberOfLines={1} style={styles.rowLabel}>
         {label}
       </Text>
@@ -220,7 +221,6 @@ function createStyles(colors: ThemeColors) {
     rowValue: { color: colors.text, fontSize: 15, fontWeight: '600' },
 
     tierBar: { borderRadius: 2, height: 20, width: 3 },
-    tierDot: { borderRadius: 4, height: 8, width: 8 },
     tierCurrent: { fontSize: 11, fontWeight: '600' },
 
     paragraphRow: {

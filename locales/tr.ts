@@ -1011,6 +1011,12 @@ export const tr = {
     planCompletion: 'Plan uyumu',
     planCompletionValue: '%{percent} ({done}/{total})',
     longestStreak: 'En uzun seri',
+    /** Rank ekranındaki yerel içerik sekmeleri — sunum state'i, yeni route yok. */
+    tabs: {
+      overview: 'Genel',
+      achievements: 'Başarılar',
+      history: 'Geçmiş',
+    },
     weekFocus: {
       title: 'BU HAFTAKİ ODAK',
       remaining: 'Kusursuz hafta bonusuna {count} gün kaldı.',
