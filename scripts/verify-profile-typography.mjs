@@ -162,10 +162,10 @@ check('8. Kanıt etiketleri en az 10 pt ve okunabilir line height', () => {
   assert(!/fontSize:\s*7\.5\b/.test(block), 'etiket eski 7.5 pt değerine dönmüş');
 });
 
-check('9. İkon daireleri referanstaki ~60 pt', () => {
+check('9. İkon daireleri dengeli ~52 pt', () => {
   const block = styleBlock(proofCode, 'iconCircle');
-  assert(/height:\s*60\b/.test(block) && /width:\s*60\b/.test(block), 'ikon dairesi 60 pt değil');
-  assert(/borderRadius:\s*30\b/.test(block), 'ikon dairesi tam yuvarlak değil');
+  assert(/height:\s*52\b/.test(block) && /width:\s*52\b/.test(block), 'ikon dairesi 52 pt değil');
+  assert(/borderRadius:\s*26\b/.test(block), 'ikon dairesi tam yuvarlak değil');
 });
 
 check('10. Her istatistiğin yerleşim yüksekliği en az 44 pt', () => {

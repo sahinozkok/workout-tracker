@@ -48,15 +48,16 @@ check('Level ve rank ikonları 56 pt çember içindedir', () => {
 });
 
 check('Kanıt alanı üç dikey, büyük ama gerçek veri statıdır', () => {
-  assert(/iconCircle:[\s\S]*?height: 60[\s\S]*?width: 60/.test(proof), '60 pt proof ikonları yok');
-  assert(/stat:[\s\S]*?minHeight: 116/.test(proof), 'dikey stat ritmi yok');
+  assert(/iconCircle:[\s\S]*?height: 52[\s\S]*?width: 52/.test(proof), '52 pt proof ikonları yok');
+  assert(/stat:[\s\S]*?minHeight: 104/.test(proof), 'dikey stat ritmi yok');
+  assert(/isDark \? withAlpha\('#C86E61', 0\.18\)/.test(proof), 'koyu tema proof yüzeyi yok');
   for (const token of ['roseBalance', 'workoutDays', 'dayStreak']) assert(proof.includes(token), `${token} kaybolmuş`);
 });
 
 check('Aktif program yalnız opt-in verisi varken kompakt satırdır', () => {
   assert(/ownSharedProgram && \(/.test(profile), 'aktif program guardı yok');
   assert(/<ProfileSharedProgram accentColor=\{profileAccent\.color\} compact/.test(profile), 'kompakt program satırı bağlı değil');
-  assert(/compactIcon:[\s\S]*?height: 56[\s\S]*?width: 56/.test(program), 'program satırı ikonu yok');
+  assert(/compactIcon:[\s\S]*?height: 48[\s\S]*?width: 48/.test(program), 'program satırı ikonu yok');
 });
 
 check('Disiplin satırı kompakt başlar, açılır takvim korunur', () => {
@@ -65,7 +66,7 @@ check('Disiplin satırı kompakt başlar, açılır takvim korunur', () => {
 });
 
 check('Arkadaşlar tam genişlikte, erişilebilir satırdır', () => {
-  assert(/friendsRow:[\s\S]*?minHeight: 76[\s\S]*?width: '100%'/.test(profile), 'tam genişlikte arkadaş satırı yok');
+  assert(/friendsRow:[\s\S]*?minHeight: 68[\s\S]*?width: '100%'/.test(profile), 'tam genişlikte arkadaş satırı yok');
   assert(/router\.push\('\/friends'\)/.test(profile), 'arkadaş routeu kaybolmuş');
 });
 
@@ -79,6 +80,12 @@ check('Season Badges mount ve seçim sözleşmesi değişmedi', () => {
 check('Kart yığını yerine hairline bölüm akışı korunur', () => {
   assert(/sectionDivider:[\s\S]*?height: StyleSheet\.hairlineWidth/.test(profile), 'hairline ayırıcı yok');
   assert(!/LinearGradient|BlurView/.test(progress + proof), 'gradient/blur eklenmiş');
+});
+
+check('Ritim etiketi kaldırılmış, XP verisi sakin ölçüdedir', () => {
+  assert(!/levelCardEyebrow/.test(progress), 'Your Rhythm etiketi hâlâ çiziliyor');
+  assert(/xpValue:[\s\S]*?fontSize: 38/.test(progress), 'XP değeri 38 pt değil');
+  assert(/xpUnit:[\s\S]*?fontSize: 15/.test(progress), 'XP birimi küçültülmemiş');
 });
 
 if (failures.length) {

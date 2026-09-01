@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { withAlpha } from '@/constants/color-presets';
 import { useTranslation } from '@/context/language-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
 
@@ -59,16 +60,16 @@ export function ProfileProofStats({
           alignItems: 'center',
           flex: 1,
           gap: 10,
-          minHeight: 116,
+          minHeight: 104,
           minWidth: 0,
         },
         pressed: { opacity: 0.6 },
         iconCircle: {
           alignItems: 'center',
-          borderRadius: 30,
-          height: 60,
+          borderRadius: 26,
+          height: 52,
           justifyContent: 'center',
-          width: 60,
+          width: 52,
         },
         statCopy: { alignItems: 'center', gap: 4, minWidth: 0, width: '100%' },
         value: {
@@ -101,7 +102,7 @@ export function ProfileProofStats({
       <View style={styles.row}>
         <ProofStat
           accessibilityLabel={t('profile.proofRosesA11y', { count: roseBalance })}
-          backgroundColor="#F3DDD7"
+          backgroundColor={isDark ? withAlpha('#C86E61', 0.18) : '#F3DDD7'}
           color="#C86E61"
           icon="heart"
           label={t('profile.proofRoses')}
@@ -109,7 +110,7 @@ export function ProfileProofStats({
         />
         <ProofStat
           accessibilityLabel={t('profile.proofWorkoutDaysA11y', { count: workoutDays })}
-          backgroundColor="#DFEBDD"
+          backgroundColor={isDark ? withAlpha('#7C9978', 0.2) : '#DFEBDD'}
           color="#7C9978"
           icon="radio-button-on-outline"
           label={t('profile.proofWorkoutDays')}
@@ -121,7 +122,7 @@ export function ProfileProofStats({
               ? t('profile.proofDayStreakOpenA11y', { count: dayStreak })
               : t('profile.proofDayStreakA11y', { count: dayStreak })
           }
-          backgroundColor="#F5E7C5"
+          backgroundColor={isDark ? withAlpha('#BD9147', 0.2) : '#F5E7C5'}
           color="#BD9147"
           icon="flame-outline"
           label={t('profile.proofDayStreak')}
@@ -144,7 +145,7 @@ export function ProfileProofStats({
     const content = (
       <>
         <View style={[styles.iconCircle, { backgroundColor }]}>
-          <Ionicons color={color} name={icon} size={22} />
+          <Ionicons color={color} name={icon} size={20} />
         </View>
         <View style={styles.statCopy}>
           <Text style={styles.value}>{value}</Text>

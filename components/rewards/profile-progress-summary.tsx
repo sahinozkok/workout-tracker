@@ -86,9 +86,8 @@ export function ProfileProgressSummary({
       <View style={styles.divider} />
 
       <View style={styles.rhythm}>
-        <Text style={styles.eyebrow}>{t('rewards.levelCardEyebrow')}</Text>
         <View style={styles.xpRow}>
-          <Ionicons color={accentColor} name="flash" size={28} />
+          <Ionicons color={accentColor} name="flash" size={24} />
           <Text style={styles.xpValue}>{isMaxLevel ? level : xpIntoLevel}</Text>
           <Text style={styles.xpUnit}>{isMaxLevel ? t('rewards.levelMaxValue') : 'XP'}</Text>
         </View>
@@ -145,22 +144,16 @@ function createStyles(colors: ThemeColors, accentColor: string) {
     identityValue: { color: colors.text, fontSize: 15, fontWeight: '600' },
     identityValueMuted: { color: colors.textSecondary },
     divider: { backgroundColor: colors.separator, height: StyleSheet.hairlineWidth },
-    rhythm: { gap: 16, paddingVertical: 28 },
-    eyebrow: {
-      color: accentColor,
-      ...Type.eyebrow,
-      letterSpacing: 1.1,
-      textTransform: 'uppercase',
-    },
+    rhythm: { gap: 14, paddingVertical: 24 },
     xpRow: { alignItems: 'baseline', flexDirection: 'row', gap: 8 },
     xpValue: {
       color: colors.text,
-      fontSize: 44,
+      fontSize: 38,
       fontVariant: ['tabular-nums'],
       fontWeight: '600',
-      lineHeight: 48,
+      lineHeight: 42,
     },
-    xpUnit: { color: colors.textSecondary, fontSize: 17, fontWeight: '600' },
+    xpUnit: { color: colors.textSecondary, fontSize: 15, fontWeight: '600' },
     progressTrack: {
       backgroundColor: colors.surfaceMuted,
       borderRadius: 2,
