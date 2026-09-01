@@ -97,13 +97,36 @@ check('tekrar adımları güvenli sınırlarda ve 44 pt dokunma alanında', () =
   assert.match(workoutDay, /day\.increaseReps/);
 });
 
-check('kardiyoya geçiş set molasını tamamen temizliyor', () => {
+check('kardiyo satırına dokunmak set molasını temizlemiyor', () => {
   const selection = workoutDay.slice(
     workoutDay.indexOf('async function handleExerciseSelection'),
     workoutDay.indexOf('function handleFinishWorkout'),
   );
-  assert.match(selection, /isCardioExercise\(selectedExercise\) && restTimer/);
-  assert.match(selection, /await clearRestTimer\(restTimer\)/);
+  assert.doesNotMatch(selection, /clearRestTimer/);
+});
+
+check('set molası aktivite ölçümü gerçekten başladıktan sonra temizleniyor', () => {
+  const start = workoutDay.slice(
+    workoutDay.indexOf('async function startActivityMeasurement'),
+    workoutDay.indexOf('async function pauseActivityMeasurement'),
+  );
+  const persistedAt = start.indexOf('await persistActivityTimer(timer)');
+  const clearedAt = start.indexOf('await clearRestTimer(restTimer)');
+  assert.ok(persistedAt >= 0, 'aktivite kronometresi kalıcılaştırılmıyor');
+  assert.ok(clearedAt > persistedAt, 'mola aktivite başlamadan önce temizleniyor');
+  assert.match(start, /if \(restTimer\) await clearRestTimer\(restTimer\)/);
+});
+
+check('egzersiz seçme ekranı mevcut motion bileşenleriyle canlanıyor', () => {
+  assert.match(addExercise, /<MotionListItem delay=\{index \* MotionStagger\.step\}/);
+  assert.match(addExercise, /<MotionPressable[\s\S]*?accessibilityRole="checkbox"/);
+  assert.match(addExercise, /transitionKey=\{selected \? 'selected' : 'idle'\}/);
+});
+
+check('kategori ve özel egzersiz geçişi sakin ve Reduce Motion uyumlu', () => {
+  assert.match(addExercise, /<MotionSwap[\s\S]*?pace="calm"[\s\S]*?transitionKey=\{customExerciseName/);
+  assert.match(addExercise, /<MotionPressable[\s\S]*?accessibilityState=\{\{ selected \}\}/);
+  assert.doesNotMatch(addExercise, /withTiming|FadeIn|FadeOut|LinearTransition/);
 });
 
 check('ayarlar geri düğmesi gerçek geri ve güvenli profil dönüşü sunuyor', () => {

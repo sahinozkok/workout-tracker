@@ -889,6 +889,10 @@ export default function WorkoutDayScreen() {
 
       setClockNow(Date.now());
       await persistActivityTimer(timer);
+      // Kullanıcı yalnızca kardiyo satırına göz atmış olabilir; set molası bu
+      // noktaya kadar korunur. Ölçüm gerçekten başlayıp kalıcılaştığında mola,
+      // saklanan kaydı ve bekleyen bildirimiyle birlikte temizlenir.
+      if (restTimer) await clearRestTimer(restTimer);
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       void scheduleActivityTarget(timer);
     } catch (error) {
@@ -1127,14 +1131,6 @@ export default function WorkoutDayScreen() {
   ) {
     setSelectedExerciseId(exerciseId);
     setIsManualSelection(isComplete);
-
-    // Mola yalnızca setler arasındadır. Süre/mesafe egzersizine geçildiği an
-    // görünür sayaç, saklanan kayıt ve bekleyen bildirim birlikte temizlenir;
-    // kardiyo paneline eski set molası taşınmaz.
-    const selectedExercise = allDayExercises.find((exercise) => exercise.id === exerciseId);
-    if (selectedExercise && isCardioExercise(selectedExercise) && restTimer) {
-      await clearRestTimer(restTimer);
-    }
 
     // Son planlı set antrenmanı otomatik bitirir. Kullanıcı tamamlanmış
     // bir egzersize yeniden dokunursa aynı oturumu ekstra set için devam ettir.

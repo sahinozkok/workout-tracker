@@ -18,7 +18,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { MotionPressable } from '@/components/motion-pressable';
+import { MotionListItem } from '@/components/motion-list-item';
+import { MotionSwap } from '@/components/motion-section';
 import { WorkoutVisualPicker } from '@/components/workout-visual-picker';
+import { MotionStagger } from '@/constants/motion';
 import { Form, Layout, ThemeColors, Type } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useTranslation } from '@/context/language-context';
@@ -394,41 +397,42 @@ export default function AddExerciseScreen() {
               />
             </View>
 
-            {customExerciseName && selectedExercises.length === 0 ? (
-              <View style={styles.customExerciseNotice}>
-                <Ionicons name="create-outline" size={15} color={colors.accent} />
-                <Text style={styles.customExerciseNoticeText}>
-                  {t('addExercise.customNotice', { name: customExerciseName })}
-                </Text>
-              </View>
-            ) : (
-              <ScrollView
-                contentContainerStyle={styles.categoryList}
-                horizontal
-                showsHorizontalScrollIndicator={false}>
-                {EXERCISE_MUSCLE_GROUPS.map((muscleGroup) => {
-                  const selected = muscleGroup === selectedMuscleGroup;
+            <MotionSwap
+              pace="calm"
+              style={styles.searchModeSwap}
+              transitionKey={customExerciseName && selectedExercises.length === 0 ? 'custom' : 'categories'}>
+              {customExerciseName && selectedExercises.length === 0 ? (
+                <View style={styles.customExerciseNotice}>
+                  <Ionicons name="create-outline" size={15} color={colors.accent} />
+                  <Text style={styles.customExerciseNoticeText}>
+                    {t('addExercise.customNotice', { name: customExerciseName })}
+                  </Text>
+                </View>
+              ) : (
+                <ScrollView
+                  contentContainerStyle={styles.categoryList}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}>
+                  {EXERCISE_MUSCLE_GROUPS.map((muscleGroup) => {
+                    const selected = muscleGroup === selectedMuscleGroup;
 
-                  return (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityState={{ selected }}
-                      hitSlop={6}
-                      key={muscleGroup}
-                      onPress={() => setSelectedMuscleGroup(muscleGroup)}
-                      style={({ pressed }) => [
-                        styles.categoryTab,
-                        selected && styles.categoryTabSelected,
-                        pressed && styles.pressed,
-                      ]}>
-                      <Text style={[styles.categoryText, selected && styles.categoryTextSelected]}>
-                        {getMuscleGroupLabel(muscleGroup, t)}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-            )}
+                    return (
+                      <MotionPressable
+                        accessibilityRole="button"
+                        accessibilityState={{ selected }}
+                        hitSlop={6}
+                        key={muscleGroup}
+                        onPress={() => setSelectedMuscleGroup(muscleGroup)}
+                        style={[styles.categoryTab, selected && styles.categoryTabSelected]}>
+                        <Text style={[styles.categoryText, selected && styles.categoryTextSelected]}>
+                          {getMuscleGroupLabel(muscleGroup, t)}
+                        </Text>
+                      </MotionPressable>
+                    );
+                  })}
+                </ScrollView>
+              )}
+            </MotionSwap>
           </View>
 
           <View style={styles.exerciseLibrary}>
@@ -436,26 +440,31 @@ export default function AddExerciseScreen() {
               const selected = selectedExerciseIds.includes(exercise.id);
 
               return (
-                <Pressable
-                  accessibilityRole="checkbox"
-                  accessibilityState={{ checked: selected }}
-                  key={exercise.id}
-                  onPress={() => toggleExercise(exercise.id)}
-                  style={({ pressed }) => [
-                    styles.exerciseOption,
-                    index > 0 && styles.rowDivided,
-                    pressed && styles.pressed,
-                  ]}>
-                  <View style={styles.exerciseInfo}>
-                    <Text style={[styles.exerciseName, selected && styles.exerciseNameSelected]}>
-                      {exercise.name}
-                    </Text>
-                    <Text style={styles.exerciseMeta}>
-                      {getMuscleGroupLabel(exercise.muscleGroup, t)} · {getEquipmentLabel(exercise.equipment, t)}
-                    </Text>
-                  </View>
-                  {selected && <Ionicons name="checkmark-circle" size={20} color={workoutDays.color} />}
-                </Pressable>
+                <MotionListItem delay={index * MotionStagger.step} key={exercise.id}>
+                  <MotionPressable
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: selected }}
+                    onPress={() => toggleExercise(exercise.id)}
+                    style={[styles.exerciseOption, index > 0 && styles.rowDivided]}>
+                    <View style={styles.exerciseInfo}>
+                      <Text style={[styles.exerciseName, selected && styles.exerciseNameSelected]}>
+                        {exercise.name}
+                      </Text>
+                      <Text style={styles.exerciseMeta}>
+                        {getMuscleGroupLabel(exercise.muscleGroup, t)} · {getEquipmentLabel(exercise.equipment, t)}
+                      </Text>
+                    </View>
+                    <MotionSwap
+                      style={styles.selectionSlot}
+                      transitionKey={selected ? 'selected' : 'idle'}>
+                      {selected ? (
+                        <Ionicons name="checkmark-circle" size={20} color={workoutDays.color} />
+                      ) : (
+                        <View />
+                      )}
+                    </MotionSwap>
+                  </MotionPressable>
+                </MotionListItem>
               );
             })}
 
@@ -666,6 +675,7 @@ function createStyles(colors: ThemeColors, feature: { accent: string; onAccent: 
     },
     customExerciseNotice: { alignItems: 'flex-start', flexDirection: 'row', gap: 7 },
     customExerciseNoticeText: { color: colors.textSecondary, flex: 1, ...Type.caption },
+    searchModeSwap: { overflow: 'hidden' },
 
     // Ana Sayfa'daki Hafta/Ay/Yıl seçicisi: aynı punto, renk + ağırlık + alt çizgi.
     categoryList: { gap: 20, paddingRight: Layout.screenPadding },
@@ -693,6 +703,7 @@ function createStyles(colors: ThemeColors, feature: { accent: string; onAccent: 
     exerciseName: { color: colors.text, ...Type.rowTitle },
     exerciseNameSelected: { color: feature.accent },
     exerciseMeta: { color: colors.textSecondary, ...Type.caption },
+    selectionSlot: { alignItems: 'center', height: 20, justifyContent: 'center', width: 20 },
     noResults: { paddingVertical: 26 },
     noResultsText: { color: colors.textSecondary, ...Type.caption, textAlign: 'center' },
 
