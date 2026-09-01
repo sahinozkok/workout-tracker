@@ -5,8 +5,7 @@
 
 import { Platform, StyleSheet } from 'react-native';
 
-export const Colors = {
-  light: {
+const lightColors = {
     background: '#FFFFFF',
     surface: '#FFFFFF',
     surfaceMuted: '#F2F2F7',
@@ -51,8 +50,9 @@ export const Colors = {
     icon: '#8E8E93',
     tabIconDefault: '#8E8E93',
     tabIconSelected: '#007AFF',
-  },
-  dark: {
+};
+
+const darkColors = {
     background: '#040404ff',
     surface: '#000000',
     surfaceMuted: '#1C1C1E',
@@ -91,6 +91,40 @@ export const Colors = {
     icon: '#8E8E93',
     tabIconDefault: '#6A6A6E',
     tabIconSelected: '#FFFFFF',
+};
+
+export const Colors = {
+  light: lightColors,
+  /** Saf beyaz yerine sıcak, düşük kontrastlı açık alternatif. */
+  warmLight: {
+    ...lightColors,
+    background: '#FCE5CD',
+    surface: '#FFF3E5',
+    surfaceMuted: '#F2D4B7',
+    card: '#F7DCC1',
+    border: '#DDBB99',
+    separator: '#DDBB99',
+    inputBorder: '#D3AA84',
+    disciplineEmpty: '#EBCBAD',
+    disciplineFuture: '#F4D9BD',
+    profileCalendarEmpty: '#DDBB9C',
+    profileCalendarFuture: '#EACCAF',
+  },
+  dark: darkColors,
+  /** Saf siyah yerine daha yumuşak, kömür tonlu koyu alternatif. */
+  softDark: {
+    ...darkColors,
+    background: '#1B1B1B',
+    surface: '#202020',
+    surfaceMuted: '#2A2A2A',
+    card: '#242424',
+    border: '#3B3B3B',
+    separator: '#343434',
+    inputBorder: '#424242',
+    disciplineEmpty: '#303030',
+    disciplineFuture: '#252525',
+    profileCalendarEmpty: '#121212',
+    profileCalendarFuture: '#171717',
   },
 };
 

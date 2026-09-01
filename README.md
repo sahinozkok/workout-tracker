@@ -19,7 +19,7 @@ A cross-platform workout planning and progress-tracking application built with R
 - Completed, partial, skipped, and scheduled rest-day states
 - Workout history, set details, duration, volume, and exercise progress
 - Turkish and English interface localization
-- Light, dark, and system theme preferences
+- Light, warm light, soft dark, dark, and system theme preferences
 - Persistent profile avatars and banners, including animated GIF support
 - Friend discovery, requests, private friend profiles, and shared discipline calendars
 - Conversational AI coach grounded in verified Supabase workout data

@@ -1,14 +1,14 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
-import { Colors } from '@/constants/theme';
+import { Colors, ThemeColors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
-export type ThemePreference = 'system' | 'light' | 'dark';
+export type ThemePreference = 'system' | 'light' | 'warmLight' | 'softDark' | 'dark';
 
 type ThemeContextValue = {
   colorScheme: 'light' | 'dark';
-  colors: (typeof Colors)['light'];
+  colors: ThemeColors;
   isDark: boolean;
   preference: ThemePreference;
   setPreference: (preference: ThemePreference) => void;
@@ -20,13 +20,24 @@ const THEME_STORAGE_KEY = '@workout-tracker/theme-preference';
 export function ThemePreferenceProvider({ children }: PropsWithChildren) {
   const systemColorScheme = useColorScheme() ?? 'light';
   const [preference, setPreferenceState] = useState<ThemePreference>('system');
-  const colorScheme = preference === 'system' ? systemColorScheme : preference;
+  const colorScheme =
+    preference === 'system'
+      ? systemColorScheme
+      : preference === 'dark' || preference === 'softDark'
+        ? 'dark'
+        : 'light';
 
   useEffect(() => {
     async function loadPreference() {
       const savedPreference = await AsyncStorage.getItem(THEME_STORAGE_KEY);
 
-      if (savedPreference === 'system' || savedPreference === 'light' || savedPreference === 'dark') {
+      if (
+        savedPreference === 'system' ||
+        savedPreference === 'light' ||
+        savedPreference === 'warmLight' ||
+        savedPreference === 'softDark' ||
+        savedPreference === 'dark'
+      ) {
         setPreferenceState(savedPreference);
       }
     }
@@ -43,15 +54,22 @@ export function ThemePreferenceProvider({ children }: PropsWithChildren) {
     });
   }, []);
 
+  const colors =
+    preference === 'warmLight'
+      ? Colors.warmLight
+      : preference === 'softDark'
+        ? Colors.softDark
+        : Colors[colorScheme];
+
   const value = useMemo(
     () => ({
       colorScheme,
-      colors: Colors[colorScheme],
+      colors,
       isDark: colorScheme === 'dark',
       preference,
       setPreference,
     }),
-    [colorScheme, preference, setPreference],
+    [colorScheme, colors, preference, setPreference],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

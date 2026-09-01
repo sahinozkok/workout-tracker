@@ -231,6 +231,16 @@ export default function SettingsScreen() {
             />
             <ThemeButton
               colors={colors}
+              icon="sunny"
+              label={t('profile.themeWarmLight')}
+              onAccent={onSettingsAccent}
+              onSelect={setPreference}
+              selected={preference === 'warmLight'}
+              styles={styles}
+              value="warmLight"
+            />
+            <ThemeButton
+              colors={colors}
               icon="phone-portrait-outline"
               label={t('profile.themeSystem')}
               onAccent={onSettingsAccent}
@@ -238,6 +248,16 @@ export default function SettingsScreen() {
               selected={preference === 'system'}
               styles={styles}
               value="system"
+            />
+            <ThemeButton
+              colors={colors}
+              icon="moon-outline"
+              label={t('profile.themeSoftDark')}
+              onAccent={onSettingsAccent}
+              onSelect={setPreference}
+              selected={preference === 'softDark'}
+              styles={styles}
+              value="softDark"
             />
             <ThemeButton
               colors={colors}
@@ -468,6 +488,13 @@ function ThemeButton({
       onPress={() => onSelect(value)}
       style={({ pressed }) => [styles.themeButton, selected && styles.themeButtonSelected, pressed && styles.pressed]}>
       <Ionicons name={icon} size={15} color={selected ? onAccent : colors.textTertiary} />
+      <Text
+        adjustsFontSizeToFit
+        minimumFontScale={0.82}
+        numberOfLines={1}
+        style={[styles.themeButtonText, selected && styles.themeButtonTextSelected]}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
@@ -504,7 +531,7 @@ function createStyles(
       minHeight: Layout.minTouchSize,
     },
     topSettingRow: { alignItems: 'flex-start' },
-    appearanceRow: { marginTop: 32 },
+    appearanceRow: { alignItems: 'stretch', flexDirection: 'column', marginTop: 32 },
     featureRow: { minHeight: 80 },
     settingIcon: {
       alignItems: 'center',
@@ -557,15 +584,27 @@ function createStyles(
     // Kontrast parlaklıktan hesaplanır; sabit açık ton varsayılmaz.
     languageTextSelected: { color: onSettingsAccent },
     themeToggle: {
-      borderColor: colors.separator,
-      borderRadius: Layout.radiusPill,
-      borderWidth: StyleSheet.hairlineWidth,
       flexDirection: 'row',
-      gap: 2,
-      padding: 3,
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: 8,
     },
-    themeButton: { alignItems: 'center', borderRadius: Layout.radiusPill, height: 34, justifyContent: 'center', width: 36 },
-    themeButtonSelected: { backgroundColor: settingsAccent },
+    themeButton: {
+      alignItems: 'center',
+      backgroundColor: colors.surfaceMuted,
+      borderColor: colors.separator,
+      borderRadius: Layout.radiusMedium,
+      borderWidth: StyleSheet.hairlineWidth,
+      flexBasis: '31%',
+      flexGrow: 1,
+      gap: 5,
+      justifyContent: 'center',
+      minHeight: 56,
+      paddingHorizontal: 8,
+    },
+    themeButtonSelected: { backgroundColor: settingsAccent, borderColor: settingsAccent },
+    themeButtonText: { color: colors.textSecondary, ...Type.footnote, fontWeight: '600' },
+    themeButtonTextSelected: { color: onSettingsAccent },
     signOutButton: {
       alignItems: 'center',
       alignSelf: 'flex-start',
