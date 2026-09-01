@@ -88,9 +88,21 @@ export function ProfileProgressSummary({
 
         <View style={styles.identityDivider} />
 
-        {onRankPress && rank ? (
+        {onRankPress ? (
+          /**
+           * Rank alanı, rank verisi henüz GELMEMİŞ ya da hata vermiş olsa bile
+           * her zaman basılabilir: dokununca Rank ekranı açılır ve kullanıcı
+           * oradan Retry görebilir. Sahte rank/RP ÜRETİLMEZ — veri yokken
+           * yalnızca mevcut "unranked" görünümü gösterilir; ikon/yazı ölçüleri
+           * ve düzen değişmez.
+           */
           <Pressable
-            accessibilityLabel={`${rankName(rank.id)}, ${t('ranks.rpValue', { rp: rank.rp })}`}
+            accessibilityHint={t('ranks.badgeHint')}
+            accessibilityLabel={
+              rank
+                ? `${rankName(rank.id)}, ${t('ranks.rpValue', { rp: rank.rp })}`
+                : t('ranks.unranked')
+            }
             accessibilityRole="button"
             onPress={onRankPress}
             style={({ pressed }) => [styles.identityCell, pressed && styles.pressed]}>

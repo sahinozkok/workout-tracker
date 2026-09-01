@@ -73,6 +73,14 @@ type RankContextValue = {
   /** Sunucudan gelen güncel sezon özeti. Henüz yüklenmediyse `undefined`. */
   season?: RankSeasonSummary;
   isRankLoading: boolean;
+  /**
+   * İlk gerçek rank isteği TAMAMLANDI ama sunucudan gösterilebilir bir sezon
+   * gelmedi (RPC hata verdi ya da boş döndü). Yalnızca elde HİÇ sezon yokken
+   * `true` olur; eldeki sezon geçici bir hatayla silinmez. Rank ekranı bunu
+   * sonsuz spinner yerine hata + Retry göstermek, profil de vitrini sonsuz
+   * loading'de bırakmamak için kullanır. Rank/RP İSTEMCİDE HESAPLANMAZ.
+   */
+  hasRankError: boolean;
   /** Kapanmış sezon arşivi; yalnızca detay ekranı istediğinde yüklenir. */
   history: RankSeasonArchive[];
   isHistoryLoading: boolean;
@@ -213,6 +221,7 @@ export function RankProvider({ children }: PropsWithChildren) {
 
   const [season, setSeason] = useState<RankSeasonSummary>();
   const [isRankLoading, setIsRankLoading] = useState(false);
+  const [hasRankError, setHasRankError] = useState(false);
   const [history, setHistory] = useState<RankSeasonArchive[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [events, setEvents] = useState<RankEvent[]>([]);
@@ -364,12 +373,33 @@ export function RankProvider({ children }: PropsWithChildren) {
 
     isSyncingRef.current = true;
     const owner = ownerRef.current;
+    // Gerçek uçuş başlıyor: ekran loading gösterebilir ve önceki hata temizlenir
+    // (Retry de bu yoldan geçtiği için spinner'a döner).
+    if (isMountedRef.current) {
+      setIsRankLoading(true);
+      setHasRankError(false);
+    }
 
     try {
       const next = await syncMyRank(todayKeyRef.current);
       // Hesap arada değiştiyse eski cevap hiçbir şeyi yazamaz.
       if (!isMountedRef.current || owner !== ownerRef.current) return;
-      if (next) setSeason(next);
+      if (next) {
+        // Aynı uçuşun hemen ardından başlayan başarı/vitrin yüklemesi React
+        // render'ını beklemeden güncel sezonu görsün. Aksi hâlde hızlı bir RPC
+        // cevabı ilk açılışta seçim yüklemesini bir sonraki sync'e bırakabilir.
+        seasonRef.current = next;
+        setSeason(next);
+        setHasRankError(false);
+      } else if (!seasonRef.current) {
+        /**
+         * İstek TAMAMLANDI ama sunucu sezon döndürmedi ve elde de sezon yok.
+         * Ekran bunu sonsuz spinner değil, hata + Retry olarak göstermeli.
+         * Zero-RP/yeni kullanıcı GEÇERLİ bir satır döndürür (season dolu olur),
+         * dolayısıyla burada yanlışlıkla hata sayılmaz.
+         */
+        setHasRankError(true);
+      }
 
       /**
        * RP geçmişi YALNIZCA daha önce istendiyse tazelenir. Kullanıcı rank
@@ -392,8 +422,12 @@ export function RankProvider({ children }: PropsWithChildren) {
        */
       loadAchievementsRef.current();
     } catch {
-      // Sessiz: rank okunamazsa ekran mevcut değerle çalışmaya devam eder ve
-      // sonraki güvenli sync aynı olayları idempotent biçimde tamamlar.
+      // Rank okunamazsa akış engellenmez; sonraki güvenli sync eksikleri
+      // idempotent tamamlar. Yalnızca gösterilecek hiç sezon YOKKEN hata
+      // işaretlenir — eldeki sezon geçici bir hatayla silinmez.
+      if (isMountedRef.current && owner === ownerRef.current && !seasonRef.current) {
+        setHasRankError(true);
+      }
     } finally {
       // Kilidi yalnızca hâlâ aynı hesabın uçuşu açar.
       if (owner === ownerRef.current) {
@@ -1246,6 +1280,7 @@ export function RankProvider({ children }: PropsWithChildren) {
     setRankUp(undefined);
     setSeasonRecap(undefined);
     setIsRankLoading(Boolean(userId));
+    setHasRankError(false);
   }, [userId]);
 
   /**
@@ -1345,6 +1380,7 @@ export function RankProvider({ children }: PropsWithChildren) {
       isEventsLoading,
       isHistoryLoading,
       isRankLoading,
+      hasRankError,
       isWeekFocusLoading,
       loadAchievements,
       loadEvents,
@@ -1384,6 +1420,7 @@ export function RankProvider({ children }: PropsWithChildren) {
       isEventsLoading,
       isHistoryLoading,
       isRankLoading,
+      hasRankError,
       isWeekFocusLoading,
       loadAchievements,
       loadEvents,

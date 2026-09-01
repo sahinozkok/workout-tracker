@@ -94,6 +94,7 @@ export default function ProfileScreen() {
    */
   const {
     hasAchievementsError,
+    hasRankError,
     hasShowcaseSelectionError,
     isAchievementsLoading,
     isShowcaseSelectionReady,
@@ -714,13 +715,16 @@ export default function ProfileScreen() {
               yeni sorgu açılmaz. Hata durumunda vitrin sessizce gizlenir ve profil
               çalışmaya devam eder. */}
           <MotionSection delay={80} style={styles.showcaseSection}>
+            {/* season yokken: hata oluşursa gizle, oluşmadıysa yükleniyor kal —
+                böylece season hiç gelmese bile spinner sonsuza kadar dönmez.
+                season geldiyse eski davranış (seçim hazır olana dek yükleniyor). */}
             <ProfileAchievementShowcase
               accentColor={profileAccent.color}
               entries={profileShowcaseEntries}
-              hasError={hasAchievementsError || hasShowcaseSelectionError}
-              /* Seçim hazır olmadan otomatik vitrinmiş gibi YANLIŞ rozet
-                 gösterilmez: hazır olana kadar yükleniyor durumunda kalır. */
-              isLoading={isAchievementsLoading || !isShowcaseSelectionReady}
+              hasError={hasAchievementsError || hasShowcaseSelectionError || hasRankError}
+              isLoading={
+                rankSeason ? isAchievementsLoading || !isShowcaseSelectionReady : !hasRankError
+              }
               onPress={() => router.push('/rank-showcase')}
               preserveOrder
             />

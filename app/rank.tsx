@@ -77,6 +77,7 @@ export default function RankScreen() {
     loadHistory,
     loadWeekFocus,
     season,
+    syncRank,
     weekFocus,
   } = useRanks();
   const rankName = useRankName();
@@ -119,9 +120,23 @@ export default function RankScreen() {
               <Text style={styles.centerText}>{t('ranks.loading')}</Text>
             </>
           ) : (
+            /**
+             * İlk istek TAMAMLANDI ama sezon gelmedi: sonsuz spinner YOK.
+             * Anlaşılır hata + Retry gösterilir; Retry aynı güvenli `syncRank()`
+             * yolunu yeniden çalıştırır (yeniden loading → başarılıysa normal
+             * ekran). İstemci burada rank/RP HESAPLAMAZ, Bronze uydurmaz.
+             */
             <>
               <Ionicons color={colors.textTertiary} name="cloud-offline-outline" size={40} />
               <Text style={styles.centerText}>{t('ranks.loadFailed')}</Text>
+              <MotionPressable
+                accessibilityRole="button"
+                onPress={() => void syncRank()}
+                style={styles.centerRetry}>
+                <Text style={[styles.centerRetryText, { color: todayColor }]}>
+                  {t('common.retry')}
+                </Text>
+              </MotionPressable>
             </>
           )}
         </View>
@@ -901,6 +916,9 @@ function createStyles(colors: ThemeColors) {
     content: { paddingBottom: 40, paddingHorizontal: Layout.screenPadding, paddingTop: 8 },
     centerState: { alignItems: 'center', flex: 1, gap: 12, justifyContent: 'center', padding: 32 },
     centerText: { color: colors.textSecondary, fontSize: 13, textAlign: 'center' },
+    /** Retry dokunma alanı 44 pt'nin altına inmez. */
+    centerRetry: { justifyContent: 'center', minHeight: Layout.minTouchSize, paddingHorizontal: 8 },
+    centerRetryText: { fontSize: 15, fontWeight: '600' },
 
     header: {
       alignItems: 'center',
