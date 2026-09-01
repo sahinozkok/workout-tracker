@@ -121,11 +121,12 @@ check('5. profileSummary ritmi: kimlik sıkı, büyük bölüm ayrık', () => {
   // Kimlik öğeleri artık daha sıkı (eski 8 değil).
   assert(gap <= 6, `profileSummary gap kimliği sıkılaştırmıyor (gap=${gap})`);
 
-  const level = styleBlock(profileCode, 'levelSection');
-  const levelTop = Number(level.match(/marginTop:\s*(\d+)/)?.[1]);
-  assert(Number.isFinite(levelTop), 'levelSection marginTop okunamadı');
-  // Kimlik ile ilk büyük bölüm (ring) arası net boşluk: gap + marginTop.
-  assert(gap + levelTop >= 28, `kimlik/bölüm ayrımı yetersiz (${gap + levelTop} pt)`);
+  const summaryBottom = Number(summary.match(/paddingBottom:\s*(\d+)/)?.[1]);
+  const divider = styleBlock(profileCode, 'sectionDivider');
+  const dividerSpace = Number(divider.match(/marginVertical:\s*(\d+)/)?.[1]);
+  assert(Number.isFinite(summaryBottom), 'profileSummary paddingBottom okunamadı');
+  assert(Number.isFinite(dividerSpace), 'sectionDivider marginVertical okunamadı');
+  assert(summaryBottom + dividerSpace >= 28, `kimlik/bölüm ayrımı yetersiz (${summaryBottom + dividerSpace} pt)`);
 });
 
 check('6. Edit butonu dokunma yüksekliği en az Layout.minTouchSize', () => {
@@ -143,12 +144,12 @@ check('6. Edit butonu dokunma yüksekliği en az Layout.minTouchSize', () => {
 // 4 · Profil kanıt istatistikleri (profile-proof-stats.tsx)
 // ---------------------------------------------------------------------------
 
-check('7. Kanıt değerleri ~17 pt / 600 ve tabular-nums korunur', () => {
+check('7. Kanıt değerleri referanstaki güçlü ~24 pt / 600 ve tabular-nums', () => {
   const block = styleBlock(proofCode, 'value');
-  assert(/fontSize:\s*17\b/.test(block), 'kanıt değeri fontSize 17 değil');
+  assert(/fontSize:\s*24\b/.test(block), 'kanıt değeri fontSize 24 değil');
   assert(/fontWeight:\s*'600'/.test(block), 'kanıt değeri ağırlığı 600 değil');
   assert(/fontVariant:\s*\['tabular-nums'\]/.test(block), 'tabular-nums kaldırılmış');
-  assert(!/fontSize:\s*14\b/.test(block), 'kanıt değeri eski 14 pt değerine dönmüş');
+  assert(!/fontSize:\s*17\b/.test(block), 'kanıt değeri eski kompakt 17 pt değerine dönmüş');
 });
 
 check('8. Kanıt etiketleri en az 10 pt ve okunabilir line height', () => {
@@ -161,10 +162,10 @@ check('8. Kanıt etiketleri en az 10 pt ve okunabilir line height', () => {
   assert(!/fontSize:\s*7\.5\b/.test(block), 'etiket eski 7.5 pt değerine dönmüş');
 });
 
-check('9. İkon daireleri ~32 pt', () => {
+check('9. İkon daireleri referanstaki ~60 pt', () => {
   const block = styleBlock(proofCode, 'iconCircle');
-  assert(/height:\s*32\b/.test(block) && /width:\s*32\b/.test(block), 'ikon dairesi 32 pt değil');
-  assert(/borderRadius:\s*16\b/.test(block), 'ikon dairesi tam yuvarlak değil');
+  assert(/height:\s*60\b/.test(block) && /width:\s*60\b/.test(block), 'ikon dairesi 60 pt değil');
+  assert(/borderRadius:\s*30\b/.test(block), 'ikon dairesi tam yuvarlak değil');
 });
 
 check('10. Her istatistiğin yerleşim yüksekliği en az 44 pt', () => {

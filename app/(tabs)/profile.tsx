@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
@@ -24,10 +23,9 @@ import { useReducedMotion } from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { MotionPressable } from '@/components/motion-pressable';
-import { getOnAccentColor, withAlpha } from '@/constants/color-presets';
+import { getOnAccentColor } from '@/constants/color-presets';
 import { ProfileAchievementShowcase } from '@/components/ranks/profile-achievement-showcase';
-import { RankBadge } from '@/components/ranks/rank-badge';
-import { LevelProgressRing } from '@/components/rewards/level-progress-ring';
+import { ProfileProgressSummary } from '@/components/rewards/profile-progress-summary';
 import { ProfileProofStats } from '@/components/rewards/profile-proof-stats';
 import { ProfileDisciplineCard } from '@/components/profile-discipline-card';
 import { ProfileSharedProgram } from '@/components/profile-shared-program';
@@ -126,29 +124,6 @@ export default function ProfileScreen() {
   // Ref kullanılır; unmount temizliği her zaman en güncel değeri görür.
   const stagedPathsRef = useRef<Partial<Record<ProfileImageKind, string>>>({});
   const userIdRef = useRef<string | undefined>(user?.id);
-  /**
-   * Seviye kartının giriş animasyonunu tetikler.
-   *
-   * SADECE ekran odak kazandığında artar. Profil verisi, tema, düzenleme
-   * formu veya başka bir state güncellendiğinde değeri değişmediği için kart
-   * sebepsiz yere yeniden oynamaz.
-   */
-  const [levelRevealToken, setLevelRevealToken] = useState(0);
-  const hasFocusedOnceRef = useRef(false);
-
-  useFocusEffect(
-    useCallback(() => {
-      // İlk odak mount ile aynı ana denk gelir; kart o anda zaten oynuyor.
-      // Burada tekrar tetiklenirse animasyon boşuna baştan başlardı.
-      if (!hasFocusedOnceRef.current) {
-        hasFocusedOnceRef.current = true;
-        return;
-      }
-
-      setLevelRevealToken((current) => current + 1);
-    }, []),
-  );
-
   useEffect(() => {
     userIdRef.current = user?.id;
   }, [user?.id]);
@@ -706,36 +681,20 @@ export default function ProfileScreen() {
 
           <View style={styles.sectionDivider} />
 
-          {/* İLERLEME — level (ömür boyu XP) ve sezon rank AYRI sistemlerdir;
-              yan yana durur ama aynı bilgi tekrar edilmez. Halka level
-              ilerlemesini, rozet sezon rank'ını gösterir. Rank verisi yoksa rozet
-              HİÇ çizilmez (istemci rank uydurmaz). */}
+          {/* İLERLEME — referanstaki düz akış: Level/Rank kimliği yan yana,
+              altında yatay XP ritmi. İki sistem yine ayrıdır ve bütün değerler
+              mevcut contextlerden gelir; istemci sahte rank üretmez. */}
           <MotionSection delay={40} style={styles.progressSection}>
-            <View style={styles.levelIdentityRow}>
-              <View style={styles.levelPill}>
-                <Text style={styles.levelPillIcon}>❀</Text>
-                <Text style={styles.levelPillText}>{t('rewards.levelLabel', { level: levelProgress.level })}</Text>
-              </View>
-              {rankSeason && (
-                <RankBadge
-                  onPress={() => router.push('/rank')}
-                  rankId={rankSeason.currentRank}
-                  rp={rankSeason.currentRp}
-                />
-              )}
-            </View>
+            <ProfileProgressSummary
+              accentColor={profileAccent.color}
+              level={levelProgress.level}
+              onRankPress={() => router.push('/rank')}
+              rank={rankSeason ? { id: rankSeason.currentRank, rp: rankSeason.currentRp } : undefined}
+              xpForNextLevel={levelProgress.xpForNextLevel}
+              xpIntoLevel={levelProgress.xpIntoLevel}
+            />
 
-            <View style={styles.levelSection}>
-              <LevelProgressRing
-                accentColor={profileAccent.color}
-                fillColor={profileAccent.color}
-                level={levelProgress.level}
-                revealToken={levelRevealToken}
-                xpForNextLevel={levelProgress.xpForNextLevel}
-                xpIntoLevel={levelProgress.xpIntoLevel}
-              />
-            </View>
-
+            <View style={styles.innerDivider} />
             <ProfileProofStats
               accentColor={profileAccent.color}
               dayStreak={disciplineStreak}
@@ -772,7 +731,7 @@ export default function ProfileScreen() {
             <>
               <View style={styles.sectionDivider} />
               <MotionSection delay={40} style={styles.sharedProgramSection}>
-                <ProfileSharedProgram accentColor={profileAccent.color} program={ownSharedProgram} />
+                <ProfileSharedProgram accentColor={profileAccent.color} compact program={ownSharedProgram} />
               </MotionSection>
             </>
           )}
@@ -783,7 +742,7 @@ export default function ProfileScreen() {
               paylaşır. Profil akışının bir bölümü gibi durur, dev bağımsız kart
               değildir. Açılır/kapanır davranışı korunur. */}
           <MotionSection delay={40} style={styles.calendarSection}>
-            <ProfileDisciplineCard accentColor={profileAccent.color} collapsible />
+            <ProfileDisciplineCard accentColor={profileAccent.color} collapsible compact />
           </MotionSection>
 
           <View style={styles.sectionDivider} />
@@ -938,30 +897,6 @@ function createStyles(
       paddingHorizontal: 8,
       textAlign: 'center',
     },
-    levelIdentityRow: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      // Seviye ve rank rozeti yan yana durduğunda 8 pt boşluk kalır. Tek
-      // rozet varken `gap` görünür bir etki yapmaz; yerleşim değişmez.
-      gap: 8,
-      justifyContent: 'center',
-      marginTop: 4,
-      width: '100%',
-    },
-    levelPill: {
-      alignItems: 'center',
-      // Arka plan profil renginden düşük opaklıkla türetilir.
-      backgroundColor: withAlpha(profile.accent, isDark ? 0.18 : 0.12),
-      borderColor: withAlpha(profile.accent, isDark ? 0.32 : 0.24),
-      borderRadius: Layout.radiusPill,
-      borderWidth: StyleSheet.hairlineWidth,
-      flexDirection: 'row',
-      gap: 5,
-      minHeight: 28,
-      paddingHorizontal: 11,
-    },
-    levelPillIcon: { color: profile.accent, fontSize: 11 },
-    levelPillText: { color: profile.accent, fontSize: 11, fontWeight: '600' },
     editProfileButton: {
       alignItems: 'center',
       borderColor: isDark ? '#4B383D' : '#E8CFC7',
@@ -1077,28 +1012,25 @@ function createStyles(
     saveButtonText: { color: profile.onAccent, fontSize: 17, fontWeight: '700' },
     friendsRow: {
       alignItems: 'center',
-      alignSelf: 'center',
       backgroundColor: 'transparent',
-      borderColor: colors.separator,
-      borderRadius: Layout.radiusPill,
-      borderWidth: StyleSheet.hairlineWidth,
       flexDirection: 'row',
-      gap: 10,
-      minHeight: 54,
-      paddingHorizontal: 12,
-      paddingVertical: 9,
-      width: 224,
+      gap: 16,
+      minHeight: 76,
+      paddingVertical: 12,
+      width: '100%',
     },
     friendsIcon: {
       alignItems: 'center',
-      height: 34,
+      borderColor: colors.separator,
+      borderRadius: 28,
+      borderWidth: StyleSheet.hairlineWidth,
+      height: 56,
       justifyContent: 'center',
-      width: 34,
+      width: 56,
     },
-    levelSection: { marginTop: 24, width: '100%' },
     friendsText: { flex: 1, gap: 1 },
-    friendsTitle: { color: colors.text, fontSize: 13, fontWeight: '600' },
-    friendsCaption: { color: colors.textSecondary, fontSize: 10, lineHeight: 13 },
+    friendsTitle: { color: colors.text, fontSize: 17, fontWeight: '600' },
+    friendsCaption: { color: colors.textSecondary, fontSize: 13, lineHeight: 18 },
     /**
      * Bölümler büyük yuvarlak kartlar yerine boşluk + ince ayırıcı ile ayrılır.
      * Ayırıcı tema `separator` rengini ve `StyleSheet.hairlineWidth`i kullanır;
@@ -1112,8 +1044,14 @@ function createStyles(
     },
     // İlerleme bölümü: level + rank + halka + kanıt şeridi tek, ortalı akışta.
     progressSection: { alignItems: 'center', paddingHorizontal: Layout.screenPadding },
+    innerDivider: {
+      backgroundColor: colors.separator,
+      height: StyleSheet.hairlineWidth,
+      marginBottom: 28,
+      width: '100%',
+    },
     showcaseSection: { paddingHorizontal: Layout.screenPadding },
-    friendsSection: { alignItems: 'center' },
+    friendsSection: { paddingHorizontal: Layout.screenPadding },
     // Takvim ve paylaşılan program ekranın diğer bölümleriyle aynı yatay payı
     // kullanır; içerik genişliği kompakt ölçüleri belirler.
     calendarSection: { paddingHorizontal: Layout.screenPadding },

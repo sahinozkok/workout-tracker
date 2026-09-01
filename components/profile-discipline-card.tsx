@@ -59,6 +59,8 @@ export type ProfileDisciplineCardProps = {
   onDayPress?: (dateKey: string) => void;
   /** `true` → başlık satırı takvimi açıp kapatır; başlangıçta kapalıdır. */
   collapsible?: boolean;
+  /** Kendi profilinde referanstaki tam genişlikte navigasyon satırı. */
+  compact?: boolean;
 };
 
 /**
@@ -74,6 +76,7 @@ export type ProfileDisciplineCardProps = {
 export function ProfileDisciplineCard({
   accentColor,
   collapsible = false,
+  compact = false,
   statuses,
   readOnly,
   onDayPress,
@@ -83,13 +86,14 @@ export function ProfileDisciplineCard({
       <ProfileDisciplineCardView
         accentColor={accentColor}
         collapsible={collapsible}
+        compact={compact}
         onDayPress={readOnly ? undefined : onDayPress}
         statuses={statuses}
       />
     );
   }
 
-  return <CurrentUserProfileDisciplineCard accentColor={accentColor} collapsible={collapsible} />;
+  return <CurrentUserProfileDisciplineCard accentColor={accentColor} collapsible={collapsible} compact={compact} />;
 }
 
 /**
@@ -99,9 +103,11 @@ export function ProfileDisciplineCard({
 function CurrentUserProfileDisciplineCard({
   accentColor,
   collapsible,
+  compact,
 }: {
   accentColor?: string;
   collapsible: boolean;
+  compact: boolean;
 }) {
   const { handleDayPress, statuses } = useDisciplineDayPress();
 
@@ -109,6 +115,7 @@ function CurrentUserProfileDisciplineCard({
     <ProfileDisciplineCardView
       accentColor={accentColor}
       collapsible={collapsible}
+      compact={compact}
       onDayPress={handleDayPress}
       statuses={statuses}
     />
@@ -122,11 +129,13 @@ function CurrentUserProfileDisciplineCard({
 function ProfileDisciplineCardView({
   accentColor,
   collapsible,
+  compact,
   onDayPress,
   statuses,
 }: {
   accentColor?: string;
   collapsible: boolean;
+  compact: boolean;
   /** Verilmezse günler basılamaz (salt okunur kart). */
   onDayPress?: (dateKey: string) => void;
   statuses: Record<string, DisciplineStatus>;
@@ -147,8 +156,8 @@ function ProfileDisciplineCardView({
   const todayColor = useFeatureColor('todayHighlight', colors.primary).color;
   const periodAccent = accentColor ?? colors.primary;
   const styles = useMemo(
-    () => createStyles(colors, todayColor, periodAccent),
-    [colors, periodAccent, todayColor],
+    () => createStyles(colors, todayColor, periodAccent, compact),
+    [colors, compact, periodAccent, todayColor],
   );
   const today = useMemo(() => startOfDay(new Date()), []);
   const weekdayLabels = useMemo(
@@ -206,6 +215,11 @@ function ProfileDisciplineCardView({
         disabled={!collapsible}
         onPress={collapsible ? () => setIsExpanded((current) => !current) : undefined}
         style={({ pressed }) => [styles.titleRow, pressed && collapsible && styles.pressed]}>
+        {compact && (
+          <View style={styles.compactIcon}>
+            <Ionicons color={colors.text} name="sunny-outline" size={22} />
+          </View>
+        )}
         <Text style={styles.title}>{t('calendar.shortTitle')}</Text>
         {collapsible && (
           <Ionicons
@@ -419,24 +433,34 @@ function MonthGrid({ styles, weekdayLabels, width, ...rest }: GridProps & { week
  * sığmıyor (53 sütun ≈ 480 pt eder), bu yüzden ızgara devriktir. Hücre boyutu
  * gerçek genişlikten hesaplanır; yatay kaydırma ve kırpma yoktur.
  */
-function createStyles(colors: ThemeColors, todayColor: string, periodAccent: string) {
+function createStyles(colors: ThemeColors, todayColor: string, periodAccent: string, compact: boolean) {
   return StyleSheet.create({
     card: {
       backgroundColor: 'transparent',
-      borderColor: colors.separator,
-      borderRadius: 22,
-      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: compact ? 'transparent' : colors.separator,
+      borderRadius: compact ? 0 : 22,
+      borderWidth: compact ? 0 : StyleSheet.hairlineWidth,
       gap: 2,
-      padding: 18,
+      padding: compact ? 0 : 18,
     },
     titleRow: {
       alignItems: 'center',
       flexDirection: 'row',
-      gap: 8,
+      gap: compact ? 16 : 8,
       justifyContent: 'space-between',
-      minHeight: 28,
+      minHeight: compact ? 76 : 28,
+      paddingVertical: compact ? 12 : 0,
     },
-    title: { color: colors.text, fontSize: 17, fontWeight: '700' },
+    compactIcon: {
+      alignItems: 'center',
+      borderColor: colors.separator,
+      borderRadius: 28,
+      borderWidth: StyleSheet.hairlineWidth,
+      height: 56,
+      justifyContent: 'center',
+      width: 56,
+    },
+    title: { color: colors.text, flex: compact ? 1 : undefined, fontSize: 17, fontWeight: '700' },
     subtitle: { color: colors.textSecondary, fontSize: 12 },
     tabs: { flexDirection: 'row', gap: 18, marginTop: 10 },
     tab: { alignItems: 'center', justifyContent: 'center', minHeight: 32 },

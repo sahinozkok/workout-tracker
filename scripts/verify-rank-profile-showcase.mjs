@@ -780,12 +780,13 @@ check('17. Kendi profilinde İKİNCİ bir Supabase achievement sorgusu YOK', () 
   assert(!/useEffect|fetch/.test(componentSource), 'vitrin bileşeni yan etki içeriyor');
 });
 
-check('18. Mevcut rank rozeti her iki profilde de YALNIZCA BİR KEZ kalır', () => {
+check('18. Mevcut rank kimliği her profilde YALNIZCA BİR KEZ kalır', () => {
   assertEqual(
-    (ownProfileSource.match(/<RankBadge/g) ?? []).length,
+    (ownProfileSource.match(/<ProfileProgressSummary/g) ?? []).length,
     1,
-    'kendi profilinde rank rozeti çoğaltılmış',
+    'kendi profilinde Level/Rank kimliği çoğaltılmış',
   );
+  assertEqual((ownProfileSource.match(/<RankBadge/g) ?? []).length, 0, 'kendi profilinde eski rank rozeti kalmış');
   assertEqual(
     (friendProfileSource.match(/<RankBadge/g) ?? []).length,
     1,

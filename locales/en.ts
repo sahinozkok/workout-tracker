@@ -1004,6 +1004,7 @@ export const en: TranslationSchema = {
     seasonName: 'Season {index}',
     rpValue: '{rp} RP',
     currentRank: 'Current rank',
+    unranked: 'Not ranked yet',
     rpToNext: '{rp} RP to {rank}',
     maxRank: 'You are at the highest rank',
     seasonEndsIn: 'Season ends in',

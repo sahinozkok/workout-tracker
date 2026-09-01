@@ -1007,6 +1007,7 @@ export const tr = {
     seasonName: 'Sezon {index}',
     rpValue: '{rp} RP',
     currentRank: 'Mevcut rank',
+    unranked: 'Henüz rank yok',
     rpToNext: '{rank} rankına {rp} RP kaldı',
     maxRank: 'En yüksek ranktasın',
     seasonEndsIn: 'Sezonun bitmesine',

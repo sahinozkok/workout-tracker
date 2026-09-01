@@ -39,7 +39,7 @@ export function ProfileProofStats({
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        card: { gap: 10, paddingHorizontal: 4, paddingVertical: 4, width: '100%' },
+        card: { gap: 20, paddingVertical: 4, width: '100%' },
         header: {
           alignItems: 'center',
           flexDirection: 'row',
@@ -47,9 +47,9 @@ export function ProfileProofStats({
         },
         eyebrow: {
           color: accentColor ?? (isDark ? '#D8A09C' : '#B67F7C'),
-          fontSize: 9,
-          fontWeight: '700',
-          letterSpacing: 1.35,
+          fontSize: 11,
+          fontWeight: '600',
+          letterSpacing: 1.1,
         },
         row: {
           alignItems: 'center',
@@ -58,26 +58,25 @@ export function ProfileProofStats({
         stat: {
           alignItems: 'center',
           flex: 1,
-          flexDirection: 'row',
-          gap: 8,
-          minHeight: 44,
+          gap: 10,
+          minHeight: 116,
           minWidth: 0,
         },
         pressed: { opacity: 0.6 },
         iconCircle: {
           alignItems: 'center',
-          borderRadius: 16,
-          height: 32,
+          borderRadius: 30,
+          height: 60,
           justifyContent: 'center',
-          width: 32,
+          width: 60,
         },
-        statCopy: { flex: 1, gap: 2, minWidth: 0 },
+        statCopy: { alignItems: 'center', gap: 4, minWidth: 0, width: '100%' },
         value: {
           color: colors.text,
-          fontSize: 17,
+          fontSize: 24,
           fontVariant: ['tabular-nums'],
           fontWeight: '600',
-          lineHeight: 20,
+          lineHeight: 28,
         },
         label: {
           color: colors.textSecondary,
@@ -85,6 +84,7 @@ export function ProfileProofStats({
           fontWeight: '600',
           letterSpacing: 0.4,
           lineHeight: 13,
+          textAlign: 'center',
           textTransform: 'uppercase',
         },
       }),
@@ -144,7 +144,7 @@ export function ProfileProofStats({
     const content = (
       <>
         <View style={[styles.iconCircle, { backgroundColor }]}>
-          <Ionicons color={color} name={icon} size={16} />
+          <Ionicons color={color} name={icon} size={22} />
         </View>
         <View style={styles.statCopy}>
           <Text style={styles.value}>{value}</Text>

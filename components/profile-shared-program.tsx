@@ -26,14 +26,17 @@ import { summarizeSharedProgram } from '@/utils/shared-program';
  */
 export function ProfileSharedProgram({
   accentColor,
+  compact = false,
   program,
 }: {
   accentColor: string;
+  /** Kendi profilinde referanstaki tam genişlikte navigasyon satırı. */
+  compact?: boolean;
   program: SharedActiveProgram | undefined;
 }) {
   const { colors } = useAppTheme();
   const { locale, t } = useTranslation();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const styles = useMemo(() => createStyles(colors, compact), [colors, compact]);
   const [expanded, setExpanded] = useState(false);
 
   if (!program) return null;
@@ -50,6 +53,11 @@ export function ProfileSharedProgram({
         accessibilityState={{ expanded }}
         onPress={() => setExpanded((current) => !current)}
         style={({ pressed }) => [styles.header, pressed && styles.pressed]}>
+        {compact && (
+          <View style={styles.compactIcon}>
+            <Ionicons color={colors.text} name="bookmark-outline" size={21} />
+          </View>
+        )}
         <View style={styles.headerText}>
           <Text style={[styles.eyebrow, { color: accentColor }]}>
             {t('sharedProgram.title').toLocaleUpperCase(locale)}
@@ -117,28 +125,37 @@ function formatTarget(
   return `${formatMetersAsKilometers(exercise.targetDistanceMeters)} ${t('day.kmUnit')}`;
 }
 
-function createStyles(colors: ThemeColors) {
+function createStyles(colors: ThemeColors, compact: boolean) {
   return StyleSheet.create({
     container: {
-      borderColor: colors.border,
-      borderRadius: Layout.radiusMedium,
-      borderWidth: Layout.hairline,
+      borderColor: compact ? 'transparent' : colors.border,
+      borderRadius: compact ? 0 : Layout.radiusMedium,
+      borderWidth: compact ? 0 : Layout.hairline,
       overflow: 'hidden',
     },
     header: {
       alignItems: 'center',
       flexDirection: 'row',
-      gap: 12,
-      minHeight: Layout.minTouchSize,
-      paddingHorizontal: 14,
+      gap: compact ? 16 : 12,
+      minHeight: compact ? 76 : Layout.minTouchSize,
+      paddingHorizontal: compact ? 0 : 14,
       paddingVertical: 12,
+    },
+    compactIcon: {
+      alignItems: 'center',
+      borderColor: colors.separator,
+      borderRadius: 28,
+      borderWidth: StyleSheet.hairlineWidth,
+      height: 56,
+      justifyContent: 'center',
+      width: 56,
     },
     headerText: { flex: 1, gap: 2, minWidth: 0 },
     eyebrow: { fontSize: 11, fontWeight: '600', letterSpacing: 1 },
     programName: { color: colors.text, fontSize: 17, fontWeight: '600' },
     summary: { color: colors.textSecondary, fontSize: 13, fontWeight: '400' },
 
-    body: { paddingBottom: 6, paddingHorizontal: 14 },
+    body: { paddingBottom: 6, paddingHorizontal: compact ? 0 : 14 },
     day: { paddingVertical: 12 },
     dayDivider: { borderTopColor: colors.border, borderTopWidth: Layout.hairline },
     dayHeader: { alignItems: 'baseline', flexDirection: 'row', gap: 8, justifyContent: 'space-between' },

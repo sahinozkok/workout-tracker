@@ -68,21 +68,20 @@ check('A1. Görünen ad ANA başlık; kimlik sırası ad → bio → eylemler', 
   );
 });
 
-check('A2. Bio TEK yerde: kimlikte gösterilir, halkada TEKRAR edilmez', () => {
+check('A2. Bio TEK yerde: kimlikte gösterilir, ilerlemede TEKRAR edilmez', () => {
   // Kimlikte bio metni draft.bio'dan gelir.
   assert(/styles\.summaryBio\}>\{draft\.bio\.trim\(\)\}/.test(code), 'bio kimlik alanında draft.bio ile gösterilmiyor');
-  // LevelProgressRing artık bio'yu `message` olarak ALMAZ (çift gösterim yok).
-  const ringStart = at('<LevelProgressRing');
-  const ringEnd = code.indexOf('/>', ringStart);
-  const ringProps = code.slice(ringStart, ringEnd);
-  assert(!/message=/.test(ringProps), 'bio hem kimlikte hem halkada gösteriliyor (tekrar)');
+  const progressStart = at('<ProfileProgressSummary');
+  const progressEnd = code.indexOf('/>', progressStart);
+  const progressProps = code.slice(progressStart, progressEnd);
+  assert(!/message=|bio=/.test(progressProps), 'bio hem kimlikte hem ilerlemede gösteriliyor (tekrar)');
 });
 
 check('A3. Düzenle + Ayarlar kimliğe YAKIN (ilerleme/istatistikten ÖNCE)', () => {
   const actions = at('styles.headerActions');
-  const ring = at('<LevelProgressRing');
+  const progress = at('<ProfileProgressSummary');
   const proof = at('<ProfileProofStats');
-  assert(actions < ring && actions < proof, 'eylemler ekranın dibinde kalmış (kimliğe yakın değil)');
+  assert(actions < progress && actions < proof, 'eylemler ekranın dibinde kalmış (kimliğe yakın değil)');
   // İki eylem de kimliğe ait tek satırda ve dengeli.
   assert(/onPress=\{handleProfileEditorToggle\}/.test(code), 'Düzenle mevcut editör toggle handler’ına bağlı değil');
   assert(/router\.push\('\/settings'\)/.test(code), 'Ayarlar /settings route’unu kaybetti');
@@ -137,12 +136,14 @@ check('B3. Editör kimliğe YAKIN açılır (ilerleme bölümünden ÖNCE)', () 
 // ---------------------------------------------------------------------------
 // C. Level ve rank AYRI sistemler; rank verisi yoksa uydurulmaz.
 // ---------------------------------------------------------------------------
-check('C1. Level ve rank ayrı; rank yalnız gerçek sezon verisinde çizilir', () => {
-  assert(/\{rankSeason && \(\s*<RankBadge/.test(code), 'rank rozeti rankSeason guard’ı olmadan çiziliyor (sahte rank riski)');
-  assert(/rankId=\{rankSeason\.currentRank\}/.test(code), 'RankBadge gerçek sezon verisini kullanmıyor');
-  assert(/<LevelProgressRing/.test(code), 'LevelProgressRing kaldırılmış');
-  // Level (ömür boyu) ve rank (sezon) yan yana, aynı bilgi tekrar edilmez.
-  assert(/levelPillText/.test(code), 'level göstergesi kaldırılmış');
+check('C1. Level ve rank ayrı; rank yalnız gerçek sezon verisinden geçirilir', () => {
+  assert(/<ProfileProgressSummary/.test(code), 'ProfileProgressSummary kaldırılmış');
+  assert(/level=\{levelProgress\.level\}/.test(code), 'level gerçek ödül verisini kullanmıyor');
+  assert(
+    /rank=\{rankSeason \? \{ id: rankSeason\.currentRank, rp: rankSeason\.currentRp \} : undefined\}/.test(code),
+    'rank gerçek sezon verisiyle koşullu geçirilmemiş (sahte rank riski)',
+  );
+  assert(/xpIntoLevel=\{levelProgress\.xpIntoLevel\}/.test(code), 'XP ilerleme verisi kaybolmuş');
 });
 
 // ---------------------------------------------------------------------------
@@ -173,7 +174,7 @@ check('E1. Vitrin tek kez; /rank-showcase ve preserveOrder korunuyor', () => {
 // ---------------------------------------------------------------------------
 check('F1. ProfileSharedProgram yalnız ownSharedProgram guard’ıyla, ortak sözleşme', () => {
   assert(/ownSharedProgram && \(/.test(code), 'aktif program görünürlük guard’ı kaldırılmış');
-  assert(/<ProfileSharedProgram accentColor=\{profileAccent\.color\} program=\{ownSharedProgram\}/.test(code),
+  assert(/<ProfileSharedProgram accentColor=\{profileAccent\.color\} compact program=\{ownSharedProgram\}/.test(code),
     'ortak bileşenin veri/işlev sözleşmesi bozulmuş');
 });
 
@@ -181,7 +182,7 @@ check('F1. ProfileSharedProgram yalnız ownSharedProgram guard’ıyla, ortak s�
 // G. Disiplin: açılır/kapanır, profil-özel bileşen.
 // ---------------------------------------------------------------------------
 check('G1. ProfileDisciplineCard collapsible korunuyor', () => {
-  assert(/<ProfileDisciplineCard accentColor=\{profileAccent\.color\} collapsible \/>/.test(code),
+  assert(/<ProfileDisciplineCard accentColor=\{profileAccent\.color\} collapsible compact \/>/.test(code),
     'disiplin kartı collapsible davranışını kaybetti');
 });
 
