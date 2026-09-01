@@ -727,46 +727,65 @@ export default function ProfileScreen() {
             />
           </MotionSection>
 
-          {/* Paylaşılan aktif program: yalnızca opt-in açık VE aktif program
-              varken görünür; aksi hâlde bileşen hiç render edilmez ve akış aynen
-              korunur. Arkadaşların göreceği sunumun BİREBİR aynısıdır (aynı ortak
-              bileşen; veri/işlev sözleşmesi değişmez). */}
-          {ownSharedProgram && (
-            <>
-              <View style={styles.sectionDivider} />
-              <MotionSection delay={40} style={styles.sharedProgramSection}>
+          <View style={styles.sectionDivider} />
+
+          {/* KATALOG YIĞINI — Aktif Program (yalnız görünürlük koşulu sağlanınca),
+              Disiplin ve Arkadaşlar tek bir katalog grubu içinde üst üste binen
+              kartlardır. Her kart tam genişliktedir ve aynı yatay hizadadır; üst
+              köşeleri belirgin yuvarlatılır. Alttaki kart negatif üst margin ile bir
+              üsttekinin alt kısmına biner (mutlak konumlandırma YOK — içerik doğal
+              akışta büyür, ScrollView düzgün çalışır); artan zIndex ile öne çıkar.
+              Katman ayrımı YALNIZ colors.surface / colors.surfaceMuted tokenlarının
+              konuma göre alternatiflenmesinden gelir: yeni renk, gradyan, glow veya
+              gölge eklenmez.
+
+              Bölümlerin İÇİ hiç değişmez: başlıklar, açıklamalar, ikonlar,
+              chevron'lar, tipografi ve dokunma/aç-kapa/navigasyon davranışları
+              (ProfileSharedProgram, ProfileDisciplineCard, Arkadaşlar satırı) birebir
+              korunur. Aktif Program açılıp Disiplin genişlediğinde içerik kırpılmaz;
+              sonraki kart genişleyen içeriğin ardından yeniden konumlanır ve
+              bindirme korunur. Aktif Program görünmüyorsa Disiplin ilk (pos0),
+              Arkadaşlar ikinci (pos1) kart olur. */}
+          <View style={styles.catalogStack}>
+            {/* Paylaşılan aktif program: yalnızca opt-in açık VE aktif program
+                varken görünür; aksi hâlde hiç render edilmez. Arkadaşların göreceği
+                sunumun BİREBİR aynısıdır (aynı ortak bileşen; sözleşme değişmez). */}
+            {ownSharedProgram && (
+              <MotionSection delay={40} style={[styles.catalogCard, styles.catalogCardPos0]}>
                 <ProfileSharedProgram accentColor={profileAccent.color} compact program={ownSharedProgram} />
               </MotionSection>
-            </>
-          )}
+            )}
 
-          <View style={styles.sectionDivider} />
-          {/* Disiplin: Profil ekranına ÖZEL bileşen; Ana Sayfa takvimiyle hiçbir
-              stil veya ölçü paylaşmaz, yalnızca gerçek veri ve tarih hesaplarını
-              paylaşır. Profil akışının bir bölümü gibi durur, dev bağımsız kart
-              değildir. Açılır/kapanır davranışı korunur. */}
-          <MotionSection delay={40} style={styles.calendarSection}>
-            <ProfileDisciplineCard accentColor={profileAccent.color} collapsible compact />
-          </MotionSection>
+            {/* Disiplin: Profil ekranına ÖZEL bileşen; Ana Sayfa takvimiyle stil
+                paylaşmaz, yalnızca gerçek veri/tarih hesaplarını paylaşır. Açılır/
+                kapanır davranışı korunur. Aktif Program varsa ikinci (pos1), yoksa
+                ilk (pos0) kart olur. */}
+            <MotionSection
+              delay={40}
+              style={[styles.catalogCard, ownSharedProgram ? styles.catalogCardPos1 : styles.catalogCardPos0]}>
+              <ProfileDisciplineCard accentColor={profileAccent.color} collapsible compact />
+            </MotionSection>
 
-          <View style={styles.sectionDivider} />
-          {/* Arkadaşlar: yeni sekme eklenmez; kök Stack'teki /friends ekranına
-              gider. Profil akışının sonunda sade bir navigasyon satırıdır. */}
-          <MotionSection delay={80} style={styles.friendsSection}>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => router.push('/friends')}
-              style={({ pressed }) => [styles.friendsRow, pressed && styles.pressed]}>
-              <View style={styles.friendsIcon}>
-                <Ionicons name="people-outline" size={18} color={colors.textSecondary} />
-              </View>
-              <View style={styles.friendsText}>
-                <Text style={styles.friendsTitle}>{t('friends.profileRow')}</Text>
-                <Text style={styles.friendsCaption}>{t('friends.profileRowCaption')}</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
-            </Pressable>
-          </MotionSection>
+            {/* Arkadaşlar: yeni sekme eklenmez; kök Stack'teki /friends ekranına
+                gider. Katalog yığınının en önündeki (en yüksek zIndex) karttır. */}
+            <MotionSection
+              delay={80}
+              style={[styles.catalogCard, ownSharedProgram ? styles.catalogCardPos2 : styles.catalogCardPos1]}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => router.push('/friends')}
+                style={({ pressed }) => [styles.friendsRow, pressed && styles.pressed]}>
+                <View style={styles.friendsIcon}>
+                  <Ionicons name="people-outline" size={18} color={colors.textSecondary} />
+                </View>
+                <View style={styles.friendsText}>
+                  <Text style={styles.friendsTitle}>{t('friends.profileRow')}</Text>
+                  <Text style={styles.friendsCaption}>{t('friends.profileRowCaption')}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+              </Pressable>
+            </MotionSection>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
       <RewardInfoSheet
@@ -1060,11 +1079,33 @@ function createStyles(
       width: '100%',
     },
     showcaseSection: { paddingHorizontal: Layout.screenPadding },
-    friendsSection: { paddingHorizontal: Layout.screenPadding },
-    // Takvim ve paylaşılan program ekranın diğer bölümleriyle aynı yatay payı
-    // kullanır; içerik genişliği kompakt ölçüleri belirler.
-    calendarSection: { paddingHorizontal: Layout.screenPadding },
-    sharedProgramSection: { paddingHorizontal: Layout.screenPadding },
+    /**
+     * KATALOG YIĞINI — Aktif Program (varsa), Disiplin ve Arkadaşlar kartları.
+     * Grup tam genişliktedir; kartlar içinde üst üste biner. Mutlak
+     * konumlandırma YOKTUR: bindirme yalnız kartların negatif üst margininden
+     * gelir; böylece açılan içerik doğal akışta büyür ve ScrollView düzgün
+     * çalışır. Katman ayrımı colors.surface / colors.surfaceMuted tokenlarının
+     * konuma göre alternatiflenmesinden gelir — yeni renk/gradyan/gölge yok.
+     */
+    catalogStack: { width: '100%' },
+    catalogCard: {
+      // Her yeni kartın ÜST köşeleri belirgin biçimde yuvarlatılır; alt köşeler
+      // bir sonraki kartın altında kaldığı için düz bırakılır.
+      borderTopLeftRadius: 24,
+      borderTopRightRadius: 24,
+      // İçerik ekranın diğer bölümleriyle aynı yatay hizada kalsın diye kartın
+      // İÇ payı screenPadding'tir; kartın kendisi tam genişliktedir.
+      paddingBottom: 26,
+      paddingHorizontal: Layout.screenPadding,
+      paddingTop: 22,
+      width: '100%',
+    },
+    // İlk kart: alttaki bölüm ayrımının üzerinde durur; binmez.
+    catalogCardPos0: { backgroundColor: colors.surfaceMuted, zIndex: 1 },
+    // İkinci kart: üsttekinin alt payına ~18 pt biner, önünde durur.
+    catalogCardPos1: { backgroundColor: colors.surface, marginTop: -18, zIndex: 2 },
+    // Üçüncü kart: bindirme ve zIndex artarak sürer.
+    catalogCardPos2: { backgroundColor: colors.surfaceMuted, marginTop: -18, zIndex: 3 },
     pressed: { opacity: 0.6 },
   });
 }
