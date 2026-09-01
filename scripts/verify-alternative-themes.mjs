@@ -48,16 +48,27 @@ check('Alternatifler doğru açık/koyu sistem davranışını kullanır', () =>
   assert(/preference === 'softDark'[\s\S]*?Colors\.softDark/.test(context), 'soft palette çözülmüyor');
 });
 
-check('Ayarlar ekranında beş adlandırılmış seçenek bulunur', () => {
+check('Ayarlar ekranında beş erişilebilir sembol seçeneği bulunur', () => {
   for (const value of ['light', 'warmLight', 'system', 'softDark', 'dark']) {
     assert(new RegExp(`value="${value}"`).test(settings), `${value} seçeneği yok`);
   }
-  assert(/themeButtonText/.test(settings), 'görünür seçenek adları yok');
+  assert((settings.match(/accessibilityLabel=\{label\}/g) ?? []).length === 1, 'sembol adları erişilebilir değil');
 });
 
-check('Seçenekler 44 pt üstü ve dar ekranda sarılabilir', () => {
-  assert(/themeToggle:[\s\S]*?flexWrap: 'wrap'/.test(settings), 'dar ekran sarma davranışı yok');
+check('Seçenekler referanstaki tek yuvarlak çubukta ve 44 pt üstüdür', () => {
+  assert(/themeToggle:[\s\S]*?borderRadius: Layout\.radiusPill[\s\S]*?flexDirection: 'row'/.test(settings), 'tek yatay pill yok');
   assert(/themeButton:[\s\S]*?minHeight: 56/.test(settings), 'dokunma hedefi küçük');
+  assert(/themeButtonSelected: \{ backgroundColor: settingsAccent \}/.test(settings), 'seçili dolgu yok');
+});
+
+check('Appearance başlığı ve açıklaması referanstaki belirgin hiyerarşidedir', () => {
+  assert(/appearanceTitle:[\s\S]*?fontSize: 30[\s\S]*?fontWeight: '700'/.test(settings), 'başlık hiyerarşisi yok');
+  assert(/appearanceCaption:[\s\S]*?fontSize: 15/.test(settings), 'açıklama ölçüsü yanlış');
+});
+
+check('Saf siyah tema dolunay, yumuşak koyu tema hilaldir', () => {
+  assert(/icon="moon-outline"[\s\S]*?value="softDark"/.test(settings), 'yumuşak koyu hilal değil');
+  assert(/icon="ellipse"[\s\S]*?value="dark"/.test(settings), 'saf siyah tema dolunay değil');
 });
 
 check('Türkçe ve İngilizce adlar eksiksizdir', () => {

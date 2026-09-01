@@ -214,9 +214,9 @@ export default function SettingsScreen() {
         </View>
 
         <View style={[styles.settingRow, styles.topSettingRow, styles.appearanceRow]}>
-          <View style={styles.settingText}>
-            <Text style={styles.settingTitle}>{t('profile.appearance')}</Text>
-            <Text style={styles.caption}>{t('profile.appearanceCaption')}</Text>
+          <View style={styles.appearanceText}>
+            <Text style={styles.appearanceTitle}>{t('profile.appearance')}</Text>
+            <Text style={styles.appearanceCaption}>{t('profile.appearanceCaption')}</Text>
           </View>
           <View accessibilityRole="radiogroup" style={styles.themeToggle}>
             <ThemeButton
@@ -261,7 +261,7 @@ export default function SettingsScreen() {
             />
             <ThemeButton
               colors={colors}
-              icon="moon"
+              icon="ellipse"
               label={t('profile.themeDark')}
               onAccent={onSettingsAccent}
               onSelect={setPreference}
@@ -487,14 +487,7 @@ function ThemeButton({
       accessibilityState={{ checked: selected }}
       onPress={() => onSelect(value)}
       style={({ pressed }) => [styles.themeButton, selected && styles.themeButtonSelected, pressed && styles.pressed]}>
-      <Ionicons name={icon} size={15} color={selected ? onAccent : colors.textTertiary} />
-      <Text
-        adjustsFontSizeToFit
-        minimumFontScale={0.82}
-        numberOfLines={1}
-        style={[styles.themeButtonText, selected && styles.themeButtonTextSelected]}>
-        {label}
-      </Text>
+      <Ionicons name={icon} size={23} color={selected ? onAccent : colors.textTertiary} />
     </Pressable>
   );
 }
@@ -531,7 +524,18 @@ function createStyles(
       minHeight: Layout.minTouchSize,
     },
     topSettingRow: { alignItems: 'flex-start' },
-    appearanceRow: { alignItems: 'stretch', flexDirection: 'column', marginTop: 32 },
+    appearanceRow: {
+      alignItems: 'stretch',
+      backgroundColor: colors.surface,
+      borderRadius: 28,
+      flexDirection: 'column',
+      gap: 28,
+      marginTop: 32,
+      padding: 24,
+    },
+    appearanceText: { gap: 8 },
+    appearanceTitle: { color: colors.text, fontSize: 30, fontWeight: '700', lineHeight: 36 },
+    appearanceCaption: { color: colors.textSecondary, fontSize: 15, lineHeight: 22 },
     featureRow: { minHeight: 80 },
     settingIcon: {
       alignItems: 'center',
@@ -584,27 +588,20 @@ function createStyles(
     // Kontrast parlaklıktan hesaplanır; sabit açık ton varsayılmaz.
     languageTextSelected: { color: onSettingsAccent },
     themeToggle: {
+      backgroundColor: colors.surfaceMuted,
+      borderRadius: Layout.radiusPill,
       flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
-      marginTop: 8,
+      gap: 4,
+      padding: 6,
     },
     themeButton: {
       alignItems: 'center',
-      backgroundColor: colors.surfaceMuted,
-      borderColor: colors.separator,
-      borderRadius: Layout.radiusMedium,
-      borderWidth: StyleSheet.hairlineWidth,
-      flexBasis: '31%',
-      flexGrow: 1,
-      gap: 5,
+      borderRadius: Layout.radiusPill,
+      flex: 1,
       justifyContent: 'center',
       minHeight: 56,
-      paddingHorizontal: 8,
     },
-    themeButtonSelected: { backgroundColor: settingsAccent, borderColor: settingsAccent },
-    themeButtonText: { color: colors.textSecondary, ...Type.footnote, fontWeight: '600' },
-    themeButtonTextSelected: { color: onSettingsAccent },
+    themeButtonSelected: { backgroundColor: settingsAccent },
     signOutButton: {
       alignItems: 'center',
       alignSelf: 'flex-start',
