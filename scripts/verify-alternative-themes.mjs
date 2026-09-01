@@ -8,6 +8,8 @@ const source = (path) => readFileSync(join(ROOT, path), 'utf8');
 const theme = source('constants/theme.ts');
 const context = source('context/theme-context.tsx');
 const settings = source('app/settings.tsx');
+const colorPresets = source('constants/color-presets.ts');
+const softCoralMigration = source('supabase/migrations/20260908120000_add_soft_coral_color_preset.sql');
 const tr = source('locales/tr.ts');
 const en = source('locales/en.ts');
 
@@ -57,9 +59,18 @@ check('Ayarlar ekranında beş erişilebilir sembol seçeneği bulunur', () => {
 
 check('Seçenekler referanstaki kompakt tek yuvarlak çubuktadır', () => {
   assert(/themeToggle:[\s\S]*?borderRadius: Layout\.radiusPill[\s\S]*?flexDirection: 'row'/.test(settings), 'tek yatay pill yok');
-  assert(/themeToggle:[\s\S]*?height: 48[\s\S]*?padding: 4/.test(settings), 'referans çubuk ölçüsü yok');
+  assert(/themeToggle:[\s\S]*?height: 48[\s\S]*?padding: THEME_TOGGLE_PADDING/.test(settings), 'referans çubuk ölçüsü yok');
   assert(/hitSlop=\{4\}/.test(settings), 'kompakt görünümün 48 pt dokunma alanı yok');
-  assert(/themeButtonSelected: \{ backgroundColor: settingsAccent \}/.test(settings), 'seçili dolgu yok');
+  assert(/styles\.themeIndicator[\s\S]*?backgroundColor: settingsAccent/.test(settings), 'seçili dolgu yok');
+});
+
+check('Seçili kapsül simgeler arasında kayar', () => {
+  assert(/<Animated\.View[\s\S]*?themeIndicatorStyle/.test(settings), 'hareketli kapsül yok');
+  assert(/themeIndicatorX\.value = withTiming\(nextX/.test(settings), 'kayma zamanlaması yok');
+  assert(/duration: MotionDuration\.standard/.test(settings), 'ortak süre tokenı kullanılmıyor');
+  assert(/easing: MotionEasing\.standard/.test(settings), 'ortak easing tokenı kullanılmıyor');
+  assert(/if \(reduceMotion \|\| !hasPositionedThemeIndicator\.current\)/.test(settings), 'Reduce Motion kapısı yok');
+  assert(!/selected && styles\.themeButtonSelected/.test(settings), 'eski ışınlanan dolgu kaldı');
 });
 
 check('Appearance başlığı ve açıklaması referanstaki belirgin hiyerarşidedir', () => {
@@ -72,6 +83,14 @@ check('Appearance başlığı ve açıklaması referanstaki belirgin hiyerarşid
 check('Saf siyah tema dolunay, yumuşak koyu tema hilaldir', () => {
   assert(/icon="moon-outline"[\s\S]*?value="softDark"/.test(settings), 'yumuşak koyu hilal değil');
   assert(/icon="ellipse"[\s\S]*?value="dark"/.test(settings), 'saf siyah tema dolunay değil');
+});
+
+check('Referanstaki mercan tonu ayarlarda seçilebilir ve profil için güvenlidir', () => {
+  assert(/softCoral: '#E58370'/.test(colorPresets), 'referans mercan tonu birebir değil');
+  assert(/family: 'red', presets: \['softCoral'/.test(colorPresets), 'mercan tonu kırmızı ailesinde değil');
+  assert(/drop constraint if exists profiles_color_preset_allowlist/.test(softCoralMigration), 'profil allowlist yenilenmiyor');
+  assert(/'softCoral'/.test(softCoralMigration), 'profil allowlist softCoral içermiyor');
+  assert(/^begin;[\s\S]*commit;\s*$/m.test(softCoralMigration), 'migration transaction içinde değil');
 });
 
 check('Türkçe ve İngilizce adlar eksiksizdir', () => {

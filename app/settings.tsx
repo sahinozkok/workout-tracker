@@ -1,11 +1,19 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, Stack } from 'expo-router';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import Animated, {
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ColorPresetRow } from '@/components/color-preset-picker';
 import { COLOR_FEATURES, ColorFeature, ColorPresetId, SETTINGS_ACCENT_DARK, SETTINGS_ACCENT_LIGHT, getColorPresetHex, getFeatureFallbackColor, getOnAccentColor, withAlpha } from '@/constants/color-presets';
 import { MASCOT_NAME } from '@/constants/mascot';
+import { MotionDuration, MotionEasing } from '@/constants/motion';
 import { Form, Layout, ThemeColors, Type } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useLanguage } from '@/context/language-context';
@@ -24,6 +32,16 @@ const LANGUAGE_OPTIONS: { labelKey: string; value: AppLanguage }[] = [
   { labelKey: 'profile.languageTurkish', value: 'tr' },
   { labelKey: 'profile.languageEnglish', value: 'en' },
 ];
+
+const THEME_PREFERENCES: readonly ThemePreference[] = [
+  'light',
+  'warmLight',
+  'system',
+  'softDark',
+  'dark',
+];
+const THEME_TOGGLE_GAP = 4;
+const THEME_TOGGLE_PADDING = 4;
 
 const FEATURE_LABEL_KEYS: Record<ColorFeature, string> = {
   workoutDays: 'profile.colorFeatureWorkoutDays',
@@ -60,6 +78,37 @@ export default function SettingsScreen() {
   const { reminders } = useWorkoutReminders();
   const { colors, isDark, preference, setPreference } = useAppTheme();
   const { language, setLanguage, t } = useLanguage();
+  const reduceMotion = useReducedMotion();
+  const [themeToggleWidth, setThemeToggleWidth] = useState(0);
+  const themeIndicatorX = useSharedValue(0);
+  const hasPositionedThemeIndicator = useRef(false);
+  const selectedThemeIndex = THEME_PREFERENCES.indexOf(preference);
+  const themeSegmentWidth = Math.max(
+    0,
+    (themeToggleWidth -
+      THEME_TOGGLE_PADDING * 2 -
+      THEME_TOGGLE_GAP * (THEME_PREFERENCES.length - 1)) /
+      THEME_PREFERENCES.length,
+  );
+  const themeIndicatorStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: themeIndicatorX.value }],
+  }));
+
+  useEffect(() => {
+    if (themeSegmentWidth <= 0) return;
+
+    const nextX = selectedThemeIndex * (themeSegmentWidth + THEME_TOGGLE_GAP);
+    if (reduceMotion || !hasPositionedThemeIndicator.current) {
+      themeIndicatorX.value = nextX;
+      hasPositionedThemeIndicator.current = true;
+      return;
+    }
+
+    themeIndicatorX.value = withTiming(nextX, {
+      duration: MotionDuration.standard,
+      easing: MotionEasing.standard,
+    });
+  }, [reduceMotion, selectedThemeIndex, themeIndicatorX, themeSegmentWidth]);
   const enabledReminderCount = countEnabledReminders(reminders);
   const reminderSubtitle =
     enabledReminderCount === 0
@@ -218,7 +267,20 @@ export default function SettingsScreen() {
             <Text style={styles.appearanceTitle}>{t('profile.appearance')}</Text>
             <Text style={styles.appearanceCaption}>{t('profile.appearanceCaption')}</Text>
           </View>
-          <View accessibilityRole="radiogroup" style={styles.themeToggle}>
+          <View
+            accessibilityRole="radiogroup"
+            onLayout={(event) => setThemeToggleWidth(event.nativeEvent.layout.width)}
+            style={styles.themeToggle}>
+            {themeSegmentWidth > 0 && (
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.themeIndicator,
+                  { backgroundColor: settingsAccent, width: themeSegmentWidth },
+                  themeIndicatorStyle,
+                ]}
+              />
+            )}
             <ThemeButton
               colors={colors}
               icon="sunny-outline"
@@ -487,7 +549,7 @@ function ThemeButton({
       accessibilityState={{ checked: selected }}
       hitSlop={4}
       onPress={() => onSelect(value)}
-      style={({ pressed }) => [styles.themeButton, selected && styles.themeButtonSelected, pressed && styles.pressed]}>
+      style={({ pressed }) => [styles.themeButton, pressed && styles.pressed]}>
       <Ionicons name={icon} size={19} color={selected ? onAccent : colors.textTertiary} />
     </Pressable>
   );
@@ -589,9 +651,17 @@ function createStyles(
       backgroundColor: colors.surfaceMuted,
       borderRadius: Layout.radiusPill,
       flexDirection: 'row',
-      gap: 4,
+      gap: THEME_TOGGLE_GAP,
       height: 48,
-      padding: 4,
+      padding: THEME_TOGGLE_PADDING,
+      position: 'relative',
+    },
+    themeIndicator: {
+      borderRadius: Layout.radiusPill,
+      height: 40,
+      left: THEME_TOGGLE_PADDING,
+      position: 'absolute',
+      top: THEME_TOGGLE_PADDING,
     },
     themeButton: {
       alignItems: 'center',
@@ -599,8 +669,8 @@ function createStyles(
       flex: 1,
       justifyContent: 'center',
       minHeight: 40,
+      zIndex: 1,
     },
-    themeButtonSelected: { backgroundColor: settingsAccent },
     signOutButton: {
       alignItems: 'center',
       alignSelf: 'flex-start',

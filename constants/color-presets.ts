@@ -24,6 +24,7 @@ export const COLOR_PRESETS = {
   darkOrangeVivid: '#FF7F00',
   workoutOrange: '#FF9138',
   // --- Red
+  softCoral: '#E58370',
   coral: '#FF7F50',
   salmon: '#FF8C69',
   tomato: '#FF6347',
@@ -93,7 +94,7 @@ export type ColorPresetFamily =
 /** Modal ızgarasının sırası. Aile başlıkları çeviri anahtarlarından gelir. */
 export const COLOR_PRESET_FAMILIES: { family: ColorPresetFamily; presets: ColorPresetId[] }[] = [
   { family: 'orange', presets: ['orange', 'orangeDeep', 'orangeDark', 'darkOrange', 'darkOrangeVivid', 'workoutOrange'] },
-  { family: 'red', presets: ['coral', 'salmon', 'tomato', 'red', 'crimson', 'brickRed'] },
+  { family: 'red', presets: ['softCoral', 'coral', 'salmon', 'tomato', 'red', 'crimson', 'brickRed'] },
   { family: 'pink', presets: ['deepPink', 'hotPink', 'pink', 'paleVioletRed'] },
   { family: 'purple', presets: ['mediumOrchid', 'darkOrchid', 'blueViolet', 'mediumPurple', 'purple', 'socialPurple'] },
   { family: 'blue', presets: ['systemBlue', 'dodgerBlue', 'royalBlue', 'cornflowerBlue', 'steelBlue', 'skyBlue'] },
