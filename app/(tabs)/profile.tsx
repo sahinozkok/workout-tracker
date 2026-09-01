@@ -60,7 +60,6 @@ const GOAL_OPTIONS: { glyph: string; labelKey: string; value: TrainingGoal }[] =
 
 /** Profil ekranının bugünkü vurgu tonu (seviye rozeti / ilerleme halkası). */
 const PROFILE_ACCENT_DEFAULT = '#D5755B';
-const PROFILE_CONTENT_BOTTOM_PADDING = 56;
 
 export default function ProfileScreen() {
   const { user } = useAuth();
@@ -681,7 +680,7 @@ export default function ProfileScreen() {
             </View>
           )}
 
-          <View style={styles.sectionDivider} />
+          <View style={[styles.sectionDivider, styles.firstDividerSpacing]} />
 
           {/* İLERLEME — referanstaki düz akış: Level/Rank kimliği yan yana,
               altında yatay XP ritmi. İki sistem yine ayrıdır ve bütün değerler
@@ -805,9 +804,12 @@ function createStyles(
   return StyleSheet.create({
     safeArea: { backgroundColor: colors.background, flex: 1 },
     flex: { flex: 1 },
-    // Arkadaşlar satırı en altta olduğu için alt sekme çubuğunun ve alt güvenli
-    // alanın üzerinde rahat bir boşluk bırakılır.
-    content: { paddingBottom: PROFILE_CONTENT_BOTTOM_PADDING, paddingTop: 0 },
+    // Fazladan ekran-background alt boşluğu YOK: opak alt sekme çubuğu zaten
+    // ScrollView'ın altında (alt güvenli alan dahil) durduğu için, en alttaki
+    // Friends katalog kartının zemini doğrudan tab barın üst sınırına dayanır.
+    // Kartın kendi `paddingBottom` (26) iç dolgusu Friends satırını tab bardan
+    // ayrı tutmaya devam eder; burada tab bar yüksekliği/insets tekrar eklenmez.
+    content: { paddingBottom: 0, paddingTop: 0 },
     editorSection: {
       backgroundColor: isDark ? '#111113' : colors.surfaceMuted,
       borderRadius: 28,
@@ -901,7 +903,7 @@ function createStyles(
     },
     avatarImage: { height: '100%', width: '100%' },
     avatarLetter: { color: colors.primarySoftText, fontSize: 28, fontWeight: '500' },
-    profileSummary: { alignItems: 'center', gap: 6, paddingHorizontal: Layout.screenPadding, paddingBottom: 18 },
+    profileSummary: { alignItems: 'center', gap: 6, paddingHorizontal: Layout.screenPadding, paddingBottom: 12 },
     summaryUsername: {
       color: profile.accent,
       fontSize: 13,
@@ -1070,6 +1072,14 @@ function createStyles(
       marginHorizontal: Layout.screenPadding,
       marginVertical: 20,
     },
+    /**
+     * YALNIZ kimlik bölümü ile Level/Rank arasındaki İLK ayırıcıya uygulanan
+     * dikey aralık override'ı. `sectionDivider` (global marginVertical 20)
+     * OLDUĞU GİBİ kalır; ilk ayırıcı bu stille birlikte kullanıldığında dikey
+     * boşluk 8 pt düzenine yakın biçimde azalır, böylece kimlik ile Level/Rank
+     * simgeleri fazla açık durmaz. Diğer bölüm aralıkları etkilenmez.
+     */
+    firstDividerSpacing: { marginVertical: 12 },
     // İlerleme bölümü: level + rank + halka + kanıt şeridi tek, ortalı akışta.
     progressSection: { alignItems: 'center', paddingHorizontal: Layout.screenPadding },
     innerDivider: {

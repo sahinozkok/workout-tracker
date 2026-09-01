@@ -1,16 +1,22 @@
 /**
  * Arkadaşlık arayüzüne **yerel** palet ve ölçüler.
  *
- * Referans tasarım mor vurgulu ve neredeyse saf siyah zeminlidir; uygulamanın
- * global teması ise mavi vurguludur. Bu yüzden `constants/theme.ts` HİÇ
- * değiştirilmez — mor vurgu yalnızca bu dosyayı içe aktaran arkadaşlık
- * ekranlarında yaşar. Diğer bütün ekranlar global temada kalır.
+ * Yüzey ve metin renkleri (background, card, field, border, separator, text,
+ * textSecondary, textTertiary, danger) TAMAMEN aktif uygulama temasından
+ * (`useAppTheme().colors`) türetilir; böylece light, warmLight, system, softDark
+ * ve dark temalarının hepsinde Friends ekranı uygulamanın geri kalanıyla aynı
+ * yüzeyleri kullanır. Bu dosya artık kendi yüzey renklerini SABİTLEMEZ —
+ * `ThemeColors` tek yüzey otoritesidir ve saf siyah/beyaz'a çakılan bir palet
+ * kalmaz.
  *
- * Açık temada aynı yerleşim, kontrastı korunmuş açık yüzeylerle kurulur:
- * referans koyu temayı birebir hedefler, açık tema okunabilirliği hedefler.
+ * Yalnızca Friends'e özel MOR vurgu bu dosyada yaşar: `accent` / `accentStrong`
+ * / `onAccent`. Bu vurgu `useFeatureColor('friends', ...)` ile kullanıcı
+ * seçimine devredilebilir; kullanıcı renk seçmediyse aşağıdaki mor varsayılan
+ * kullanılır (global mavi tema DEĞİL).
  */
 import { StyleSheet } from 'react-native';
 
+import type { ThemeColors } from '@/constants/theme';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import { useFeatureColor } from '@/hooks/use-feature-colors';
 
@@ -36,49 +42,60 @@ export type FriendsPalette = {
   danger: string;
 };
 
-/** Referans görselden alınan koyu tema değerleri. */
-const DARK: FriendsPalette = {
+/**
+ * Friends'e özel mor vurgunun tema başına varsayılanı. Bu YALNIZCA `accent`
+ * ailesidir; hiçbir yüzey/metin rengi içermez (onları tema sağlar). Değerler
+ * mevcut Friends vurgusuyla birebir aynıdır, böylece kullanıcı renk seçmediğinde
+ * görünüm değişmez.
+ */
+type FriendsAccent = Pick<FriendsPalette, 'accent' | 'accentStrong' | 'onAccent'>;
+
+const ACCENT_DARK: FriendsAccent = {
   accent: '#A472F0',
   accentStrong: '#7B3FF2',
   onAccent: '#FFFFFF',
-  background: '#000000',
-  card: '#141416',
-  field: '#141416',
-  border: '#242427',
-  separator: '#1C1C1F',
-  text: '#FFFFFF',
-  textSecondary: '#9A9AA0',
-  textTertiary: '#6E6E74',
-  danger: '#FF453A',
 };
 
-/** Aynı yerleşimin açık tema karşılığı; mor vurgu kontrast için koyulaşır. */
-const LIGHT: FriendsPalette = {
+const ACCENT_LIGHT: FriendsAccent = {
   accent: '#7A3FE0',
   accentStrong: '#6D28D9',
   onAccent: '#FFFFFF',
-  background: '#FFFFFF',
-  card: '#F5F5F7',
-  field: '#F2F2F6',
-  border: '#DEDEE3',
-  separator: '#E4E4E9',
-  text: '#0B0B0C',
-  textSecondary: '#5E5E63',
-  textTertiary: '#8A8A90',
-  danger: '#D6291E',
 };
+
+/**
+ * Aktif tema yüzeylerinden Friends paletinin yüzey/metin katmanını kurar.
+ *
+ * `ThemeColors` tek yüzey otoritesidir: her Friends yüzeyi doğrudan bir tema
+ * tokenına eşlenir. `field` (arama alanı / çerçeveli buton zemini) kartla
+ * karışmaması için `surfaceMuted`'a bağlanır. Böylece light, warmLight, system,
+ * softDark ve dark temalarının hepsi tek kaynaktan doğru görünür.
+ */
+function surfacesFromTheme(colors: ThemeColors): Omit<FriendsPalette, keyof FriendsAccent> {
+  return {
+    background: colors.background,
+    card: colors.card,
+    field: colors.surfaceMuted,
+    border: colors.border,
+    separator: colors.separator,
+    text: colors.text,
+    textSecondary: colors.textSecondary,
+    textTertiary: colors.textTertiary,
+    danger: colors.danger,
+  };
+}
 
 /**
  * Sosyal ekranın paleti.
  *
- * YALNIZCA semantik `accent` (ve ona bağlı `accentStrong` / `onAccent`)
- * kullanıcı tercihinden beslenir. Yüzey, kart, ayırıcı, metin ve `danger`
- * renkleri BU DOSYADAKİ değerlerden gelmeye devam eder — genel yüzey sistemi
- * bozulmaz. Kullanıcı renk seçmediyse palet birebir bugünkü hâlidir.
+ * Yüzey/metin renkleri aktif temadan (`useAppTheme().colors`) gelir; yalnızca
+ * `accent` ailesi Friends'e özeldir ve `useFeatureColor('friends', ...)` ile
+ * kullanıcı tercihine devredilebilir. Kullanıcı renk seçmediyse tema mor
+ * varsayılanı kullanılır.
  */
 export function useFriendsPalette(): FriendsPalette {
-  const { isDark } = useAppTheme();
-  const base = isDark ? DARK : LIGHT;
+  const { colors, isDark } = useAppTheme();
+  const accentBase = isDark ? ACCENT_DARK : ACCENT_LIGHT;
+  const base: FriendsPalette = { ...accentBase, ...surfacesFromTheme(colors) };
   const friendsAccent = useFeatureColor('friends', base.accent);
 
   if (!friendsAccent.isCustom) return base;
