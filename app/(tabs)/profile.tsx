@@ -27,6 +27,7 @@ import { getOnAccentColor } from '@/constants/color-presets';
 import { ProfileAchievementShowcase } from '@/components/ranks/profile-achievement-showcase';
 import { ProfileProgressSummary } from '@/components/rewards/profile-progress-summary';
 import { ProfileProofStats } from '@/components/rewards/profile-proof-stats';
+import { RewardInfoSheet, RewardInfoKind } from '@/components/rewards/reward-info-sheet';
 import { ProfileDisciplineCard } from '@/components/profile-discipline-card';
 import { ProfileSharedProgram } from '@/components/profile-shared-program';
 import { MotionCollapsible, MotionSection } from '@/components/motion-section';
@@ -112,6 +113,7 @@ export default function ProfileScreen() {
   });
   const [draft, setDraft] = useState<UserProfile>(profile);
   const [isProfileEditorOpen, setIsProfileEditorOpen] = useState(false);
+  const [rewardInfoKind, setRewardInfoKind] = useState<RewardInfoKind>();
   const [isSaving, setIsSaving] = useState(false);
   const [uploadingKind, setUploadingKind] = useState<ProfileImageKind>();
   const scrollRef = useRef<ScrollView>(null);
@@ -688,6 +690,7 @@ export default function ProfileScreen() {
             <ProfileProgressSummary
               accentColor={profileAccent.color}
               level={levelProgress.level}
+              onLevelPress={() => setRewardInfoKind('level')}
               onRankPress={() => router.push('/rank')}
               rank={rankSeason ? { id: rankSeason.currentRank, rp: rankSeason.currentRp } : undefined}
               xpForNextLevel={levelProgress.xpForNextLevel}
@@ -699,6 +702,7 @@ export default function ProfileScreen() {
               accentColor={profileAccent.color}
               dayStreak={disciplineStreak}
               onDayStreakPress={() => router.push('/streaks')}
+              onRosesPress={() => setRewardInfoKind('roses')}
               roseBalance={levelProgress.roseBalance}
               workoutDays={completedWorkoutDayCount}
             />
@@ -765,6 +769,11 @@ export default function ProfileScreen() {
           </MotionSection>
         </ScrollView>
       </KeyboardAvoidingView>
+      <RewardInfoSheet
+        accentColor={profileAccent.color}
+        kind={rewardInfoKind}
+        onClose={() => setRewardInfoKind(undefined)}
+      />
     </SafeAreaView>
   );
 }

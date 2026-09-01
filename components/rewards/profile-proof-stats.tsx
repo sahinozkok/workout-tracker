@@ -12,6 +12,8 @@ type ProfileProofStatsProps = {
   dayStreak: number;
   /** Verilirse YALNIZ seri istatistiği basılabilir olur; diğer ikisi değişmez. */
   onDayStreakPress?: () => void;
+  /** Verilirse gül istatistiği ödül açıklamasını açar. */
+  onRosesPress?: () => void;
   roseBalance: number;
   workoutDays: number;
 };
@@ -31,6 +33,7 @@ export function ProfileProofStats({
   accentColor,
   dayStreak,
   onDayStreakPress,
+  onRosesPress,
   roseBalance,
   workoutDays,
 }: ProfileProofStatsProps) {
@@ -101,11 +104,16 @@ export function ProfileProofStats({
 
       <View style={styles.row}>
         <ProofStat
-          accessibilityLabel={t('profile.proofRosesA11y', { count: roseBalance })}
+          accessibilityLabel={
+            onRosesPress
+              ? t('profile.proofRosesOpenA11y', { count: roseBalance })
+              : t('profile.proofRosesA11y', { count: roseBalance })
+          }
           backgroundColor={isDark ? withAlpha('#C86E61', 0.18) : '#F3DDD7'}
           color="#C86E61"
           icon="heart"
           label={t('profile.proofRoses')}
+          onPress={onRosesPress}
           value={roseBalance}
         />
         <ProofStat
@@ -156,9 +164,8 @@ export function ProfileProofStats({
       </>
     );
 
-    // Yalnız seri alanına `onPress` gelir; buton olur. Görsel yükseklik
-    // değişmez — 44 pt dokunma alanı `hitSlop` ile sağlanır, böylece istatistik
-    // komşularından görsel olarak kopmaz.
+    // Etkileşim verilen istatistik buton olur. Görsel yükseklik değişmez —
+    // 44 pt dokunma alanı `hitSlop` ile sağlanır, böylece komşularından kopmaz.
     if (onPress) {
       return (
         <Pressable

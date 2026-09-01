@@ -12,6 +12,7 @@ import { useAppTheme } from '@/hooks/use-app-theme';
 type ProfileProgressSummaryProps = {
   accentColor: string;
   level: number;
+  onLevelPress?: () => void;
   onRankPress?: () => void;
   rank?: { id: RankId; rp: number };
   xpForNextLevel: number;
@@ -22,6 +23,7 @@ type ProfileProgressSummaryProps = {
 export function ProfileProgressSummary({
   accentColor,
   level,
+  onLevelPress,
   onRankPress,
   rank,
   xpForNextLevel,
@@ -59,14 +61,30 @@ export function ProfileProgressSummary({
   return (
     <View style={styles.root}>
       <View style={styles.identityRow}>
-        <View accessibilityLabel={t('rewards.levelLabel', { level })} accessible style={styles.identityCell}>
-          <View style={styles.identityIcon}>
-            <Ionicons color={accentColor} name="star" size={23} />
+        {onLevelPress ? (
+          <Pressable
+            accessibilityHint={t('rewards.info.levelOpenHint')}
+            accessibilityLabel={t('rewards.levelLabel', { level })}
+            accessibilityRole="button"
+            onPress={onLevelPress}
+            style={({ pressed }) => [styles.identityCell, pressed && styles.pressed]}>
+            <View style={styles.identityIcon}>
+              <Ionicons color={accentColor} name="star" size={23} />
+            </View>
+            <Text numberOfLines={1} style={styles.identityValue}>
+              {t('rewards.levelLabel', { level })}
+            </Text>
+          </Pressable>
+        ) : (
+          <View accessibilityLabel={t('rewards.levelLabel', { level })} accessible style={styles.identityCell}>
+            <View style={styles.identityIcon}>
+              <Ionicons color={accentColor} name="star" size={23} />
+            </View>
+            <Text numberOfLines={1} style={styles.identityValue}>
+              {t('rewards.levelLabel', { level })}
+            </Text>
           </View>
-          <Text numberOfLines={1} style={styles.identityValue}>
-            {t('rewards.levelLabel', { level })}
-          </Text>
-        </View>
+        )}
 
         <View style={styles.identityDivider} />
 
