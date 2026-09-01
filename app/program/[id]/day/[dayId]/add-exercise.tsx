@@ -22,6 +22,7 @@ import { WorkoutVisualPicker } from '@/components/workout-visual-picker';
 import { Form, Layout, ThemeColors, Type } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useTranslation } from '@/context/language-context';
+import { useProfile } from '@/context/profile-context';
 import { useWorkout } from '@/context/workout-context';
 import { EXERCISES, EXERCISE_MUSCLE_GROUPS, getProgramExerciseName } from '@/data/exercises';
 import { useAppTheme } from '@/hooks/use-app-theme';
@@ -75,6 +76,7 @@ export default function AddExerciseScreen() {
   const { addExerciseToDay, isProgramsLoading, programs } = useWorkout();
   const { colors, isDark } = useAppTheme();
   const { user } = useAuth();
+  const { showExerciseIcons } = useProfile();
   const userId = user?.id;
   const { t } = useTranslation();
   /**
@@ -337,15 +339,21 @@ export default function AddExerciseScreen() {
       }
 
       if (duplicates.length > 0) {
+        setSelectedExerciseIds([]);
+        setSearch('');
         Alert.alert(
           t('addExercise.duplicateTitle'),
           t('addExercise.duplicateSkipped', { names: duplicates.map((item) => item.name).join(', ') }),
-          [{ text: t('common.ok'), onPress: () => router.back() }],
         );
         return;
       }
 
-      router.back();
+      // Seri ekleme akışı: başarılı kayıt kullanıcıyı gün ekranına geri atmaz.
+      // Seçim ve arama temizlenir; hedefler son kullanılan değerlerle yerinde
+      // kalır. Kullanıcı farklı bir takip türü seçip hemen yeni egzersiz
+      // ekleyebilir, işi bitince doğal geri düğmesini kullanır.
+      setSelectedExerciseIds([]);
+      setSearch('');
     } finally {
       setIsSaving(false);
     }
@@ -468,6 +476,7 @@ export default function AddExerciseScreen() {
 
             <View style={styles.trackingModeBlock}>
               <TrackingModeSelector
+                accentColor={workoutDays.color}
                 colors={colors}
                 labels={{
                   distance: t('addExercise.trackingModeDistance'),
@@ -534,19 +543,21 @@ export default function AddExerciseScreen() {
             )}
           </View>
 
-          <View style={styles.formSection}>
-            <Text style={styles.sectionTitle}>{t('addExercise.visual')}</Text>
-            <Text style={styles.sectionDescription}>{t('visualPicker.choosePhoto')}</Text>
-            <View style={styles.visualPicker}>
-              <WorkoutVisualPicker
-                accentColor={workoutDays.isCustom ? workoutDays.color : undefined}
-                accentTextColor={workoutDays.isCustom ? workoutDays.onColor : undefined}
-                onSelect={setExerciseVisual}
-                selectedVisual={exerciseVisual}
-                variant="programEdit"
-              />
+          {showExerciseIcons && (
+            <View style={styles.formSection}>
+              <Text style={styles.sectionTitle}>{t('addExercise.visual')}</Text>
+              <Text style={styles.sectionDescription}>{t('visualPicker.chooseSymbol')}</Text>
+              <View style={styles.visualPicker}>
+                <WorkoutVisualPicker
+                  accentColor={workoutDays.isCustom ? workoutDays.color : undefined}
+                  accentTextColor={workoutDays.isCustom ? workoutDays.onColor : undefined}
+                  onSelect={setExerciseVisual}
+                  selectedVisual={exerciseVisual}
+                  variant="programEdit"
+                />
+              </View>
             </View>
-          </View>
+          )}
         </ScrollView>
 
         <View style={styles.actionBar}>
@@ -571,7 +582,9 @@ export default function AddExerciseScreen() {
               <ActivityIndicator color={colors.onPrimary} />
             ) : (
               <Text style={styles.saveButtonText}>
-                {hasCustomExercise ? t('addExercise.addCustom') : t('addExercise.addSelected', { count: selectionCount })}
+                {hasCustomExercise
+                  ? t('addExercise.addCustomAndContinue')
+                  : t('addExercise.addSelectedAndContinue', { count: selectionCount })}
               </Text>
             )}
           </MotionPressable>

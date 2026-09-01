@@ -23,22 +23,25 @@ import { getFeatureFallbackColor } from '@/constants/color-presets';
 import { ThemeColors } from '@/constants/theme';
 import { getWeekdayLabel, getWeekdayOptions } from '@/constants/weekdays';
 import { useTranslation } from '@/context/language-context';
+import { useProfile } from '@/context/profile-context';
 import { useWorkout } from '@/context/workout-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import { Weekday, WorkoutDay, WorkoutVisual } from '@/types/workout';
 import { DEFAULT_PROGRAM_VISUAL } from '@/utils/workout-visual';
 
-const PROGRAM_CREATE_ACCENT = '#A56BEF';
-
 export default function CreateProgramScreen() {
   const { addProgram } = useWorkout();
+  const { showProgramIcons } = useProfile();
   const { colors, isDark } = useAppTheme();
   // Hazır gün ikonlarının vurgusu Workout Days presetinden gelir.
   const workoutDaysDefault = getFeatureFallbackColor('workoutDays', colors, isDark);
-  const workoutDaysIconColor = useFeatureColor('workoutDays', workoutDaysDefault).color;
+  const workoutDays = useFeatureColor('workoutDays', workoutDaysDefault);
+  const workoutDaysIconColor = workoutDays.color;
+  const programAccent = workoutDays.color;
+  const onProgramAccent = workoutDays.isCustom ? workoutDays.onColor : '#111113';
   const { locale, t } = useTranslation();
   const weekdayOptions = getWeekdayOptions(locale);
-  const styles = createStyles(colors);
+  const styles = createStyles(colors, programAccent, onProgramAccent);
   const [programName, setProgramName] = useState('');
   const [programVisual, setProgramVisual] = useState<WorkoutVisual>(DEFAULT_PROGRAM_VISUAL);
   const [dayName, setDayName] = useState('');
@@ -134,21 +137,27 @@ export default function CreateProgramScreen() {
               onChangeText={setProgramName}
               placeholder={t('createProgram.programNamePlaceholder')}
               placeholderTextColor={colors.textTertiary}
-              selectionColor={PROGRAM_CREATE_ACCENT}
+              selectionColor={programAccent}
               style={[styles.input, styles.programNameInput]}
               value={programName}
             />
             <Text style={styles.counter}>{programName.length}/60</Text>
           </View>
 
-          <Text style={styles.sectionHeading}>{t('createProgram.programIcon')}</Text>
-          <View style={styles.visualSection}>
-            <WorkoutVisualPicker
-              onSelect={setProgramVisual}
-              selectedVisual={programVisual}
-              variant="programCreate"
-            />
-          </View>
+          {showProgramIcons && (
+            <>
+              <Text style={styles.sectionHeading}>{t('createProgram.programIcon')}</Text>
+              <View style={styles.visualSection}>
+                <WorkoutVisualPicker
+                  accentColor={programAccent}
+                  accentTextColor={onProgramAccent}
+                  onSelect={setProgramVisual}
+                  selectedVisual={programVisual}
+                  variant="programCreate"
+                />
+              </View>
+            </>
+          )}
 
           <Text style={styles.sectionHeading}>{t('programDetail.workoutDays')}</Text>
           <View style={styles.daysSection}>
@@ -190,7 +199,7 @@ export default function CreateProgramScreen() {
                 placeholder={isOffDay ? t('createProgram.dayNamePlaceholderAuto') : t('createProgram.dayNamePlaceholder')}
                 placeholderTextColor={colors.textTertiary}
                 returnKeyType="done"
-                selectionColor={PROGRAM_CREATE_ACCENT}
+                selectionColor={programAccent}
                 style={[styles.input, styles.dayInput]}
                 value={dayName}
               />
@@ -200,7 +209,7 @@ export default function CreateProgramScreen() {
                   onValueChange={setIsOffDay}
                   style={styles.offDaySwitch}
                   thumbColor={colors.onPrimary}
-                  trackColor={{ false: colors.inputBorder, true: PROGRAM_CREATE_ACCENT }}
+                  trackColor={{ false: colors.inputBorder, true: programAccent }}
                   value={isOffDay}
                 />
               </View>
@@ -210,7 +219,7 @@ export default function CreateProgramScreen() {
                 hitSlop={4}
                 onPress={handleAddDay}
                 style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]}>
-                <Ionicons name="add" size={22} color="#111113" />
+                <Ionicons name="add" size={22} color={onProgramAccent} />
               </Pressable>
             </View>
 
@@ -261,7 +270,7 @@ export default function CreateProgramScreen() {
   );
 }
 
-function createStyles(colors: ThemeColors) {
+function createStyles(colors: ThemeColors, programAccent: string, onProgramAccent: string) {
   return StyleSheet.create({
     safeArea: { backgroundColor: colors.background, flex: 1 },
     container: { flex: 1 },
@@ -308,10 +317,10 @@ function createStyles(colors: ThemeColors) {
       minWidth: 40,
       paddingHorizontal: 10,
     },
-    weekdayOptionSelected: { backgroundColor: PROGRAM_CREATE_ACCENT, borderColor: PROGRAM_CREATE_ACCENT },
+    weekdayOptionSelected: { backgroundColor: programAccent, borderColor: programAccent },
     weekdayOptionUsed: { opacity: 0.28 },
     weekdayOptionText: { color: colors.textSecondary, fontSize: 12, fontWeight: '600' },
-    weekdayOptionTextSelected: { color: '#111113' },
+    weekdayOptionTextSelected: { color: onProgramAccent },
     addDayRow: { alignItems: 'center', flexDirection: 'row', gap: 8, marginTop: 20 },
     dayInput: { flex: 1, minWidth: 92 },
     offDayInline: { alignItems: 'center', flexDirection: 'row', gap: 4 },
@@ -319,7 +328,7 @@ function createStyles(colors: ThemeColors) {
     offDaySwitch: { marginHorizontal: -5, transform: [{ scale: 0.8 }] },
     addButton: {
       alignItems: 'center',
-      backgroundColor: PROGRAM_CREATE_ACCENT,
+      backgroundColor: programAccent,
       borderRadius: 999,
       height: 40,
       justifyContent: 'center',
@@ -358,7 +367,7 @@ function createStyles(colors: ThemeColors) {
     offDayBadge: { color: colors.disciplineCompleted, fontSize: 8, fontWeight: '600' },
     button: {
       alignItems: 'center',
-      backgroundColor: PROGRAM_CREATE_ACCENT,
+      backgroundColor: programAccent,
       borderRadius: 999,
       height: 48,
       justifyContent: 'center',
@@ -367,6 +376,6 @@ function createStyles(colors: ThemeColors) {
     },
     buttonPressed: { opacity: 0.8, transform: [{ scale: 0.98 }] },
     buttonDisabled: { opacity: 0.58 },
-    buttonText: { color: '#111113', fontSize: 16, fontWeight: '700' },
+    buttonText: { color: onProgramAccent, fontSize: 16, fontWeight: '700' },
   });
 }

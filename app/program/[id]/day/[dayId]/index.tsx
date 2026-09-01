@@ -22,6 +22,7 @@ import { MotionPressable } from '@/components/motion-pressable';
 import { MotionCollapsible, MotionLayout, MotionSwap } from '@/components/motion-section';
 import { ProgramDetailScroll } from '@/components/program-detail-scroll';
 import ProgramExerciseList from '@/components/program-exercise-list';
+import { WorkoutVisualDisplay } from '@/components/workout-visual-display';
 import { WorkoutVisualPicker } from '@/components/workout-visual-picker';
 import { Form, Layout, ThemeColors, Type } from '@/constants/theme';
 import { getWeekdayLabel, getWeekdayOptions } from '@/constants/weekdays';
@@ -670,6 +671,22 @@ export default function WorkoutDayScreen() {
     });
   }
 
+  /**
+   * Tekrar sayısını klavye açmadan birer birer değiştirir. Giriş normalde
+   * egzersizin hedefinden veya son setten dolu gelir; yine de boş/geçersiz bir
+   * değer yakalanırsa hedefin ilk sayısı güvenli başlangıç olarak kullanılır.
+   */
+  function adjustRepetitions(delta: -1 | 1) {
+    const parsed = repetitionsInput.trim() === '' ? Number.NaN : Number(repetitionsInput);
+    const fallback = getFirstTargetRepetition(activeExercise?.targetReps ?? '') ?? 0;
+    const current = Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+    const next = Math.min(1000, Math.max(0, current + delta));
+
+    setRepetitionsInput(String(next));
+    setValidationError(undefined);
+    void Haptics.selectionAsync();
+  }
+
   async function submitActiveSet() {
     if (!activeExercise || pendingExerciseId) return;
 
@@ -1110,6 +1127,14 @@ export default function WorkoutDayScreen() {
   ) {
     setSelectedExerciseId(exerciseId);
     setIsManualSelection(isComplete);
+
+    // Mola yalnızca setler arasındadır. Süre/mesafe egzersizine geçildiği an
+    // görünür sayaç, saklanan kayıt ve bekleyen bildirim birlikte temizlenir;
+    // kardiyo paneline eski set molası taşınmaz.
+    const selectedExercise = allDayExercises.find((exercise) => exercise.id === exerciseId);
+    if (selectedExercise && isCardioExercise(selectedExercise) && restTimer) {
+      await clearRestTimer(restTimer);
+    }
 
     // Son planlı set antrenmanı otomatik bitirir. Kullanıcı tamamlanmış
     // bir egzersize yeniden dokunursa aynı oturumu ekstra set için devam ettir.
@@ -2186,18 +2211,42 @@ export default function WorkoutDayScreen() {
                     <Text style={styles.valueUnit}>{t('day.kgUnit')}</Text>
                   </View>
                   <View style={styles.valueGroup}>
-                    <TextInput
-                      accessibilityLabel={t('day.repsShort')}
-                      editable={canCompleteSets && !pendingExerciseId}
-                      keyboardType="number-pad"
-                      maxLength={5}
-                      onChangeText={setRepetitionsInput}
-                      placeholder={activeExercise.targetReps}
-                      placeholderTextColor={colors.textTertiary}
-                      selectTextOnFocus
-                      style={styles.valueInput}
-                      value={repetitionsInput}
-                    />
+                    <View style={styles.repetitionStepper}>
+                      <Pressable
+                        accessibilityLabel={t('day.decreaseReps')}
+                        accessibilityRole="button"
+                        disabled={!canCompleteSets || Boolean(pendingExerciseId)}
+                        onPress={() => adjustRepetitions(-1)}
+                        style={({ pressed }) => [
+                          styles.stepperButton,
+                          pressed && styles.pressed,
+                        ]}>
+                        <Ionicons name="remove" size={20} color={colors.textSecondary} />
+                      </Pressable>
+                      <TextInput
+                        accessibilityLabel={t('day.repsShort')}
+                        editable={canCompleteSets && !pendingExerciseId}
+                        keyboardType="number-pad"
+                        maxLength={5}
+                        onChangeText={setRepetitionsInput}
+                        placeholder={activeExercise.targetReps}
+                        placeholderTextColor={colors.textTertiary}
+                        selectTextOnFocus
+                        style={[styles.valueInput, styles.repetitionInput]}
+                        value={repetitionsInput}
+                      />
+                      <Pressable
+                        accessibilityLabel={t('day.increaseReps')}
+                        accessibilityRole="button"
+                        disabled={!canCompleteSets || Boolean(pendingExerciseId)}
+                        onPress={() => adjustRepetitions(1)}
+                        style={({ pressed }) => [
+                          styles.stepperButton,
+                          pressed && styles.pressed,
+                        ]}>
+                        <Ionicons name="add" size={20} color={colors.textSecondary} />
+                      </Pressable>
+                    </View>
                     <Text style={styles.valueUnit}>{t('day.repsUnit')}</Text>
                   </View>
                 </View>
@@ -2455,6 +2504,15 @@ export default function WorkoutDayScreen() {
                     <View style={styles.panelMarker}>
                       {isActive && <Ionicons name="caret-forward" size={11} color={activeSecondary.color} />}
                     </View>
+                    {showExerciseIcons && (
+                      <View style={styles.panelExerciseVisual}>
+                        <WorkoutVisualDisplay
+                          color={workoutDays.color}
+                          size={18}
+                          visual={getExerciseVisual(exercise.visual)}
+                        />
+                      </View>
+                    )}
                     <Text
                       numberOfLines={1}
                       style={[
@@ -2579,14 +2637,16 @@ export default function WorkoutDayScreen() {
                 </View>
               )}
 
-              <View style={styles.exerciseVisualField}>
-                <Text style={styles.exerciseVisualLabel}>{t('day.milestoneMarker')}</Text>
-                <WorkoutVisualPicker
-                  onSelect={setExerciseVisualDraft}
-                  selectedVisual={exerciseVisualDraft}
-                  variant="exerciseEdit"
-                />
-              </View>
+              {showExerciseIcons && (
+                <View style={styles.exerciseVisualField}>
+                  <Text style={styles.exerciseVisualLabel}>{t('day.milestoneMarker')}</Text>
+                  <WorkoutVisualPicker
+                    onSelect={setExerciseVisualDraft}
+                    selectedVisual={exerciseVisualDraft}
+                    variant="exerciseEdit"
+                  />
+                </View>
+              )}
 
               <View style={styles.exerciseEditorActions}>
                 <Pressable
@@ -2798,6 +2858,17 @@ function createStyles(colors: ThemeColors, feature: FeatureColors) {
       minWidth: 62,
       paddingVertical: 4,
       textAlign: 'center',
+    },
+    repetitionStepper: { alignItems: 'center', flexDirection: 'row' },
+    repetitionInput: { minWidth: 54 },
+    stepperButton: {
+      alignItems: 'center',
+      borderColor: colors.inputBorder,
+      borderRadius: Layout.radiusPill,
+      borderWidth: StyleSheet.hairlineWidth,
+      height: Layout.minTouchSize,
+      justifyContent: 'center',
+      width: Layout.minTouchSize,
     },
     valueUnit: { color: colors.textSecondary, fontSize: 13 },
 
@@ -3343,6 +3414,12 @@ function createStyles(colors: ThemeColors, feature: FeatureColors) {
       textAlign: 'center',
     },
     exerciseList: { borderTopColor: colors.separator, borderTopWidth: StyleSheet.hairlineWidth },
+    panelExerciseVisual: {
+      alignItems: 'center',
+      height: 28,
+      justifyContent: 'center',
+      width: 28,
+    },
 
     exerciseCard: {
       borderBottomColor: colors.separator,

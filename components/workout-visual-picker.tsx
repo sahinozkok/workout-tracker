@@ -22,8 +22,6 @@ type WorkoutVisualPickerProps = {
   variant?: 'default' | 'exerciseEdit' | 'programCreate' | 'programEdit';
 };
 
-const PROGRAM_CREATE_ACCENT = '#A56BEF';
-
 export function WorkoutVisualPicker({
   accentColor,
   accentTextColor,
@@ -36,7 +34,16 @@ export function WorkoutVisualPicker({
   const isProgramCreate = variant === 'programCreate';
   const isProgramEdit = variant === 'programEdit';
   const isExerciseEdit = variant === 'exerciseEdit';
-  const styles = createStyles(colors, isExerciseEdit, isProgramCreate, isProgramEdit, accentColor, accentTextColor);
+  const resolvedAccent = accentColor ?? (isProgramEdit ? colors.text : colors.primary);
+  const resolvedOnAccent = accentTextColor ?? (isProgramEdit ? colors.background : colors.onPrimary);
+  const styles = createStyles(
+    colors,
+    isExerciseEdit,
+    isProgramCreate,
+    isProgramEdit,
+    resolvedAccent,
+    resolvedOnAccent,
+  );
   const [textValue, setTextValue] = useState(selectedVisual.type === 'text' ? selectedVisual.text : '');
   const [iconsOpen, setIconsOpen] = useState(false);
 
@@ -79,7 +86,7 @@ export function WorkoutVisualPicker({
         {selectedVisual.type === 'image' && (
           <View style={styles.galleryButton}>
             <WorkoutVisualDisplay
-              color={isProgramCreate ? PROGRAM_CREATE_ACCENT : colors.primaryIcon}
+              color={isProgramCreate ? resolvedAccent : colors.primaryIcon}
               size={32}
               visual={selectedVisual}
             />
@@ -98,7 +105,7 @@ export function WorkoutVisualPicker({
             onSubmitEditing={applyTextVisual}
             placeholder={t('visualPicker.textPlaceholder')}
             placeholderTextColor={colors.textTertiary}
-            selectionColor={isProgramCreate ? PROGRAM_CREATE_ACCENT : colors.primary}
+            selectionColor={isProgramCreate ? resolvedAccent : colors.primary}
             style={[styles.textInput, selectedVisual.type === 'text' && styles.selectedInput]}
             value={textValue}
           />
@@ -157,7 +164,7 @@ export function WorkoutVisualPicker({
                     color={
                       isSelected
                         ? isProgramCreate
-                          ? '#111113'
+                          ? resolvedOnAccent
                           : colors.onPrimary
                         : isProgramCreate
                           ? colors.textSecondary
@@ -179,8 +186,8 @@ function createStyles(
   isExerciseEdit: boolean,
   isProgramCreate: boolean,
   isProgramEdit: boolean,
-  accentColor?: string,
-  accentTextColor?: string,
+  accentColor: string,
+  accentTextColor: string,
 ) {
   const isCompact = isExerciseEdit || isProgramCreate || isProgramEdit;
   /**
@@ -216,7 +223,7 @@ function createStyles(
     },
     selectedControl: {
       backgroundColor: isProgramCreate ? 'transparent' : isProgramEdit || isExerciseEdit ? colors.surfaceMuted : colors.primarySoft,
-      borderColor: isProgramCreate ? PROGRAM_CREATE_ACCENT : colors.primary,
+      borderColor: isProgramCreate ? accentColor : colors.primary,
     },
     textArea: { flex: 1, gap: isCompact ? 0 : 4, minWidth: 82 },
     textLabel: { color: colors.text, fontSize: 9, fontWeight: '500' },
@@ -234,7 +241,7 @@ function createStyles(
       paddingVertical: 0,
     },
     selectedInput: {
-      borderBottomColor: isProgramCreate ? PROGRAM_CREATE_ACCENT : colors.primary,
+      borderBottomColor: isProgramCreate ? accentColor : colors.primary,
       borderColor: isProgramCreate ? undefined : colors.primary,
     },
     iconMenuButton: {
@@ -249,13 +256,12 @@ function createStyles(
     },
     iconMenuButtonSelected: {
       backgroundColor: isProgramCreate ? 'transparent' : isProgramEdit ? colors.surfaceMuted : colors.border,
-      borderColor: isProgramCreate ? PROGRAM_CREATE_ACCENT : colors.textTertiary,
+      borderColor: isProgramCreate ? accentColor : colors.textTertiary,
     },
     applyButton: {
       alignItems: 'center',
       backgroundColor:
-        accentColor ??
-        (isProgramCreate ? PROGRAM_CREATE_ACCENT : isProgramEdit ? colors.text : colors.primary),
+        isProgramCreate ? accentColor : isProgramEdit ? accentColor : colors.primary,
       borderRadius: isProgramCreate ? 999 : isProgramEdit ? controlRadius : 8,
       height: isProgramEdit ? controlSize : isCompact ? 40 : 41,
       justifyContent: 'center',
@@ -263,8 +269,7 @@ function createStyles(
     },
     applyButtonText: {
       color:
-        accentTextColor ??
-        (isProgramCreate ? '#111113' : isProgramEdit ? colors.background : colors.onPrimary),
+        isProgramCreate ? accentTextColor : isProgramEdit ? accentTextColor : colors.onPrimary,
       fontSize: isProgramEdit ? Form.action.fontSize : isCompact ? 14 : 11,
       fontWeight: isProgramEdit ? Form.action.fontWeight : '700',
     },
@@ -289,8 +294,8 @@ function createStyles(
       width: 39,
     },
     iconOptionSelected: {
-      backgroundColor: isProgramCreate ? PROGRAM_CREATE_ACCENT : colors.primary,
-      borderColor: isProgramCreate ? PROGRAM_CREATE_ACCENT : colors.primary,
+      backgroundColor: isProgramCreate ? accentColor : colors.primary,
+      borderColor: isProgramCreate ? accentColor : colors.primary,
     },
     pressed: { opacity: 0.7 },
   });

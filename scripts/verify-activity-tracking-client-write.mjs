@@ -784,7 +784,9 @@ check('K10. Erişilebilirlik — 44 pt, VoiceOver etiketi, renk TEK sinyal deği
   assert(/accessibilityRole="radio"/.test(selector), 'radio rolü yok');
   assert(/accessibilityState=\{\{ disabled, selected: isSelected \}\}/.test(selector), 'seçim durumu bildirilmiyor');
   // Seçili durum kenarlık + ikon + metin ağırlığıyla da anlatılıyor.
-  assert(/segmentSelected: \{ borderColor: colors\.primary, borderWidth: 2 \}/.test(selector), 'kenarlık sinyali yok');
+  assert(/segmentSelected: \{ borderColor: accentColor, borderWidth: 2 \}/.test(selector), 'kenarlık sinyali yok');
+  assert(/createStyles\(colors, accentColor \?\? colors\.primary\)/.test(selector), 'varsayılan primary geri dönüşü yok');
+  assert(/accentColor=\{workoutDays\.color\}/.test(addScreen), 'ekleme ekranının vurgu rengi seçiciye bağlı değil');
   assert(/isSelected \? option\.iconActive : option\.icon/.test(selector), 'ikon sinyali yok');
   assert(/segmentTextSelected: \{ color: colors\.text, fontWeight: '700' \}/.test(selector), 'metin sinyali yok');
 

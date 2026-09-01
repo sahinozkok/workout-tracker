@@ -297,14 +297,16 @@ export default function ProgramDetailScreen() {
                 />
               </View>
 
-              <View style={styles.editorField}>
-                <Text style={styles.editorLabel}>{t('programDetail.programIcon')}</Text>
-                <WorkoutVisualPicker
-                  onSelect={setProgramVisualDraft}
-                  selectedVisual={programVisualDraft}
-                  variant="programEdit"
-                />
-              </View>
+              {showProgramIcons && (
+                <View style={styles.editorField}>
+                  <Text style={styles.editorLabel}>{t('programDetail.programIcon')}</Text>
+                  <WorkoutVisualPicker
+                    onSelect={setProgramVisualDraft}
+                    selectedVisual={programVisualDraft}
+                    variant="programEdit"
+                  />
+                </View>
+              )}
 
               <MotionPressable
                 accessibilityRole="button"

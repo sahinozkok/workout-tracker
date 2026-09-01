@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, Stack } from 'expo-router';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -161,6 +161,24 @@ export default function SettingsScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['bottom']}>
+      <Stack.Screen
+        options={{
+          headerBackVisible: false,
+          headerLeft: () => (
+            <Pressable
+              accessibilityLabel={t('tabs.profile')}
+              accessibilityRole="button"
+              hitSlop={8}
+              onPress={() =>
+                router.canGoBack() ? router.back() : router.replace('/(tabs)/profile')
+              }
+              style={({ pressed }) => [styles.headerBackButton, pressed && styles.pressed]}>
+              <Ionicons name="chevron-back" size={22} color={settingsAccent} />
+              <Text style={styles.headerBackText}>{t('tabs.profile')}</Text>
+            </Pressable>
+          ),
+        }}
+      />
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
@@ -467,6 +485,13 @@ function createStyles(
       backgroundColor: colors.background,
       flex: 1,
     },
+    headerBackButton: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      minHeight: Layout.minTouchSize,
+      paddingRight: 8,
+    },
+    headerBackText: { color: settingsAccent, fontSize: 17 },
     content: {
       paddingBottom: 28,
       paddingHorizontal: 20,

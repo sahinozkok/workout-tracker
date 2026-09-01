@@ -32,6 +32,7 @@ const OPTIONS: readonly Option[] = [
 ];
 
 type Props = {
+  accentColor?: string;
   colors: ThemeColors;
   disabled?: boolean;
   /** Devre dışı bırakılma nedeni; doluysa alanın altında gösterilir. */
@@ -43,6 +44,7 @@ type Props = {
 };
 
 export function TrackingModeSelector({
+  accentColor,
   colors,
   disabled = false,
   disabledHint,
@@ -51,7 +53,7 @@ export function TrackingModeSelector({
   title,
   value,
 }: Props) {
-  const styles = createStyles(colors);
+  const styles = createStyles(colors, accentColor ?? colors.primary);
 
   return (
     <View style={styles.container}>
@@ -75,7 +77,7 @@ export function TrackingModeSelector({
                 pressed && !disabled && styles.pressed,
               ]}>
               <Ionicons
-                color={isSelected ? colors.primary : colors.textSecondary}
+                color={isSelected ? accentColor ?? colors.primary : colors.textSecondary}
                 name={isSelected ? option.iconActive : option.icon}
                 size={16}
               />
@@ -93,7 +95,7 @@ export function TrackingModeSelector({
   );
 }
 
-function createStyles(colors: ThemeColors) {
+function createStyles(colors: ThemeColors, accentColor: string) {
   return StyleSheet.create({
     container: { gap: 8 },
     title: {
@@ -117,7 +119,7 @@ function createStyles(colors: ThemeColors) {
       paddingHorizontal: 8,
     },
     // Seçili durum: kalın kenarlık + dolu ikon + kalın metin. Renk TEK sinyal değil.
-    segmentSelected: { borderColor: colors.primary, borderWidth: 2 },
+    segmentSelected: { borderColor: accentColor, borderWidth: 2 },
     segmentDisabled: { opacity: 0.5 },
     pressed: { opacity: 0.7 },
     segmentText: { color: colors.textSecondary, fontSize: 13, fontWeight: '500' },
