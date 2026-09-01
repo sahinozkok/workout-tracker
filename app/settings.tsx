@@ -485,9 +485,10 @@ function ThemeButton({
       accessibilityLabel={label}
       accessibilityRole="radio"
       accessibilityState={{ checked: selected }}
+      hitSlop={4}
       onPress={() => onSelect(value)}
       style={({ pressed }) => [styles.themeButton, selected && styles.themeButtonSelected, pressed && styles.pressed]}>
-      <Ionicons name={icon} size={23} color={selected ? onAccent : colors.textTertiary} />
+      <Ionicons name={icon} size={19} color={selected ? onAccent : colors.textTertiary} />
     </Pressable>
   );
 }
@@ -526,16 +527,13 @@ function createStyles(
     topSettingRow: { alignItems: 'flex-start' },
     appearanceRow: {
       alignItems: 'stretch',
-      backgroundColor: colors.surface,
-      borderRadius: 28,
       flexDirection: 'column',
-      gap: 28,
+      gap: 24,
       marginTop: 32,
-      padding: 24,
     },
-    appearanceText: { gap: 8 },
-    appearanceTitle: { color: colors.text, fontSize: 30, fontWeight: '700', lineHeight: 36 },
-    appearanceCaption: { color: colors.textSecondary, fontSize: 15, lineHeight: 22 },
+    appearanceText: { gap: 6 },
+    appearanceTitle: { color: colors.text, fontSize: 20, fontWeight: '700', lineHeight: 24 },
+    appearanceCaption: { color: colors.textSecondary, fontSize: 15, lineHeight: 20 },
     featureRow: { minHeight: 80 },
     settingIcon: {
       alignItems: 'center',
@@ -592,14 +590,15 @@ function createStyles(
       borderRadius: Layout.radiusPill,
       flexDirection: 'row',
       gap: 4,
-      padding: 6,
+      height: 48,
+      padding: 4,
     },
     themeButton: {
       alignItems: 'center',
       borderRadius: Layout.radiusPill,
       flex: 1,
       justifyContent: 'center',
-      minHeight: 56,
+      minHeight: 40,
     },
     themeButtonSelected: { backgroundColor: settingsAccent },
     signOutButton: {

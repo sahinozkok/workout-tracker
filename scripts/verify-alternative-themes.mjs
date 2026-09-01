@@ -55,15 +55,18 @@ check('Ayarlar ekranında beş erişilebilir sembol seçeneği bulunur', () => {
   assert((settings.match(/accessibilityLabel=\{label\}/g) ?? []).length === 1, 'sembol adları erişilebilir değil');
 });
 
-check('Seçenekler referanstaki tek yuvarlak çubukta ve 44 pt üstüdür', () => {
+check('Seçenekler referanstaki kompakt tek yuvarlak çubuktadır', () => {
   assert(/themeToggle:[\s\S]*?borderRadius: Layout\.radiusPill[\s\S]*?flexDirection: 'row'/.test(settings), 'tek yatay pill yok');
-  assert(/themeButton:[\s\S]*?minHeight: 56/.test(settings), 'dokunma hedefi küçük');
+  assert(/themeToggle:[\s\S]*?height: 48[\s\S]*?padding: 4/.test(settings), 'referans çubuk ölçüsü yok');
+  assert(/hitSlop=\{4\}/.test(settings), 'kompakt görünümün 48 pt dokunma alanı yok');
   assert(/themeButtonSelected: \{ backgroundColor: settingsAccent \}/.test(settings), 'seçili dolgu yok');
 });
 
 check('Appearance başlığı ve açıklaması referanstaki belirgin hiyerarşidedir', () => {
-  assert(/appearanceTitle:[\s\S]*?fontSize: 30[\s\S]*?fontWeight: '700'/.test(settings), 'başlık hiyerarşisi yok');
+  assert(/appearanceTitle:[\s\S]*?fontSize: 20[\s\S]*?fontWeight: '700'/.test(settings), 'başlık hiyerarşisi yok');
   assert(/appearanceCaption:[\s\S]*?fontSize: 15/.test(settings), 'açıklama ölçüsü yanlış');
+  const appearanceStyle = settings.match(/appearanceRow: \{([\s\S]*?)\n    \},/)?.[1] ?? '';
+  assert(!/backgroundColor|borderRadius|padding:/.test(appearanceStyle), 'gereksiz iç kart görünümü var');
 });
 
 check('Saf siyah tema dolunay, yumuşak koyu tema hilaldir', () => {
