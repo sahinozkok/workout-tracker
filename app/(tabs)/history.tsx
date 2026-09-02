@@ -13,6 +13,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ActivityProgress } from '@/components/activity-progress';
+import { ActivityRecordEditorSheet } from '@/components/activity-record-editor-sheet';
 import { ExerciseProgress } from '@/components/exercise-progress';
 import { MotionListItem, useListEntrance } from '@/components/motion-list-item';
 import { MotionSection, MotionSwap } from '@/components/motion-section';
@@ -23,7 +25,6 @@ import { useWorkout } from '@/context/workout-context';
 import {
   ActivityHistoryEntry,
   buildActivityHistoryEntries,
-  buildActivityProgressEntries,
   countUniqueExercises,
   summarizeSessionActivity,
 } from '@/utils/activity-history';
@@ -86,6 +87,8 @@ export default function HistoryScreen() {
   /** Aynı anda yalnızca bir satırın silme alanı açık kalır. */
   const [swipedSessionId, setSwipedSessionId] = useState<string>();
   const [activeView, setActiveView] = useState<'workouts' | 'progress'>('workouts');
+  /** Düzenlenen kardiyo kaydının kimliği; `undefined` iken editör kapalıdır. */
+  const [editingRecordId, setEditingRecordId] = useState<string>();
   /**
    * Ekran her açılışta ORTALAMA süreyle başlar. Çembere dokunma Average ↔ Total
    * geçişini aynen sürdürür; tercih bilinçli olarak kalıcı saklanmaz.
@@ -123,7 +126,7 @@ export default function HistoryScreen() {
    * Satır hareketi. Kanca aşağıdaki erken dönüşlerin ÜSTÜNDE çağrılır; yükleme
    * ve boş durumlarında kanca sırası bozulmasın.
    */
-  const activityProgressEntries = buildActivityProgressEntries(completedActivityRecords);
+  const editingRecord = completedActivityRecords.find((record) => record.id === editingRecordId);
   const { getDelay } = useListEntrance(completedSessions.length);
 
   async function handleDeleteSession(sessionId: string) {
@@ -235,6 +238,7 @@ export default function HistoryScreen() {
                   onToggle={() =>
                     setExpandedSessionId((currentId) => (currentId === session.id ? undefined : session.id))
                   }
+                  onEditRecord={setEditingRecordId}
                   program={programs.find((item) => item.id === session.programId)}
                   session={session}
                   locale={locale}
@@ -251,48 +255,41 @@ export default function HistoryScreen() {
         ) : (
           <MotionSection delay={40} style={styles.progressStack}>
             {/*
-              Yalnız kardiyo yapan kullanıcıya BOŞ strength kartı gösterilmez;
-              aşağıdaki aktivite bölümü gerçek verisini zaten sunar. Set kaydı
-              varsa mevcut görünüm AYNEN korunur.
+              STRENGTH GELİŞİMİ — yalnız set kaydı varken. Yalnız kardiyo yapan
+              kullanıcıya BOŞ strength görünümü çizilmez (aşağıdaki kardiyo bölümü
+              gerçek verisini sunar). Strength ekranının matematiği/tasarımı
+              DEĞİŞMEZ.
             */}
-            {(completedWorkoutSets.length > 0 || activityProgressEntries.length === 0) && (
+            {completedWorkoutSets.length > 0 && (
               <ExerciseProgress workoutSets={completedWorkoutSets} />
             )}
+
+            {/* Hem strength hem kardiyo varsa iki bölüm sade bir ayırıcıyla ayrılır. */}
+            {completedWorkoutSets.length > 0 && completedActivityRecords.length > 0 && (
+              <View style={styles.progressGroupDivider} />
+            )}
+
+            {/* KARDİYO GELİŞİMİ — süre/mesafe/tempo gerçek gelişim görünümü. */}
+            {completedActivityRecords.length > 0 && (
+              <ActivityProgress records={completedActivityRecords} onEditRecord={setEditingRecordId} />
+            )}
+
             {/*
-              Yalnız kardiyo yapan kullanıcı "veri yok" görmemeli. Bu bölüm
-              bilinçli olarak SADE: grafik yok, yeni paket yok — egzersiz başına
-              son kayıt ve toplam sayı. Tam aktivite analitiği sonraki fazda.
+              Ne set ne aktivite (yalnız eski/boş oturum): mevcut strength boş
+              durumu korunur; ekran boş kalmaz.
             */}
-            {activityProgressEntries.length > 0 && (
-              <View style={styles.activitySection}>
-                <Text style={styles.activitySectionTitle}>{t('history.activityHistory')}</Text>
-                <View style={styles.activityProgressList}>
-                  {activityProgressEntries.map((entry, index) => (
-                    <View
-                      key={entry.key}
-                      style={[styles.activityProgressRow, index > 0 && styles.activityProgressRowDivided]}>
-                      <Text numberOfLines={1} style={styles.activityProgressName}>
-                        {entry.exerciseName}
-                      </Text>
-                      <Text style={styles.activityProgressMeta}>
-                        {t('history.activityRecordCount', { count: entry.recordCount })} ·{' '}
-                        {entry.trackingMode === 'distance' && entry.lastDistanceMeters !== undefined
-                          ? `${formatMetersAsKilometers(entry.lastDistanceMeters)} ${t('day.kmUnit')}${
-                              entry.lastPaceSecondsPerKm === undefined
-                                ? ''
-                                : ` · ${formatDuration(Math.round(entry.lastPaceSecondsPerKm))} ${t('day.paceUnit')}`
-                            }`
-                          : formatDuration(entry.lastDurationSeconds)}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-              </View>
+            {completedWorkoutSets.length === 0 && completedActivityRecords.length === 0 && (
+              <ExerciseProgress workoutSets={completedWorkoutSets} />
             )}
           </MotionSection>
         )}
         </MotionSwap>
       </ScrollView>
+
+      <ActivityRecordEditorSheet
+        onClose={() => setEditingRecordId(undefined)}
+        record={editingRecord}
+      />
     </SafeAreaView>
   );
 }
@@ -464,6 +461,7 @@ function SessionHistoryRow({
   isSwipeOpen,
   locale,
   onDelete,
+  onEditRecord,
   onSwipeClosed,
   onSwipeStart,
   onToggle,
@@ -481,6 +479,7 @@ function SessionHistoryRow({
   isSwipeOpen: boolean;
   locale: string;
   onDelete: () => void;
+  onEditRecord: (recordId: string) => void;
   onSwipeClosed: () => void;
   onSwipeStart: () => void;
   onToggle: () => void;
@@ -642,6 +641,7 @@ function SessionHistoryRow({
               entry={entry}
               key={entry.id}
               locale={locale}
+              onEdit={() => onEditRecord(entry.id)}
               styles={styles}
               t={t}
             />
@@ -667,12 +667,14 @@ function ActivityHistoryRow({
   colors,
   entry,
   locale,
+  onEdit,
   styles,
   t,
 }: {
   colors: ThemeColors;
   entry: ActivityHistoryEntry;
   locale: string;
+  onEdit: () => void;
   styles: ReturnType<typeof createStyles>;
   t: (key: string, params?: Record<string, string | number>) => string;
 }) {
@@ -686,7 +688,20 @@ function ActivityHistoryRow({
         : `${formatMetersAsKilometers(entry.targetDistanceMeters)} ${t('day.kmUnit')}`;
 
   return (
-    <View style={styles.exerciseGroup}>
+    /*
+      Satırın TAMAMI düzenleme editörünü açan bir işlem alanıdır; metin ve ölçü
+      hiyerarşisi (başlık + durum + değer satırları) AYNEN korunur, yalnız sonuna
+      küçük bir chevron eklenir. Dokunma alanı ≥44 pt.
+    */
+    <Pressable
+      accessibilityHint={t('history.editRecordRowHint')}
+      accessibilityLabel={t('history.editRecordA11y', {
+        exercise: entry.exerciseName,
+        duration: formatDuration(entry.durationSeconds),
+      })}
+      accessibilityRole="button"
+      onPress={onEdit}
+      style={({ pressed }) => [styles.exerciseGroup, styles.activityEditableGroup, pressed && styles.pressed]}>
       <View style={styles.exerciseHeading}>
         <Text numberOfLines={1} style={styles.exerciseName}>
           {entry.exerciseName}
@@ -698,6 +713,7 @@ function ActivityHistoryRow({
           ]}>
           {entry.isTargetReached ? t('history.activityCompleted') : t('history.activityBelowTarget')}
         </Text>
+        <Ionicons name="chevron-forward" size={14} color={colors.textTertiary} />
       </View>
 
       <View style={styles.activityDetailRow}>
@@ -736,7 +752,7 @@ function ActivityHistoryRow({
           <Text style={styles.activityDetailValue}>{formatRpeWithBand(entry.rpe, t, locale)}</Text>
         </View>
       )}
-    </View>
+    </Pressable>
   );
 }
 
@@ -835,6 +851,8 @@ function createStyles(colors: ThemeColors, historyAccent: string) {
     detailSummaryText: { color: colors.textSecondary, ...Type.footnote },
     volumeText: { color: colors.accent, ...Type.footnote, fontWeight: '500' },
     exerciseGroup: { gap: 6 },
+    /** Düzenlenebilir kardiyo kaydı satırı — dokunma alanı ≥44 pt. */
+    activityEditableGroup: { minHeight: Layout.minTouchSize, paddingVertical: 4 },
     exerciseHeading: { alignItems: 'center', flexDirection: 'row', gap: 8 },
     exerciseName: { color: colors.text, flex: 1, fontSize: 14, fontWeight: '500' },
     exerciseSetCount: { color: colors.textTertiary, ...Type.footnote },
@@ -882,25 +900,8 @@ function createStyles(colors: ThemeColors, historyAccent: string) {
     noSetDetailsText: { color: colors.textSecondary, flex: 1, ...Type.footnote, lineHeight: 15 },
     rpeNote: { color: colors.textTertiary, ...Type.footnote, lineHeight: 15 },
     progressStack: { gap: 24 },
-    /**
-     * Gelişimdeki sade aktivite bölümü — kart yığını değil; başlık, boşluk ve
-     * `hairlineWidth` ayırıcılarla kurulur. Egzersiz gelişimi bölümüyle aynı
-     * görsel dili paylaşır.
-     */
-    activitySection: { gap: 14 },
-    activitySectionTitle: { color: colors.text, ...Type.sectionTitle },
-    activityProgressList: {},
-    activityProgressRow: { gap: 3, minHeight: 44, paddingVertical: 10 },
-    activityProgressRowDivided: {
-      borderTopColor: colors.separator,
-      borderTopWidth: StyleSheet.hairlineWidth,
-    },
-    activityProgressName: { color: colors.text, ...Type.body, fontWeight: '500' },
-    activityProgressMeta: {
-      color: colors.textSecondary,
-      ...Type.caption,
-      fontVariant: ['tabular-nums'],
-    },
+    /** Strength ve kardiyo gelişim bölümlerini ayıran sade hairline. */
+    progressGroupDivider: { backgroundColor: colors.separator, height: StyleSheet.hairlineWidth },
     /** Oturum detayındaki kardiyo satırları — strength tablosuyla aynı ritim. */
     activityDetailRow: {
       alignItems: 'center',

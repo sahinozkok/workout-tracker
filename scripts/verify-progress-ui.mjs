@@ -44,6 +44,8 @@ const progressRaw = source('components/exercise-progress.tsx');
 const progress = stripComments(progressRaw);
 const historyRaw = source('app/(tabs)/history.tsx');
 const history = stripComments(historyRaw);
+const activityProgressRaw = source('components/activity-progress.tsx');
+const activityProgress = stripComments(activityProgressRaw);
 
 // ===========================================================================
 console.log('=== A. Tek dikey akış, kart yığını yok ===');
@@ -150,39 +152,49 @@ check('C6. Egzersiz seçici modalı ve arama korunuyor', () => {
 });
 
 // ===========================================================================
-console.log('\n=== D. History kardiyo aktivite bölümü ===');
+console.log('\n=== D. History kardiyo gelişim bölümü (ActivityProgress) ===');
 // ===========================================================================
+//
+// Basit "Aktivite geçmişi" listesi gerçek bir kardiyo gelişim bileşeniyle
+// (`components/activity-progress.tsx`) DEĞİŞTİRİLDİ. Bu bölüm o bileşenin
+// sunum sözleşmesini ve History'nin doğru koşullarla onu yerleştirdiğini
+// denetler. Analitik matematiği `verify-activity-analytics.mjs` içinde GERÇEK
+// çekirdek çalıştırılarak test edilir.
 
-check('D1. Aktivite bölümü kart zemininden çıktı', () => {
-  assert(!/activitySection:\s*\{[^}]*backgroundColor:\s*colors\.card/.test(history), 'aktivite bölümü hâlâ kart');
-  assert(!/activitySection:\s*\{[^}]*borderRadius/.test(history), 'aktivite bölümü hâlâ yuvarlak kart');
+check('D1. Kardiyo gelişimi kart yığını değil, tek dikey akış', () => {
+  assert(!/styles\.card\b/.test(activityProgress), 'kardiyo gelişimi hâlâ styles.card kullanıyor');
+  assert(!/borderRadius:\s*2[24]\b/.test(activityProgress), 'büyük kart köşesi kalmış');
+  assert(/divider:\s*\{[^}]*hairlineWidth/.test(activityProgress), 'hairline ayırıcı yok');
 });
 
-check('D2. Başlık + sade satır + hairline ayırıcı', () => {
-  assert(/activitySectionTitle/.test(history), 'aktivite başlığı yok');
-  assert(/activityProgressRowDivided:\s*\{[^}]*hairlineWidth/.test(history), 'satırlar hairline ile bölünmüyor');
+check('D2. Seçici + özet + metrik sekmeleri + grafik + son kayıtlar', () => {
+  assert(/pickerRow:\s*\{[^}]*minHeight:\s*Layout\.minTouchSize/.test(activityProgress), 'seçici 44 pt değil');
+  assert(/metricTabs:\s*\{/.test(activityProgress) && /metricTabSelected/.test(activityProgress), 'metrik sekmeleri yok');
+  assert(/toActivityChartBars\(/.test(activityProgress), 'çubuk grafik çekirdeği kullanılmıyor');
+  assert(/recentRecordsTitle/.test(activityProgress), 'son kayıtlar bölümü yok');
 });
 
 check('D3. Kardiyo-only verisi görünmeye devam ediyor', () => {
-  // Redesign koşulu bozmadı: kardiyo-only kullanıcı hâlâ bu bölümü görür.
-  assert(/activityProgressEntries\.length > 0/.test(history), 'aktivite bölümü koşulu kaybolmuş');
-  assert(/t\('history\.activityHistory'\)/.test(history), 'aktivite başlığı çevirisi yok');
-  assert(/t\('history\.activityRecordCount'/.test(history), 'kayıt sayısı çevirisi yok');
+  // Redesign koşulu bozmadı: kardiyo-only kullanıcı ActivityProgress'i görür;
+  // strength YALNIZCA set kaydı varken çizilir (boş strength görünmez).
+  assert(/<ActivityProgress\b/.test(history), 'History ActivityProgress bileşenini kullanmıyor');
+  assert(/completedActivityRecords\.length > 0 && \(\s*<ActivityProgress/.test(history),
+    'ActivityProgress kardiyo kaydı koşuluna bağlı değil');
+  assert(/completedWorkoutSets\.length > 0 && \(\s*<ExerciseProgress/.test(history),
+    'strength yalnız set varken çizilmiyor (kardiyo-only boş strength riski)');
 });
 
-check('D4. Mesafe / süre / tempo hesapları değişmedi', () => {
-  assert(/formatMetersAsKilometers\(entry\.lastDistanceMeters\)/.test(history), 'mesafe biçimi değişmiş');
-  assert(/formatDuration\(Math\.round\(entry\.lastPaceSecondsPerKm\)\)/.test(history), 'tempo hesabı değişmiş');
-  assert(/formatDuration\(entry\.lastDurationSeconds\)/.test(history), 'süre biçimi değişmiş');
+check('D4. Mesafe / süre / tempo hesapları analitik çekirdekten', () => {
+  // Türetme ve biçimlendirme mevcut saf yardımcılardan gelir; ikinci algoritma yok.
+  assert(/buildActivityAnalytics\(/.test(activityProgress), 'analitik çekirdek kullanılmıyor');
+  assert(/formatMetersAsKilometers\(/.test(activityProgress), 'mesafe biçimi kaybolmuş');
+  assert(/day\.paceUnit/.test(activityProgress), 'tempo birimi kaybolmuş');
+  assert(/formatDuration\(/.test(activityProgress), 'süre biçimi kaybolmuş');
 });
 
-check('D5. Aktivite bölümünde emoji ve gradient yok', () => {
-  const section = historyRaw.slice(
-    historyRaw.indexOf('activityProgressEntries.length > 0'),
-    historyRaw.indexOf('</MotionSection>'),
-  );
-  assert(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(section), 'emoji var');
-  assert(!/LinearGradient/.test(section), 'gradient var');
+check('D5. Kardiyo gelişiminde emoji ve gradient yok', () => {
+  assert(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(activityProgressRaw), 'emoji var');
+  assert(!/LinearGradient|gradient/i.test(activityProgress), 'gradient var');
 });
 
 // ---------------------------------------------------------------------------

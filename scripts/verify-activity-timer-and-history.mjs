@@ -715,12 +715,18 @@ check('I2. Kayıt yoksa bölüm BOŞ döner', () => {
 });
 
 check('I3. CARDIO-ONLY kullanıcı "veri yok" görmez', () => {
-  assert(/activityProgressEntries\.length > 0/.test(historyScreen), 'aktivite bölümü koşulu yok');
+  // Basit liste yerine gerçek ActivityProgress bileşeni kardiyo kaydı varken çizilir.
+  assert(/<ActivityProgress\b/.test(historyScreen), 'ActivityProgress bileşeni kullanılmıyor');
   assert(
-    /\(completedWorkoutSets\.length > 0 \|\| activityProgressEntries\.length === 0\)/.test(historyScreen),
-    'kardiyo-only kullanıcıya boş strength kartı gösteriliyor',
+    /completedActivityRecords\.length > 0 && \(\s*<ActivityProgress/.test(historyScreen),
+    'kardiyo gelişimi kardiyo kaydı koşuluna bağlı değil',
   );
-  // Yeni grafik paketi eklenmedi.
+  // Strength YALNIZ set kaydı varken çizilir: kardiyo-only kullanıcı boş strength görmez.
+  assert(
+    /completedWorkoutSets\.length > 0 && \(\s*<ExerciseProgress/.test(historyScreen),
+    'kardiyo-only kullanıcıya boş strength görünümü gösteriliyor',
+  );
+  // Yeni grafik paketi eklenmedi (View tabanlı çubuk grafik).
   assert(!/victory|react-native-svg-charts|chart\.js/i.test(historyScreen), 'yeni grafik paketi');
 });
 

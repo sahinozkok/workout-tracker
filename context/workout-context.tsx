@@ -126,6 +126,21 @@ type WorkoutContextValue = {
     programExerciseId: string,
     performance: ActivityPerformance,
   ) => Promise<{ record: WorkoutActivityRecord; activityTotals: Record<string, ActivityTotals> }>;
+  /**
+   * GEÇMİŞ kardiyo kaydını düzenler — yalnız performans alanları.
+   *
+   * YALNIZCA `duration_seconds`, `distance_meters`, `rpe` güncellenir; kimlik
+   * (`session_id`, `program_exercise_id`), snapshot (`exercise_name`,
+   * `tracking_mode`, hedefler) ve `completed_at` yük'e HİÇ konmaz — sunucudaki
+   * `workout_activity_records_guard` bunları zaten reddeder. `.eq('id', recordId)`
+   * ve mevcut RLS/ownership sözleşmesi kullanılır; yeni migration yoktur.
+   *
+   * Toplamlar `applyActivityTotalsDelta` ile (eski katkı çıkar, yeni katkı ekle)
+   * yeniden yükleme olmadan düzeltilir. Sunucu yazımı BAŞARILI olmadan yerel
+   * state değişmez: hata durumunda kayıt ekrandan kaybolmaz. Ödül GERİ ALINMAZ /
+   * yeniden verilmez (ledger append-only); rank güvenle yeniden senkronlanır.
+   */
+  updateActivityRecord: (recordId: string, performance: ActivityPerformance) => Promise<void>;
   /** Kardiyo kaydını siler ve toplamları anında düzeltir. */
   deleteActivityRecord: (recordId: string) => Promise<void>;
   resetCompletedSets: (dateKey: string, programExerciseIds: string[]) => Promise<void>;
@@ -1267,6 +1282,70 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
   }
 
   /**
+   * GEÇMİŞ KARDİYO KAYDINI DÜZENLER — yalnız performans alanları.
+   *
+   * Sunucu yazımı BAŞARILI olmadan yerel state değişmez: hata fırlatılırsa kayıt
+   * ekranda olduğu gibi kalır (optimistic veri kaybı yok). Snapshot/kimlik/
+   * `completed_at` yük'e konmaz; `applyActivityTotalsDelta` ile eski katkı
+   * çıkarılıp yeni katkı eklenir. Ödül geri alınmaz/yeniden verilmez; rank
+   * güvenle yeniden senkronlanır (set undo ve `deleteActivityRecord` ile aynı).
+   */
+  async function updateActivityRecord(recordId: string, performance: ActivityPerformance) {
+    const existing = workoutActivityRecords.find((record) => record.id === recordId);
+    if (!existing) throw new Error('Düzenlenecek kardiyo kaydı bulunamadı.');
+
+    // Mesafe türünde mesafe zorunludur; süre türünde isteğe bağlı. Snapshot türü
+    // değişmez, bu yüzden kayıt anındaki türe göre doğrulanır.
+    if (existing.trackingMode === 'distance' && performance.distanceMeters === undefined) {
+      throw new Error('Mesafe kaydında mesafe zorunludur.');
+    }
+
+    const { error } = await supabase
+      .from('workout_activity_records')
+      .update({
+        duration_seconds: performance.durationSeconds,
+        distance_meters: performance.distanceMeters ?? null,
+        rpe: performance.rpe ?? null,
+      })
+      .eq('id', recordId)
+      // RLS/concurrent delete nedeniyle 0 satır güncellenmesini başarı sayma.
+      .select('id')
+      .single();
+
+    if (error) throw error;
+
+    const saved: WorkoutActivityRecord = {
+      ...existing,
+      durationSeconds: performance.durationSeconds,
+      distanceMeters: performance.distanceMeters,
+      rpe: performance.rpe,
+    };
+
+    setActivityTotals((current) =>
+      applyActivityTotalsDelta(
+        current,
+        {
+          dateKey: existing.dateKey,
+          programExerciseId: existing.programExerciseId,
+          durationSeconds: existing.durationSeconds,
+          distanceMeters: existing.distanceMeters,
+        },
+        {
+          dateKey: saved.dateKey,
+          programExerciseId: saved.programExerciseId,
+          durationSeconds: saved.durationSeconds,
+          distanceMeters: saved.distanceMeters,
+        },
+      ),
+    );
+    setWorkoutActivityRecords((current) =>
+      current.map((record) => (record.id === recordId ? saved : record)),
+    );
+
+    void syncRank?.();
+  }
+
+  /**
    * KARDİYO KAYDINI SİLER.
    *
    * Daha önce verilmiş XP/gül GERİ ALINMAZ — `reward_ledger` append-only'dir ve
@@ -1547,6 +1626,7 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
     completeSet,
     undoCompletedSet,
     saveActivityRecord,
+    updateActivityRecord,
     deleteActivityRecord,
     resetCompletedSets,
     startWorkout,
