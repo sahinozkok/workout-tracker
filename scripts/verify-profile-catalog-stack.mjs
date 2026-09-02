@@ -115,7 +115,7 @@ check('B2. İlk kart binmez; alt kartlar artan zIndex ile öne çıkar', () => {
   assert(z0 < z1 && z1 < z2, `zIndex artarak yükselmeli (pos0=${z0}, pos1=${z1}, pos2=${z2})`);
 });
 
-check('B3. Katalog bindirmesi mutlak konumlandırma KULLANMAZ', () => {
+check('B3. Katalog kartlarının bindirmesi mutlak konumlandırma KULLANMAZ', () => {
   // Bindirme yalnız negatif margin ile yapılır; katalog stillerinin hiçbiri
   // konumlandırma sızdırmaz. (Ekranın avatar/medya bindirmesi gibi mevcut,
   // konuyla ilgisiz `position` kullanımları bu kontrolün dışındadır.)
@@ -126,10 +126,9 @@ check('B3. Katalog bindirmesi mutlak konumlandırma KULLANMAZ', () => {
     styleBlock('catalogCardPos1'),
     styleBlock('catalogCardPos2'),
   ].join('\n');
+  // Kartlar akışta durur: yalnız alt esneme sırasında Friends zeminini
+  // sürdüren dekoratif dolgu mutlak konumlu olabilir; kartların kendisi olamaz.
   assert(!/position:/.test(catalogStyles), 'katalog kartlarında position kullanılmış');
-  // Kartlar akışta durur: her kart inline style DİZİSİ (base + konum) alır ve
-  // grup içindeki JSX'te mutlak konumlandırma yoktur.
-  assert(!/position:\s*'absolute'/.test(group), 'katalog grubunda mutlak konumlandırma var');
 });
 
 // ---------------------------------------------------------------------------
@@ -243,6 +242,19 @@ check('F4. Kart iç dolgusu içeriği kırpmaz (overflow gizlenmez)', () => {
   // içeriği kırpılmaz: sabit yükseklik veya overflow:'hidden' verilmez.
   assert(!/overflow:\s*'hidden'/.test(card), 'katalog kartı içeriği kırpıyor (overflow hidden)');
   assert(!/\bheight:\s*\d/.test(card), 'katalog kartına sabit yükseklik verilmiş');
+});
+
+check('F5. Friends zemini alt sınır esnemesinde alt barın arkasına devam eder', () => {
+  assert(group.includes('styles.friendsOverscrollFill'), 'Friends alt-esneme dolgusu render edilmiyor');
+  assert(/pointerEvents="none"/.test(group), 'alt-esneme dolgusu dokunmaları engelleyebilir');
+  assert(
+    /backgroundColor:\s*ownSharedProgram \? colors\.surfaceMuted : colors\.surface/.test(group),
+    'alt-esneme dolgusu Friends kartıyla aynı tema rengini kullanmıyor',
+  );
+  const fill = styleBlock('friendsOverscrollFill');
+  assert(/position:\s*'absolute'/.test(fill), 'dolgu akış dışına alınmamış');
+  assert(/bottom:\s*-FRIENDS_OVERSCROLL_FILL_HEIGHT/.test(fill), 'dolgu kartın altından başlamıyor');
+  assert(/height:\s*FRIENDS_OVERSCROLL_FILL_HEIGHT/.test(fill), 'dolgu sabit esneme rezervini kullanmıyor');
 });
 
 // ---------------------------------------------------------------------------

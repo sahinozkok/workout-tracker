@@ -60,6 +60,8 @@ const GOAL_OPTIONS: { glyph: string; labelKey: string; value: TrainingGoal }[] =
 
 /** Profil ekranının bugünkü vurgu tonu (seviye rozeti / ilerleme halkası). */
 const PROFILE_ACCENT_DEFAULT = '#D5755B';
+/** iOS alt sınır esnemesinde Friends kartının zemininin devam edeceği mesafe. */
+const FRIENDS_OVERSCROLL_FILL_HEIGHT = 160;
 
 export default function ProfileScreen() {
   const { user } = useAuth();
@@ -787,6 +789,15 @@ export default function ProfileScreen() {
                 </View>
                 <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
               </Pressable>
+              {/* ScrollView alt sınırda esnediğinde ekran zemini görünmesin:
+                  kartın ölçüsünü ve kaydırma mesafesini büyütmeden Friends
+                  rengini alt barın arkasına doğru devam ettirir. */}
+              <View
+                pointerEvents="none"
+                style={[
+                  styles.friendsOverscrollFill,
+                  { backgroundColor: ownSharedProgram ? colors.surfaceMuted : colors.surface },
+                ]}></View>
             </MotionSection>
           </View>
         </ScrollView>
@@ -1065,6 +1076,13 @@ function createStyles(
     friendsText: { flex: 1, gap: 1 },
     friendsTitle: { color: colors.text, fontSize: 17, fontWeight: '600' },
     friendsCaption: { color: colors.textSecondary, fontSize: 13, lineHeight: 18 },
+    friendsOverscrollFill: {
+      bottom: -FRIENDS_OVERSCROLL_FILL_HEIGHT,
+      height: FRIENDS_OVERSCROLL_FILL_HEIGHT,
+      left: 0,
+      position: 'absolute',
+      right: 0,
+    },
     /**
      * Bölümler büyük yuvarlak kartlar yerine boşluk + ince ayırıcı ile ayrılır.
      * Ayırıcı tema `separator` rengini ve `StyleSheet.hairlineWidth`i kullanır;
