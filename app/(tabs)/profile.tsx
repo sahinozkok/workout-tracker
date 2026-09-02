@@ -14,6 +14,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
   type LayoutChangeEvent,
   type NativeScrollEvent,
@@ -60,8 +61,8 @@ const GOAL_OPTIONS: { glyph: string; labelKey: string; value: TrainingGoal }[] =
 
 /** Profil ekranının bugünkü vurgu tonu (seviye rozeti / ilerleme halkası). */
 const PROFILE_ACCENT_DEFAULT = '#D5755B';
-/** iOS alt sınır esnemesinde Friends kartının zemininin devam edeceği mesafe. */
-const FRIENDS_OVERSCROLL_FILL_HEIGHT = 160;
+/** Sert iOS esnemelerinde bile Friends zemininin bitmemesi için ekran katsayısı. */
+const FRIENDS_OVERSCROLL_SCREEN_MULTIPLIER = 3;
 
 export default function ProfileScreen() {
   const { user } = useAuth();
@@ -80,6 +81,8 @@ export default function ProfileScreen() {
    */
   const canSaveProfile = profileLoadStatus === 'ready';
   const { colors, isDark } = useAppTheme();
+  const { height: windowHeight } = useWindowDimensions();
+  const friendsOverscrollFillHeight = windowHeight * FRIENDS_OVERSCROLL_SCREEN_MULTIPLIER;
   const insets = useSafeAreaInsets();
   const reduceMotion = useReducedMotion();
   const { activeProgramId, disciplineStatuses, programs, workoutSessions } = useWorkout();
@@ -796,7 +799,11 @@ export default function ProfileScreen() {
                 pointerEvents="none"
                 style={[
                   styles.friendsOverscrollFill,
-                  { backgroundColor: ownSharedProgram ? colors.surfaceMuted : colors.surface },
+                  {
+                    backgroundColor: ownSharedProgram ? colors.surfaceMuted : colors.surface,
+                    bottom: -friendsOverscrollFillHeight,
+                    height: friendsOverscrollFillHeight,
+                  },
                 ]}></View>
             </MotionSection>
           </View>
@@ -1077,8 +1084,6 @@ function createStyles(
     friendsTitle: { color: colors.text, fontSize: 17, fontWeight: '600' },
     friendsCaption: { color: colors.textSecondary, fontSize: 13, lineHeight: 18 },
     friendsOverscrollFill: {
-      bottom: -FRIENDS_OVERSCROLL_FILL_HEIGHT,
-      height: FRIENDS_OVERSCROLL_FILL_HEIGHT,
       left: 0,
       position: 'absolute',
       right: 0,

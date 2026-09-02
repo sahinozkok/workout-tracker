@@ -253,8 +253,15 @@ check('F5. Friends zemini alt sınır esnemesinde alt barın arkasına devam ede
   );
   const fill = styleBlock('friendsOverscrollFill');
   assert(/position:\s*'absolute'/.test(fill), 'dolgu akış dışına alınmamış');
-  assert(/bottom:\s*-FRIENDS_OVERSCROLL_FILL_HEIGHT/.test(fill), 'dolgu kartın altından başlamıyor');
-  assert(/height:\s*FRIENDS_OVERSCROLL_FILL_HEIGHT/.test(fill), 'dolgu sabit esneme rezervini kullanmıyor');
+  assert(/useWindowDimensions\(\)/.test(code), 'dolgu ekran yüksekliğini kullanmıyor');
+  assert(
+    /friendsOverscrollFillHeight = windowHeight \* FRIENDS_OVERSCROLL_SCREEN_MULTIPLIER/.test(code),
+    'dolgu yüksekliği ekranla orantılı değil',
+  );
+  assert(/bottom:\s*-friendsOverscrollFillHeight/.test(group), 'dolgu kartın altından başlamıyor');
+  assert(/height:\s*friendsOverscrollFillHeight/.test(group), 'dinamik dolgu yüksekliği uygulanmıyor');
+  const multiplier = Number(code.match(/FRIENDS_OVERSCROLL_SCREEN_MULTIPLIER = (\d+)/)?.[1]);
+  assert(multiplier >= 2, `esneme rezervi yeterince uzun değil (${multiplier} ekran)`);
 });
 
 // ---------------------------------------------------------------------------
