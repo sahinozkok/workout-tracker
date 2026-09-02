@@ -800,6 +800,7 @@ const profileScreenSource = read('app/(tabs)/profile.tsx');
 const friendProfileSource = read('app/profile/[userId].tsx');
 const levelRing = read('components/rewards/level-progress-ring.tsx');
 const proofStats = read('components/rewards/profile-proof-stats.tsx');
+const progressSummarySource = read('components/rewards/profile-progress-summary.tsx');
 const historyScreen = read('app/(tabs)/history.tsx');
 const daySource = read('app/program/[id]/day/[dayId]/index.tsx');
 const calendar = read('components/discipline-calendar.tsx');
@@ -821,9 +822,13 @@ check('F1) ikinci bir Color Presets bölümü yok', (settingsSrc.match(/t\('prof
 
 console.log('\n--- 2) Profil rengi bağlantıları ---');
 contains('F2) kullanıcı adı profil renginde', profileScreenSource, 'summaryUsername: {\n      color: profile.accent,');
-contains('F2) level pill yazısı', profileScreenSource, 'levelPillText: { color: profile.accent');
-contains('F2) level pill ikonu', profileScreenSource, 'levelPillIcon: { color: profile.accent');
-contains('F2) level pill zemini profil renginden türetiliyor', profileScreenSource, 'withAlpha(profile.accent');
+// Profil yeniden tasarımı (feat: redesign profile progress layout): eski "level
+// pill" yerine Level/Rank özeti (ProfileProgressSummary) geldi. Profil accent'i
+// özet bileşenine geçirilir ve bileşen içinde Level simgesi, XP simgesi ve XP
+// ilerleme dolgusunda kullanılır — aynı "profil rengi bağlantısı" güvencesi.
+contains('F2) Level/Rank özeti profil rengini alıyor', profileScreenSource, '<ProfileProgressSummary\n              accentColor={profileAccent.color}');
+contains('F2) Level simgesi profil renginde', progressSummarySource, '<Ionicons color={accentColor} name="star" size={23} />');
+contains('F2) XP simgesi profil renginde', progressSummarySource, '<Ionicons color={accentColor} name="flash" size={24} />');
 contains('F2) YOUR RHYTHM eyebrow', profileScreenSource, 'accentColor={profileAccent.color}');
 contains('F2) A LITTLE PROOF eyebrow', profileScreenSource, '<ProfileProofStats\n              accentColor={profileAccent.color}');
 contains('F2) seçili hedef chip', profileScreenSource, 'goalOptionSelected: {\n      backgroundColor: profile.accent,');
@@ -831,7 +836,7 @@ contains('F2) Save Profile düğmesi', profileScreenSource, 'saveButton: {\n    
 contains('F2) düğme yazısı parlaklıktan', profileScreenSource, 'onAccent: getOnAccentColor(profileAccent.color)');
 check('F2) sabit beyaz/siyah düğme yazısı kalmadı', profileScreenSource.includes("color: isDark ? '#161618' : '#FFFFFF'"), false);
 check('F2) eski mercan tonları kalmadı', /#D5A0AA|#A77882|#E1B8B5|#9B625F|#F5E8E3|#291C20/.test(profileScreenSource), false);
-contains('F2) ilerleme halkası profil renginde', profileScreenSource, 'fillColor={profileAccent.color}');
+contains('F2) XP ilerleme dolgusu profil renginde', progressSummarySource, 'progressFill: { backgroundColor: accentColor');
 
 console.log('\n--- Semantik/nötr renkler korundu ---');
 /**
@@ -855,9 +860,12 @@ check(
 contains('F3) renk hâlâ RPC sonucundan', friendProfileSource, 'resolveProfileColor(profile?.colorPresetId');
 
 console.log('\n--- 4-5) Short bio level kartında ---');
-contains('F4) kendi profilde bio level kartında', profileScreenSource, 'message={draft.bio.trim() || undefined}');
+// Yeniden tasarım: kendi profilde bio artık level kartında DEĞİL, kimlik
+// bloğunda (summaryBio) ve yalnızca doluysa gösteriliyor. Arkadaş profili
+// değişmedi; orada bio hâlâ level kartında.
+contains('F4) kendi profilde bio kimlik bloğunda', profileScreenSource, '<Text style={styles.summaryBio}>{draft.bio.trim()}</Text>');
 contains('F4) arkadaş profilinde bio level kartında', friendProfileSource, 'message={profile.bio.trim() || undefined}');
-check('F4) üstteki bağımsız bio satırı kaldırıldı', profileScreenSource.includes('styles.summaryBio'), false);
+check('F4) kendi profilde eski level-kartı bio mesajı kalmadı', profileScreenSource.includes('message={draft.bio.trim() || undefined}'), false);
 check('F4) arkadaş profilinde de üstte bio yok', friendProfileSource.includes('<Text style={styles.bio}>'), false);
 contains('F5) bio boşsa satır render edilmiyor', levelRing, '{message ? <Text style={styles.message}>{message}</Text> : null}');
 check('F5) Small steps count. arayüzden kaldırıldı', levelRing.includes("t('rewards.levelCardMessage')"), false);
@@ -940,7 +948,9 @@ check('G1) settings YEREL saklanıyor (Supabase değil)', LOCAL_COLOR_FEATURES.i
 contains('G1) TR etiketi', read('locales/tr.ts'), "colorFeatureSettings: 'Ayarlar'");
 contains('G1) EN etiketi', read('locales/en.ts'), "colorFeatureSettings: 'Settings'");
 contains('G1) seçili dil presete bağlı', gSettingsScreen, 'languageButtonSelected: { backgroundColor: settingsAccent }');
-contains('G1) seçili tema presete bağlı', gSettingsScreen, 'themeButtonSelected: { backgroundColor: settingsAccent }');
+// Ayarlar tema seçici yeniden tasarlandı (segmentli kontrol): seçili tema artık
+// settingsAccent zeminli kayan gösterge ile işaretlenir.
+contains('G1) seçili tema göstergesi presete bağlı', gSettingsScreen, '{ backgroundColor: settingsAccent, width: themeSegmentWidth }');
 contains('G1) switch açık durumu presete bağlı', gSettingsScreen, 'trackColor={{ false: colors.surfaceMuted, true: settingsAccent }}');
 contains('G1) vurgu ikonları presete bağlı', gSettingsScreen, 'color={settingsAccent}');
 contains('G1) kontrast getOnAccentColor ile', gSettingsScreen, 'const onSettingsAccent = getOnAccentColor(settingsAccent);');
@@ -952,7 +962,7 @@ console.log('\n--- 4-6) Profil takvim çizgisi ---');
 contains('G4) kart accentColor propu alıyor', disciplineCard, 'accentColor?: string;');
 contains('G4) seçili dönem çizgisi accent kullanıyor', disciplineCard, 'tabUnderlineSelected: { backgroundColor: periodAccent }');
 contains('G4) varsayılan bugünkü görünüm', disciplineCard, 'const periodAccent = accentColor ?? colors.primary;');
-contains('G4) kendi profil kendi rengini geçiyor', gOwnProfile, '<ProfileDisciplineCard accentColor={profileAccent.color} collapsible />');
+contains('G4) kendi profil kendi rengini geçiyor', gOwnProfile, '<ProfileDisciplineCard accentColor={profileAccent.color} collapsible compact />');
 contains('G5) arkadaş profili SAHİBİNİN rengini geçiyor', gFriendProfile, 'accentColor={ownerAccent.color}');
 check(
   'G6) Ana Sayfa takvimi accentColor almıyor (dokunulmadı)',
