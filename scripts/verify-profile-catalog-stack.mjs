@@ -223,8 +223,25 @@ check('F2. Disiplin kartı collapsible/compact sözleşmesini korur', () => {
   );
 });
 
-check('F3. Arkadaşlar satırı: ikonlar, metinler, route ve dokunma alanı korunur', () => {
-  assert(/name="people-outline" size=\{18\}/.test(group), 'Arkadaşlar ikonu/boyutu değişmiş');
+check('F3. Arkadaşlar satırı: ikon, metinler, route ve dokunma alanı korunur', () => {
+  // Arkadaşlar ikonu paylaşılan ProfileCatalogIcon (kullanıcının orijinal YATAY
+  // çoklu Rosea çizimi): tema tokenıyla boyanır, sabit renk/daire YOKTUR. Yatay
+  // kompozisyon KARE kutuya sıkıştırılmaz — ayrı width/height ile çizilir
+  // (36–42 × 26–30 pt aralığı; 48 pt kutuya sığar, taşmaz).
+  const iconTag = group.match(/<ProfileCatalogIcon\b[^>]*\/>/)?.[0];
+  assert(iconTag, 'Arkadaşlar satırı paylaşılan ProfileCatalogIcon kullanmıyor');
+  assert(/name="friends"/.test(iconTag), 'Arkadaşlar ikonu name="friends" değil');
+  assert(/color=\{colors\.textSecondary\}/.test(iconTag), 'Arkadaşlar ikonu mevcut tema tokenını (colors.textSecondary) kullanmıyor');
+  const iconW = Number(iconTag.match(/width=\{(\d+)\}/)?.[1]);
+  const iconH = Number(iconTag.match(/height=\{(\d+)\}/)?.[1]);
+  assert(Number.isFinite(iconW) && Number.isFinite(iconH), 'Arkadaşlar ikonu dikdörtgen width/height kullanmıyor (kare size kalmış olabilir)');
+  assert(iconW > iconH, `Arkadaşlar ikonu yatay değil (${iconW}×${iconH})`);
+  assert(iconW >= 36 && iconW <= 42, `Arkadaşlar ikon genişliği 36–42 pt dışında (${iconW})`);
+  assert(iconH >= 26 && iconH <= 30, `Arkadaşlar ikon yüksekliği 26–30 pt dışında (${iconH})`);
+  // Büyüyen ikon 48 pt kutudan taşmaz (kart yüksekliği/hiza korunur).
+  assert(iconW <= 48 && iconH <= 48, `Arkadaşlar ikonu ikon kutusundan (48 pt) taşıyor (${iconW}×${iconH})`);
+  assert(!/size=\{/.test(iconTag), 'Arkadaşlar ikonu hâlâ kare size kullanıyor');
+  assert(!/name="people-outline"/.test(group), 'eski people-outline ikonu hâlâ duruyor');
   assert(/name="chevron-forward" size=\{16\}/.test(group), 'Arkadaşlar chevron ikonu/boyutu değişmiş');
   assert(/t\('friends\.profileRow'\)/.test(group), 'Arkadaşlar başlığı i18n anahtarı değişmiş');
   assert(/t\('friends\.profileRowCaption'\)/.test(group), 'Arkadaşlar açıklaması i18n anahtarı değişmiş');
@@ -234,6 +251,11 @@ check('F3. Arkadaşlar satırı: ikonlar, metinler, route ve dokunma alanı koru
   const minHeight = Number(friends.match(/minHeight:\s*(\d+)/)?.[1]);
   assert(Number.isFinite(minHeight) && minHeight >= 44, `Arkadaşlar satırı < 44 pt (${minHeight})`);
   assert(/width:\s*'100%'/.test(friends), 'Arkadaşlar satırı tam genişliğini kaybetti');
+  // İkon kabı daire/disk/çerçeve DEĞİL: kenarlık/arka plan YOK (kutu yalnız hizayı ve
+  // dokunma alanını korur).
+  const iconBox = styleBlock('friendsIcon');
+  assert(!/border(Width|Color|Radius)/.test(iconBox), 'Arkadaşlar ikonu hâlâ daire/çerçeve içinde');
+  assert(!/backgroundColor/.test(iconBox), 'Arkadaşlar ikon kabında disk/arka plan var');
 });
 
 check('F4. Kart iç dolgusu içeriği kırpmaz (overflow gizlenmez)', () => {

@@ -17,6 +17,7 @@ import { ProfileProgressSummary } from '@/components/rewards/profile-progress-su
 import { ProfileProofStats } from '@/components/rewards/profile-proof-stats';
 import { LevelRoseSheet } from '@/components/rewards/level-rose-sheet';
 import { RewardInfoSheet, RewardInfoKind } from '@/components/rewards/reward-info-sheet';
+import { ProfileCatalogIcon } from '@/components/profile-catalog-icon';
 import { ProfileDisciplineCard } from '@/components/profile-discipline-card';
 import { ProfileSharedProgram } from '@/components/profile-shared-program';
 import { MotionSection } from '@/components/motion-section';
@@ -246,7 +247,7 @@ export default function ProfileScreen() {
               onPress={() => router.push('/friends')}
               style={({ pressed }) => [styles.friendsRow, pressed && styles.pressed]}>
               <View style={styles.friendsIcon}>
-                <Ionicons name="people-outline" size={18} color={colors.textSecondary} />
+                <ProfileCatalogIcon color={colors.textSecondary} height={28} name="friends" width={40} />
               </View>
               <View style={styles.friendsText}>
                 <Text style={styles.friendsTitle}>{t('friends.profileRow')}</Text>
@@ -389,11 +390,10 @@ function createStyles(colors: ThemeColors, isDark: boolean, accent: string) {
       paddingVertical: 12,
       width: '100%',
     },
+    // İkon daire/disk/çerçeve İÇİNE alınmaz: kutu yalnız satır hizasını ve
+    // dokunma alanını korur; kenarlık YOKTUR (ikon çıplak alfa maskedir).
     friendsIcon: {
       alignItems: 'center',
-      borderColor: colors.separator,
-      borderRadius: 24,
-      borderWidth: StyleSheet.hairlineWidth,
       height: 48,
       justifyContent: 'center',
       width: 48,

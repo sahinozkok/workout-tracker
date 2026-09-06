@@ -13,6 +13,7 @@ import {
 } from '@/components/discipline-calendar';
 import { DisciplineYearGrid, DisciplineYearMetrics } from '@/components/discipline-year-grid';
 import { MotionCollapsible, MotionSwap } from '@/components/motion-section';
+import { ProfileCatalogIcon } from '@/components/profile-catalog-icon';
 import { ThemeColors } from '@/constants/theme';
 import { getWeekdayShortLabel, WEEKDAY_VALUES } from '@/constants/weekdays';
 import { useTranslation } from '@/context/language-context';
@@ -217,7 +218,7 @@ function ProfileDisciplineCardView({
         style={({ pressed }) => [styles.titleRow, pressed && collapsible && styles.pressed]}>
         {compact && (
           <View style={styles.compactIcon}>
-            <Ionicons color={colors.text} name="sunny-outline" size={22} />
+            <ProfileCatalogIcon color={colors.text} name="discipline" size={24} />
           </View>
         )}
         <Text style={styles.title}>{t('calendar.shortTitle')}</Text>
@@ -451,11 +452,10 @@ function createStyles(colors: ThemeColors, todayColor: string, periodAccent: str
       minHeight: compact ? 68 : 28,
       paddingVertical: compact ? 12 : 0,
     },
+    // İkon daire/disk/çerçeve İÇİNE alınmaz: kutu yalnız satır hizasını ve
+    // dokunma alanını korur; kenarlık YOKTUR (ikon çıplak alfa maskedir).
     compactIcon: {
       alignItems: 'center',
-      borderColor: colors.separator,
-      borderRadius: 24,
-      borderWidth: StyleSheet.hairlineWidth,
       height: 48,
       justifyContent: 'center',
       width: 48,
