@@ -448,7 +448,10 @@ export default function ChatScreen() {
         if (isMountedRef.current) setIsSending(false);
       }
     }
-  }, [applyIncoming, counterpartId, draft]);
+    // `achievementSync` context'te stabil bir useCallback'tir (requestSync);
+    // bağımlılığa eklemek yeniden oluşturma/döngü YARATMAZ, yalnız oturum
+    // değişiminde tazelenerek eski closure kullanımını engeller.
+  }, [achievementSync, applyIncoming, counterpartId, draft]);
 
   const trimmedDraft = draft.trim();
   const canSend =

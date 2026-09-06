@@ -307,7 +307,10 @@ export default function CoachScreen() {
     } finally {
       setIsSending(false);
     }
-  }, [startSpeaking, t]);
+    // `achievementSync` context'te stabil bir useCallback'tir (requestSync);
+    // bağımlılığa eklemek yeniden oluşturma/döngü YARATMAZ, yalnız oturum
+    // değişiminde tazelenerek eski closure kullanımını engeller.
+  }, [achievementSync, startSpeaking, t]);
 
   const submit = useCallback(
     (rawText: string) => {
