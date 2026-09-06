@@ -607,8 +607,9 @@ check('13. Arkadaş ÖZEL seçimi SLOT sırasıyla görür', () => {
   // İstemci bu sırayı YENİDEN SIRALAMAZ.
   assert(componentSource.includes('preserveOrder'), 'bileşende sıra koruma modu yok');
   assert(
-    /<ProfileAchievementShowcase[\s\S]{0,300}preserveOrder/.test(friendProfileSource),
-    'arkadaş profili sunucu sırasını koruyacak biçimde kullanmıyor',
+    friendProfileSource.includes('<ProfileCareerShowcase') &&
+      friendProfileSource.includes('entries={showcase.map((entry) => ({ key: entry.key }))}'),
+    'arkadaş profili sunucu sırasını koruyacak biçimde kullanmıyor (kariyer vitrini)',
   );
 });
 
@@ -719,20 +720,17 @@ check('17. Tabloya doğrudan istemci yazma/OKUMA yetkisi YOKTUR', () => {
   }
 });
 
-check('18. Arkadaş profili SEÇİM arayüzü açamaz', () => {
-  // Arkadaş vitrinine `onPress` verilmez → salt okunur.
+check('18. Arkadaş profili SEÇİM arayüzü açamaz (KALICI kariyer vitrini)', () => {
+  // Arkadaş kariyer vitrinine düzenleme (onEdit) verilmez → salt okunur.
+  assert(!/<ProfileCareerShowcase[\s\S]{0,300}onEdit/.test(friendProfileSource), 'arkadaş vitrini düzenlenebilir');
+  assert(!friendProfileSource.includes('achievements-showcase'), 'arkadaş profili seçim ekranına gidiyor');
   assert(
-    !/<ProfileAchievementShowcase[\s\S]{0,300}onPress/.test(friendProfileSource),
-    'arkadaş vitrini dokunulabilir',
-  );
-  assert(!friendProfileSource.includes('rank-showcase'), 'arkadaş profili seçim ekranına gidiyor');
-  assert(
-    !friendProfileSource.includes('saveShowcaseSelection'),
+    !friendProfileSource.includes('saveMyAchievementShowcase') && !friendProfileSource.includes('saveShowcase'),
     'arkadaş profili seçim kaydedebiliyor',
   );
   // Seçim ekranı YALNIZCA kendi profilinden açılır.
   assert(
-    ownProfileSource.includes("router.push('/rank-showcase')"),
+    ownProfileSource.includes("router.push('/achievements-showcase')"),
     'kendi profili seçim ekranını açmıyor',
   );
   /**
@@ -1501,9 +1499,11 @@ check('L7. Eski sezon seçimi YENİ sezon başarılarına uygulanamaz', () => {
     ['streak_7', 'streak_3', 'workout_5'],
     'eski seçim yeni sezon türetmesine sızdı',
   );
+  // Ürün kararı: profil KALICI kariyer vitrinini gösterir. Aynı güvence — seçim
+  // hazır olana kadar (loading) stale/boş render edilmez.
   assert(
-    ownProfileSource.includes('!isShowcaseSelectionReady'),
-    'profil hazır değilken yükleniyor durumuna geçmiyor',
+    ownProfileSource.includes("achievementShowcaseStatus === 'loading'"),
+    'profil kariyer vitrini hazır değilken yükleniyor durumuna geçmiyor',
   );
 });
 
@@ -1673,9 +1673,12 @@ check('L13. Arkadaş vitrini SLOT sırasını korur (regresyon)', () => {
   );
   assert(!friendBody.includes('is_custom'), 'arkadaş RPC imzası gereksiz yere değişmiş');
   assert(friendBody.includes('public.are_friends(v.id, target_user_id)'), 'arkadaşlık kapısı yok');
+  // KALICI kariyer sisteminde arkadaş vitrini sunucu (slot) sırasını korur:
+  // servis satırları slot sırasında döner, bileşen olduğu gibi (map, re-sort YOK) çizer.
   assert(
-    /<ProfileAchievementShowcase[\s\S]{0,400}preserveOrder/.test(friendProfileSource),
-    'arkadaş profili sunucu sırasını koruyacak biçimde kullanmıyor',
+    friendProfileSource.includes('<ProfileCareerShowcase') &&
+      friendProfileSource.includes('entries={showcase.map((entry) => ({ key: entry.key }))}'),
+    'arkadaş profili sunucu sırasını koruyacak biçimde kullanmıyor (kariyer vitrini)',
   );
 });
 

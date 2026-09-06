@@ -1,3 +1,4 @@
+import { parseLevelRoseResponse } from '@/constants/level-roses';
 import { supabase } from '@/lib/supabase';
 import { DailyClaimResult, RewardResult, UserProgress } from '@/types/rewards';
 
@@ -108,4 +109,38 @@ export async function awardPetLove(burstKey: string): Promise<RewardResult | und
   if (error) throw error;
   const row = firstRow<RewardRow>(data);
   return row ? toReward(row) : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Seviye gülü seçimi — kalıcı kullanıcı tercihi (level sistemi)
+// ---------------------------------------------------------------------------
+
+/**
+ * Kullanıcının SEÇTİĞİ seviye gülü kimliği (ham; `null` = otomatik mod).
+ *
+ * GÜVENLİK — RPC kullanıcı kimliği/seviye GÖNDERMEZ; sunucu `auth.uid()` ile
+ * belirler. Backend henüz bu RPC'yi tanımıyorsa (eski sunucu) çağrı hata verir;
+ * çağıran bunu "seçim yok / otomatik" olarak ele alır ve profili BOZMAZ.
+ */
+export async function fetchMyLevelRose(): Promise<string | null> {
+  const { data, error } = await supabase.rpc('get_my_level_rose');
+  if (error) throw error;
+  return parseLevelRoseResponse(data);
+}
+
+/**
+ * Seçimi kaydeder. `null` → otomatik moda dönüş.
+ *
+ * Bütün doğrulamalar (bilinen kimlik, seviye ≥ açılma, yalnız kendi satırı)
+ * SUNUCUDADIR; bu katman kullanıcı kimliği/seviye göndermez. Kilitli/bilinmeyen
+ * kimlik veya oturumsuz istek sunucuda REDDEDİLİR ve hata fırlatılır; çağıran
+ * önceki seçimi korur ve tekrar deneme sunar. Dönüş, kalıcılaşan ham değerdir.
+ */
+export async function saveMyLevelRose(roseId: string | null): Promise<string | null> {
+  const { data, error } = await supabase.rpc('set_my_level_rose', { target_rose: roseId });
+  if (error) throw error;
+  // Okuma ile AYNI daraltıcı: beklenmedik bir yanıt (sayı/nesne/dizi) sessizce
+  // `null`'a — yani "otomatik tercih"e — ÇEVRİLMEZ, fırlatılır. Aksi hâlde
+  // kaydedilmemiş bir seçim "otomatik moda geçildi" gibi görünürdü.
+  return parseLevelRoseResponse(data);
 }

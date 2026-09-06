@@ -36,6 +36,7 @@ import { FriendAvatar } from '@/components/friends/friend-avatar';
 import { FriendsMetrics, FriendsPalette, useFriendsPalette } from '@/components/friends/friends-theme';
 import { ReportSheet } from '@/components/friends/report-sheet';
 import { MotionPressable } from '@/components/motion-pressable';
+import { useOptionalAchievements } from '@/context/achievement-context';
 import { useAuth } from '@/context/auth-context';
 import { useTranslation } from '@/context/language-context';
 import { getFriendProfile } from '@/services/friends';
@@ -80,6 +81,7 @@ type ReportTarget = { kind: 'message'; messageId: string } | { kind: 'user' };
 export default function ChatScreen() {
   const palette = useFriendsPalette();
   const { t, locale } = useTranslation();
+  const achievementSync = useOptionalAchievements()?.requestSync;
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ userId?: string }>();
@@ -409,6 +411,8 @@ export default function ChatScreen() {
       applyIncoming([message]);
       pendingSendRef.current = undefined;
       setDraft('');
+      // Gönderilen ilk mesaj → `first_message` için ölçülü senkron (fire-and-forget).
+      achievementSync?.();
     } catch (error) {
       if (!isMountedRef.current || owner !== conversationRef.current) return;
 

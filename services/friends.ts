@@ -1,4 +1,5 @@
 import { parseColorPresetId } from '@/constants/color-presets';
+import { FriendRoseFetch, parseFriendLevelRoseResponse } from '@/constants/level-roses';
 import { supabase } from '@/lib/supabase';
 import {
   FriendProfile,
@@ -225,4 +226,29 @@ export async function syncSharedDisciplineDays(
   });
   if (error) throw error;
   return (data as number | null) ?? 0;
+}
+
+/**
+ * Arkadaşın SEÇTİĞİ seviye gülü — erişim reddini otomatik tercihten AYIRAN
+ * sonuç (`ready`/`denied`).
+ *
+ * GÜVENLİK — RPC `are_friends` ile korunur (sunucu tarafı). Arkadaş değilse /
+ * engellenmişse `returns table` HİÇ satır döndürmez → `denied`. Yalnız seçili
+ * gül kimliği paylaşılır; XP/roses/özel veri HİÇ gelmez. Kendi hesabımıza YAZMA
+ * yolu YOKTUR (bu yalnız okumadır) ve gizlilik yüzeyi GENİŞLEMEZ.
+ *
+ * SÖZLEŞME — `denied` "başarılı otomatik tercih" DEĞİLDİR: çağıran onu
+ * `unavailable` gibi ele alır ve arkadaşın SEÇMEDİĞİ bir gülü sembol olarak
+ * çizmez. `null` (otomatik) YALNIZCA erişim varken (`ready`) anlamlıdır.
+ *
+ * BACKEND YOKSA — RPC henüz tanımlı değilse (veya ağ hatası) çağrı FIRLATIR;
+ * çağıran bunu `unavailable` olarak ele alır ve profilin kalanını BOZMAZ.
+ * Yükleme/hata/erişim reddi "otomatik seçim" gibi SUNULMAZ.
+ */
+export async function getFriendLevelRose(targetUserId: string): Promise<FriendRoseFetch> {
+  const { data, error } = await supabase.rpc('get_friend_level_rose', {
+    target_user_id: targetUserId,
+  });
+  if (error) throw error;
+  return parseFriendLevelRoseResponse(data);
 }

@@ -30,6 +30,11 @@ import { pathToFileURL } from 'node:url';
 const ROOT = resolve(import.meta.dirname, '..');
 const LEADERBOARD_SQL_PATH = 'supabase/migrations/20260828120000_add_friends_rank_leaderboard.sql';
 const RANKS_SQL_PATH = 'supabase/migrations/20260827120000_add_seasonal_ranks.sql';
+// SÜRÜMLÜ SÖZLEŞME: v1 rank_for_rp (RANKS_SQL_PATH) ESKİ kimlikleri üretir;
+// v2 RPC bunları `rank_to_v2` ile YENİ kimliğe çevirir. Model, v2 RPC'yi taklit
+// ettiği için rankForRp = rank_to_v2(v1_rank_for_rp). Eşleme buradan okunur.
+const CONTRACT_SQL_PATH =
+  'supabase/migrations/20260909120000_add_versioned_rank_contract.sql';
 const FRIENDS_SQL_PATH =
   'supabase/migrations/20260814120000_add_friendships_and_shared_discipline.sql';
 
@@ -106,6 +111,7 @@ try {
 
 const leaderboardSql = source(LEADERBOARD_SQL_PATH);
 const ranksSql = source(RANKS_SQL_PATH);
+const contractSql = source(CONTRACT_SQL_PATH);
 const friendsSql = source(FRIENDS_SQL_PATH);
 const serviceSource = source('services/ranks.ts');
 const screenSource = source('app/friends/leaderboard.tsx');
@@ -118,9 +124,21 @@ const leaderboardCode = leaderboardSql
   .replace(/\/\*[\s\S]*?\*\//g, ' ')
   .replace(/^\s*--.*$/gm, ' ');
 
-const RANK_ORDER = ['bronze', 'silver', 'gold', 'platinum', 'diamond', 'master', 'rosea'];
+const RANK_ORDER = ['bronze', 'silver', 'gold', 'platinum', 'emerald', 'diamond', 'rosea'];
 
-/** RP → rank; eşikler MEVCUT migration'daki `rank_for_rp` tablosundan okunur. */
+/** SÜRÜMLÜ SÖZLEŞMEDEKİ v1→v2 kademe eşlemesi. */
+const RANK_TO_V2 = (() => {
+  const block = contractSql.slice(
+    contractSql.indexOf('function public.rank_to_v2'),
+    contractSql.indexOf('$$;', contractSql.indexOf('function public.rank_to_v2')),
+  );
+  const map = {};
+  for (const [, from, to] of block.matchAll(/when '(\w+)' then '(\w+)'/g)) map[from] = to;
+  if (Object.keys(map).length === 0) throw new Error('rank_to_v2 eşlemesi okunamadı');
+  return map;
+})();
+
+/** RP → v1 rank; eşikler TARİHSEL migration'daki `rank_for_rp` tablosundandır. */
 const RANK_THRESHOLDS = (() => {
   const block = ranksSql.slice(ranksSql.indexOf('function public.rank_for_rp'));
   const body = block.slice(0, block.indexOf('$$;'));
@@ -129,11 +147,15 @@ const RANK_THRESHOLDS = (() => {
   return matches.map((match) => ({ floor: Number.parseInt(match[1], 10), rank: match[2] }));
 })();
 
+/**
+ * RP → v2 rank. Model, istemcinin çağırdığı `get_friends_rank_leaderboard_v2`'yi
+ * taklit eder: v1 rank_for_rp + rank_to_v2. Böylece YENİ kimlikleri üretir.
+ */
 function rankForRp(rp) {
   for (const tier of RANK_THRESHOLDS) {
-    if ((rp ?? 0) >= tier.floor) return tier.rank;
+    if ((rp ?? 0) >= tier.floor) return RANK_TO_V2[tier.rank] ?? tier.rank;
   }
-  return 'bronze';
+  return RANK_TO_V2.bronze ?? 'bronze';
 }
 
 /** SQL'deki gerçek yanıt sınırı. Model ve istemci sabiti buna karşı doğrulanır. */
@@ -616,7 +638,6 @@ check('16. Servis eşlemesi snake_case → camelCase dönüşümünü doğru yap
   addSeasonRank(db, 'friend', 1700);
 
   const parsed = rx.parseFriendRankLeaderboard(runLeaderboard(db, 'me'), {
-    fallbackRank: 'bronze',
     order: RANK_ORDER,
   });
 
@@ -653,7 +674,6 @@ check('17. Sıralanmamış satır Bronze veya 0 RP’ye ZORLANMAZ', () => {
   addSeasonRank(db, 'stale', 1700, { season_index: 4 });
 
   const parsed = rx.parseFriendRankLeaderboard(runLeaderboard(db, 'me'), {
-    fallbackRank: 'bronze',
     order: RANK_ORDER,
   });
   const stale = parsed.entries.find((entry) => entry.userId === 'stale');
@@ -664,24 +684,55 @@ check('17. Sıralanmamış satır Bronze veya 0 RP’ye ZORLANMAZ', () => {
   assertEqual(stale.position, undefined, 'sıra uydurulmuş');
 });
 
-check('18. Bilinmeyen rank kimliği ve bozuk satır uygulamayı ÇÖKERTMEZ', () => {
+check('18a. SIRALANMIŞ satırda bilinmeyen rank → KONTROLLÜ HATA (sahte Bronze yok)', () => {
+  // SÜRÜMLÜ SÖZLEŞME: sıralanmış bir satır tanınmayan kimlik taşırsa (ör. eski
+  // sunucudan sızan 'master' veya ileri sürüm 'mythic') parser SESSİZCE Bronze
+  // üretmez; kontrollü bir hata fırlatır ve çağıran hata/yeniden-dene gösterir.
+  for (const badRank of ['mythic', 'master']) {
+    let threw = false;
+    try {
+      rx.parseFriendRankLeaderboard(
+        [
+          {
+            current_rank: badRank,
+            current_rp: 5000,
+            is_ranked: true,
+            is_self: true,
+            participant_count: 1,
+            participant_id: 'me',
+            rank_position: 1,
+            season_index: 5,
+          },
+        ],
+        { order: RANK_ORDER },
+      );
+    } catch {
+      threw = true;
+    }
+    assert(threw, `sıralanmış '${badRank}' satırı sessizce Bronze'a düşmemeli, hata fırlatmalı`);
+  }
+});
+
+check('18b. Kimliksiz/tutarsız satır GÜVENLE düşer; hata fırlatmaz', () => {
   const parsed = rx.parseFriendRankLeaderboard(
     [
-      // Sunucu ileride yeni bir tier eklerse eski istemci güvenli tier'a düşer.
+      // Sıralanmış geçerli satır (yeni kimlik) korunur.
       {
-        current_rank: 'mythic',
-        current_rp: 5000,
+        current_rank: 'rosea',
+        current_rp: 1800,
         is_ranked: true,
         is_self: true,
-        participant_count: 4,
+        participant_count: 3,
         participant_id: 'me',
         rank_position: 1,
         season_index: 5,
       },
-      // Kimliksiz satır DÜŞER.
+      // Kimliksiz satır DÜŞER (rank hiç okunmaz).
       { current_rp: 10, is_ranked: true, participant_id: null, rank_position: 2 },
-      // `is_ranked` doğru ama RP tutarsız → güvenli biçimde sıralanmamış sayılır.
+      // `is_ranked` doğru ama RP/sıra tutarsız → sıralanmamış sayılır; rank
+      // okunmadığı için bilinmeyen kimlik olsa bile HATA fırlamaz.
       {
+        current_rank: 'mythic',
         current_rp: -5,
         is_ranked: true,
         participant_id: 'broken',
@@ -690,7 +741,7 @@ check('18. Bilinmeyen rank kimliği ve bozuk satır uygulamayı ÇÖKERTMEZ', ()
       // Aynı katılımcı iki kez gelirse ilk satır kalır.
       { is_ranked: false, is_self: true, participant_id: 'me' },
     ],
-    { fallbackRank: 'bronze', order: RANK_ORDER },
+    { order: RANK_ORDER },
   );
 
   assertDeepEqual(
@@ -698,14 +749,15 @@ check('18. Bilinmeyen rank kimliği ve bozuk satır uygulamayı ÇÖKERTMEZ', ()
     ['me', 'broken'],
     'bozuk satırlar beklenen biçimde ele alınmadı',
   );
-  assertEqual(parsed.entries[0].currentRank, 'bronze', 'bilinmeyen tier güvenli tier’a düşmedi');
-  assertEqual(parsed.entries[0].currentRp, 5000, 'geçerli RP kaybedildi');
+  assertEqual(parsed.entries[0].currentRank, 'rosea', 'geçerli rank korunmadı');
+  assertEqual(parsed.entries[0].currentRp, 1800, 'geçerli RP kaybedildi');
   assertEqual(parsed.entries[1].isRanked, false, 'tutarsız satır sıralanmış sayıldı');
+  assertEqual(parsed.entries[1].currentRank, undefined, 'tutarsız satırda rank üretildi');
   assertEqual(parsed.entries[1].currentRp, undefined, 'tutarsız satırda RP üretildi');
 
   // Boş/eksik yanıt da güvenli.
   assertDeepEqual(
-    rx.parseFriendRankLeaderboard(null, { fallbackRank: 'bronze', order: RANK_ORDER }).entries,
+    rx.parseFriendRankLeaderboard(null, { order: RANK_ORDER }).entries,
     [],
     'null yanıt çökertti',
   );
@@ -723,7 +775,6 @@ check('19. Sınır uygulandığında istemci "herkes gösteriliyor" DEMEZ', () =
   }
 
   const parsed = rx.parseFriendRankLeaderboard(runLeaderboard(db, 'me'), {
-    fallbackRank: 'bronze',
     order: RANK_ORDER,
   });
 
@@ -910,17 +961,18 @@ check('23. Eski `get_friend_rank` davranışı KORUNUR', () => {
 });
 
 check('24. İstemci sunucuya kimlik/sezon/RP GÖNDERMEZ', () => {
+  // SÜRÜMLÜ SÖZLEŞME: istemci v2 RPC'sini yine PARAMETRESİZ çağırır.
   assert(
-    serviceSource.includes("supabase.rpc('get_friends_rank_leaderboard')"),
-    'servis RPC’yi parametresiz çağırmıyor',
+    serviceSource.includes("supabase.rpc('get_friends_rank_leaderboard_v2')"),
+    'servis v2 RPC’yi parametresiz çağırmıyor',
   );
   // Çağrının argüman listesi YALNIZCA fonksiyon adını içermeli.
-  const callStart = serviceSource.indexOf("supabase.rpc('get_friends_rank_leaderboard'");
+  const callStart = serviceSource.indexOf("supabase.rpc('get_friends_rank_leaderboard_v2'");
   assert(callStart >= 0, 'RPC çağrısı bulunamadı');
   const callTail = serviceSource.slice(callStart);
   assertEqual(
     callTail.slice(0, callTail.indexOf(')') + 1),
-    "supabase.rpc('get_friends_rank_leaderboard')",
+    "supabase.rpc('get_friends_rank_leaderboard_v2')",
     'RPC çağrısına parametre geçiliyor',
   );
   // Ekran doğrudan Supabase istemcisine dokunmaz.
@@ -1079,8 +1131,8 @@ check('29. Sıralama özelliği KENDİ sınırlarının içinde kalıyor', () =>
     'sıralama ekranı servis katmanını atlıyor',
   );
   assert(
-    serviceSource.includes("supabase.rpc('get_friends_rank_leaderboard')"),
-    'servis katmanı sıralama RPC’sini çağırmıyor',
+    serviceSource.includes("supabase.rpc('get_friends_rank_leaderboard_v2')"),
+    'servis katmanı sıralama v2 RPC’sini çağırmıyor',
   );
 });
 

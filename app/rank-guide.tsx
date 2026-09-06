@@ -171,7 +171,10 @@ function TierRow({
       style={[styles.row, isLast && styles.rowLast]}>
       {/* Vurgu çizgisi: mevcut rank sade bir işaretle ayrılır. */}
       <View style={[styles.tierBar, { backgroundColor: isCurrent ? color : 'transparent' }]} />
-      <RankEmblem color={color} rankId={rankId} variant="medium" />
+      {/* Rank Tiers amblemleri BURADA açıkça büyütülür (≈54 pt). Global `medium`
+          varyantı DEĞİŞTİRİLMEZ; diğer ekranlar (RankBadge vb.) etkilenmez.
+          Assetlerin iç boşluğu nedeniyle 40 pt'de neredeyse görünmez oluyordu. */}
+      <RankEmblem rankId={rankId} size={54} />
       <Text numberOfLines={1} style={styles.rowLabel}>
         {label}
       </Text>
@@ -212,8 +215,9 @@ function createStyles(colors: ThemeColors) {
       flexDirection: 'row',
       gap: 8,
       justifyContent: 'space-between',
-      minHeight: Layout.minTouchSize,
-      paddingVertical: 12,
+      // Satır ≈54 pt amblemi kesmeyecek kadar yüksek (contain, kırpma yok).
+      minHeight: 64,
+      paddingVertical: 10,
     },
     rowLast: { borderBottomWidth: 0 },
     // Uzun TR/EN etiketleri taşmaz: satır sarar, değer sabit kalır.

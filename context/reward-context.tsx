@@ -4,7 +4,14 @@ import { AppState } from 'react-native';
 import { RewardToastLayer } from '@/components/rewards/reward-toast';
 import { useAuth } from '@/context/auth-context';
 import { useLocalDateKey } from '@/hooks/use-shared-discipline-sync';
-import { claimDailyRewards, fetchMyProgress, syncWorkoutRewards, awardPetLove } from '@/services/rewards';
+import {
+  awardPetLove,
+  claimDailyRewards,
+  fetchMyLevelRose,
+  fetchMyProgress,
+  saveMyLevelRose,
+  syncWorkoutRewards,
+} from '@/services/rewards';
 import { RewardResult, UserProgress } from '@/types/rewards';
 
 /**
@@ -35,6 +42,9 @@ const DEFAULT_PROGRESS: UserProgress = {
  */
 const REWARD_COALESCE_WINDOW = 700;
 
+/** `setLevelRose` sonucu — sheet buna göre kaydı kapatır veya hata/retry gösterir. */
+export type LevelRoseSaveStatus = 'saved' | 'error' | 'noop';
+
 type RewardContextValue = {
   progress: UserProgress;
   isProgressLoading: boolean;
@@ -45,6 +55,28 @@ type RewardContextValue = {
   /** Rosea okşama burst'ü. Sınır yoktur; anahtar retry'da değişmez. */
   awardPetBurst: (burstKey: string) => Promise<void>;
   refreshProgress: () => Promise<void>;
+  /**
+   * Kullanıcının SEÇTİĞİ seviye gülü kimliği (ham; `null` = otomatik mod → en
+   * yüksek açık gül). Sunucudan gelir; yerelde hesaplanmaz.
+   */
+  selectedRoseId: string | null;
+  /**
+   * Seçim OKUMASININ ayrık durumu — arkadaş tarafıyla AYNI model:
+   *   * `loading`     → tercih henüz sunucudan gelmedi (nötr yükleme gösterimi).
+   *   * `unavailable` → okuma başarısız (RPC eksik / ağ / geçersiz yanıt). Bu
+   *     durumda TAHMİNİ (otomatik) gül GÖSTERİLMEZ; başarılı bir `null`
+   *     ("otomatik mod") ile okuma hatası BİRBİRİNE karışmaz.
+   *   * `undefined`   → başarılı okuma (`ready`): `selectedRoseId` geçerlidir
+   *     (`null` = gerçek otomatik tercih). Bileşenler bu değeri doğrudan
+   *     `ProfileProgressSummary.levelRoseState` prop'una verir.
+   */
+  levelRoseState: 'loading' | 'unavailable' | undefined;
+  /**
+   * Seviye gülü seçimini kaydeder (`null` → otomatik). Doğrulama SUNUCUDADIR.
+   * Başarısızlıkta önceki seçim KORUNUR ve `'error'` döner; sheet retry gösterir.
+   * Aynı değer zaten seçiliyse `'noop'`.
+   */
+  setLevelRose: (roseId: string | null) => Promise<LevelRoseSaveStatus>;
 };
 
 const RewardContext = createContext<RewardContextValue | undefined>(undefined);
@@ -60,6 +92,16 @@ export function RewardProvider({ children }: PropsWithChildren) {
 
   const [progress, setProgress] = useState<UserProgress>(DEFAULT_PROGRESS);
   const [isProgressLoading, setIsProgressLoading] = useState(true);
+  /** Seçili seviye gülü (ham; null = otomatik). Sunucu otoritedir. */
+  const [selectedRoseId, setSelectedRoseId] = useState<string | null>(null);
+  /**
+   * Seçim OKUMASININ durumu. `loading` → henüz gelmedi; `ready` → başarılı okuma
+   * (selectedRoseId geçerli, null=otomatik); `unavailable` → okuma hatası (asla
+   * "otomatik" gibi gösterilmez). Başarılı `null` ile hata artık ayrı tutulur.
+   */
+  const [roseStatus, setRoseStatus] = useState<'loading' | 'ready' | 'unavailable'>('loading');
+  /** Seçim kaydı tek-uçuş kilidi: aynı anda ikinci kaydetme başlamaz. */
+  const isSavingRoseRef = useRef(false);
   /** Gösterilecek toplam; her yeni pencere yeni bir kimlik alır. */
   const [toast, setToast] = useState<{ id: number; xp: number }>();
 
@@ -154,6 +196,67 @@ export function RewardProvider({ children }: PropsWithChildren) {
     }
   }, [userId]);
 
+  /**
+   * Seçili seviye gülünü sunucudan yükler.
+   *
+   * Backend bu RPC'yi henüz tanımıyorsa (eski sunucu) çağrı hata verir; bu
+   * durumda seçim "yok (otomatik mod)" kabul edilir ve profil BOZULMAZ —
+   * kaydedilemeyen bir tercih kaydedilmiş gibi GÖSTERİLMEZ, yalnızca otomatik
+   * varsayılan (en yüksek açık gül) görünür. Geç gelen cevap yeni hesaba yazmaz.
+   */
+  const loadLevelRose = useCallback(async () => {
+    const owner = ownerRef.current;
+    if (!userId) return;
+    try {
+      const sel = await fetchMyLevelRose();
+      if (!isMountedRef.current || owner !== ownerRef.current) return;
+      setSelectedRoseId(sel);
+      setRoseStatus('ready');
+    } catch {
+      // Okuma hatası "otomatik tercih"e DÖNÜŞTÜRÜLMEZ: başarılı bir `null` ile
+      // hata birbirine karışmasın diye seçim SAHTE bir gülle doldurulmaz.
+      // Bu KULLANICI için daha önce doğrulanmış bir tercih (status 'ready')
+      // varsa geçici hatada KORUNUR; ilk yüklemede (henüz 'ready' değil) nötr
+      // 'unavailable' gösterilir. Hesap değişiminde status 'loading'e sıfırlanır,
+      // böylece bir hesabın tercihi başka hesaba TAŞINAMAZ.
+      if (isMountedRef.current && owner === ownerRef.current) {
+        setRoseStatus((prev) => (prev === 'ready' ? 'ready' : 'unavailable'));
+      }
+    }
+  }, [userId]);
+
+  /**
+   * Seçimi kaydeder. Pesimistik: state YALNIZCA sunucu onayından sonra değişir,
+   * böylece kaydedilemeyen tercih "kaydedilmiş" gibi görünmez. Tek-uçuş kilidi
+   * yinelenen kaydetmeyi engeller. Hatada önceki seçim korunur ve `'error'`
+   * döner. Geç gelen cevap yeni hesaba yazmaz (owner guard).
+   */
+  const setLevelRose = useCallback(
+    async (roseId: string | null): Promise<LevelRoseSaveStatus> => {
+      if (!userId) return 'error';
+      if (roseId === selectedRoseId) return 'noop';
+      if (isSavingRoseRef.current) return 'error';
+      isSavingRoseRef.current = true;
+      const owner = ownerRef.current;
+      try {
+        const saved = await saveMyLevelRose(roseId);
+        if (owner !== ownerRef.current) return 'error';
+        if (isMountedRef.current) {
+          setSelectedRoseId(saved);
+          // Başarılı kayıt DOĞRULANMIŞ bir tercihtir: ilk okuma 'unavailable'
+          // kalmış olsa bile artık 'ready'dir (placeholder yerine gerçek gül).
+          setRoseStatus('ready');
+        }
+        return 'saved';
+      } catch {
+        return 'error';
+      } finally {
+        if (owner === ownerRef.current) isSavingRoseRef.current = false;
+      }
+    },
+    [selectedRoseId, userId],
+  );
+
   // Hesap değişimi: sahiplik artar, durum ve bekleyen popup sıfırlanır.
   useEffect(() => {
     ownerRef.current += 1;
@@ -163,10 +266,19 @@ export function RewardProvider({ children }: PropsWithChildren) {
     claimedDateRef.current = undefined;
     isClaimingRef.current = false;
     claimTokenRef.current += 1;
+    // Önceki hesabın gül seçimi yeni oturuma sızmaz.
+    isSavingRoseRef.current = false;
+    setSelectedRoseId(null);
+    // Oturumlu kullanıcıda okuma yeniden başlar (loading); oturumsuzda gösterim
+    // yok, nötr 'ready' bırakılır. Önceki hesabın durumu yeni oturuma sızmaz.
+    setRoseStatus(userId ? 'loading' : 'ready');
     setProgress(DEFAULT_PROGRESS);
     setIsProgressLoading(Boolean(userId));
-    if (userId) void refreshProgress();
-  }, [clearPendingToast, refreshProgress, userId]);
+    if (userId) {
+      void refreshProgress();
+      void loadLevelRose();
+    }
+  }, [clearPendingToast, loadLevelRose, refreshProgress, userId]);
 
   const syncWorkoutDay = useCallback(
     async (clientToday: string, targetDate: string) => {
@@ -260,16 +372,34 @@ export function RewardProvider({ children }: PropsWithChildren) {
     return () => subscription.remove();
   }, [claimDaily, todayKey, userId]);
 
+  // Başarılı okuma (`ready`) → `undefined` (gerçek gül çözülür); aksi hâlde
+  // ayrık durum profil bileşenine geçer (loading/unavailable → placeholder).
+  const levelRoseState: 'loading' | 'unavailable' | undefined =
+    roseStatus === 'ready' ? undefined : roseStatus;
+
   const value = useMemo<RewardContextValue>(
     () => ({
       awardPetBurst,
       claimDaily,
       isProgressLoading,
+      levelRoseState,
       progress,
       refreshProgress,
+      selectedRoseId,
+      setLevelRose,
       syncWorkoutDay,
     }),
-    [awardPetBurst, claimDaily, isProgressLoading, progress, refreshProgress, syncWorkoutDay],
+    [
+      awardPetBurst,
+      claimDaily,
+      isProgressLoading,
+      levelRoseState,
+      progress,
+      refreshProgress,
+      selectedRoseId,
+      setLevelRose,
+      syncWorkoutDay,
+    ],
   );
 
   return (

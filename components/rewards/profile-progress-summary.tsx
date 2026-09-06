@@ -1,10 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { RANK_EMBLEM_ICONS } from '@/components/ranks/rank-emblem';
-import { getRankColor, useRankName } from '@/components/ranks/rank-badge';
+import { LevelRoseEmblem } from '@/components/rewards/level-rose-emblem';
 import { MAX_LEVEL } from '@/constants/level-curve';
-import { RankId } from '@/constants/ranks';
+import { resolveDisplayedRose } from '@/constants/level-roses';
 import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { useTranslation } from '@/context/language-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
@@ -12,116 +11,98 @@ import { useAppTheme } from '@/hooks/use-app-theme';
 type ProfileProgressSummaryProps = {
   accentColor: string;
   level: number;
+  /** Kendi profilde verilir: Level satırı gül seçim penceresini açar. */
   onLevelPress?: () => void;
-  onRankPress?: () => void;
-  rank?: { id: RankId; rp: number };
+  /**
+   * Kullanıcının SEÇTİĞİ seviye gülü kimliği (kalıcı tercih). `null`/tanımsız =
+   * otomatik mod → en yüksek açılmış gül. Manuel seçim seviye atlayınca
+   * KENDİLİĞİNDEN değişmez; gerçek seviye `level` prop'unda ayrı taşınır.
+   */
+  selectedRoseId?: string | null;
+  /**
+   * BAŞKA kullanıcı (arkadaş) profilinde gül tercihi AYRI okunduğunda kullanılır:
+   * `loading` = tercih henüz gelmedi, `unavailable` = okunamadı (RPC eksik / ağ /
+   * erişim / geçersiz). İkisinde de gül GÖSTERİLMEZ (nötr placeholder) — arkadaşın
+   * SEÇMEDİĞİ bir gül sembolü çizilmez; "Level N" metni korunur. Verilmezse
+   * (kendi profilimiz) mevcut otomatik davranış aynen sürer.
+   */
+  levelRoseState?: 'loading' | 'unavailable';
   xpForNextLevel: number;
   xpIntoLevel: number;
 };
 
-/** Referanstaki düz Level/Rank kimliği ile yatay XP akışını tek yerde kurar. */
+/**
+ * PROFİL İLERLEME BLOĞU — referanstaki gibi TEK dikey akış:
+ *   1. Level satırı: küçük gerçek seviye gülü + "Level N" (sola hizalı).
+ *   2. İnce yatay XP çubuğu + altında "Sonraki seviye · {current} / {next} XP".
+ *
+ * RANK ARTIK BURADA DEĞİL — eski iki sütunlu Level/Rank kimliği KALDIRILDI; rank
+ * aşağıdaki "Success" bölümüne (ProfileCareerShowcase) taşındı. Eski büyük 38 pt
+ * XP sayısı da yoktur; sunum sakin ve Level odaklıdır.
+ */
 export function ProfileProgressSummary({
   accentColor,
   level,
+  levelRoseState,
   onLevelPress,
-  onRankPress,
-  rank,
+  selectedRoseId,
   xpForNextLevel,
   xpIntoLevel,
 }: ProfileProgressSummaryProps) {
   const { colors } = useAppTheme();
   const { t } = useTranslation();
-  const rankName = useRankName();
   const styles = createStyles(colors, accentColor);
   const isMaxLevel = level >= MAX_LEVEL || xpForNextLevel <= 0;
   const progress = isMaxLevel
     ? 1
     : Math.min(1, Math.max(0, xpIntoLevel / Math.max(1, xpForNextLevel)));
 
-  const rankContent = rank ? (
-    <>
-      <View style={[styles.identityIcon, { borderColor: getRankColor(rank.id) }]}>
-        <Ionicons color={getRankColor(rank.id)} name={RANK_EMBLEM_ICONS[rank.id]} size={23} />
-      </View>
-      <Text numberOfLines={1} style={styles.identityValue}>
-        {rankName(rank.id)} · {t('ranks.rpValue', { rp: rank.rp })}
+  /**
+   * SEVİYE GÜLÜ — Level satırında, "Level N" metninin solunda. Görünür gül 32 pt;
+   * arkasında daire/çerçeve/tint/glow YOKTUR (kendi renkleri korunur). Arkadaş
+   * profilinde tercih henüz bilinmiyor/okunamadıysa TAHMİNİ gül çizilmez, nötr
+   * placeholder gösterilir. Gül tek bir yerde render edilir.
+   */
+  const levelRoseVisual =
+    levelRoseState === 'loading' ? (
+      <ActivityIndicator color={colors.textTertiary} size="small" />
+    ) : levelRoseState === 'unavailable' ? (
+      <Ionicons color={colors.textTertiary} name="flower-outline" size={28} />
+    ) : (
+      <LevelRoseEmblem roseId={resolveDisplayedRose(level, selectedRoseId ?? undefined).id} size={32} />
+    );
+
+  /**
+   * Level satırı — kendi profilde bütün satır (≥44 pt) gül seçicisini açar;
+   * arkadaş profilinde salt okunur (View). NESTED Pressable yoktur.
+   */
+  const levelRow = (
+    <View style={styles.levelInner}>
+      <View style={styles.levelRoseSpot}>{levelRoseVisual}</View>
+      <Text numberOfLines={1} style={styles.levelValue}>
+        {t('rewards.levelLabel', { level })}
       </Text>
-    </>
-  ) : (
-    <>
-      <View style={styles.identityIcon}>
-        <Ionicons color={colors.textTertiary} name="shield-outline" size={23} />
-      </View>
-      <Text numberOfLines={1} style={[styles.identityValue, styles.identityValueMuted]}>
-        {t('ranks.unranked')}
-      </Text>
-    </>
+    </View>
   );
 
   return (
     <View style={styles.root}>
-      <View style={styles.identityRow}>
-        {onLevelPress ? (
-          <Pressable
-            accessibilityHint={t('rewards.info.levelOpenHint')}
-            accessibilityLabel={t('rewards.levelLabel', { level })}
-            accessibilityRole="button"
-            onPress={onLevelPress}
-            style={({ pressed }) => [styles.identityCell, pressed && styles.pressed]}>
-            <View style={styles.identityIcon}>
-              <Ionicons color={accentColor} name="star" size={23} />
-            </View>
-            <Text numberOfLines={1} style={styles.identityValue}>
-              {t('rewards.levelLabel', { level })}
-            </Text>
-          </Pressable>
-        ) : (
-          <View accessibilityLabel={t('rewards.levelLabel', { level })} accessible style={styles.identityCell}>
-            <View style={styles.identityIcon}>
-              <Ionicons color={accentColor} name="star" size={23} />
-            </View>
-            <Text numberOfLines={1} style={styles.identityValue}>
-              {t('rewards.levelLabel', { level })}
-            </Text>
-          </View>
-        )}
-
-        <View style={styles.identityDivider} />
-
-        {onRankPress ? (
-          /**
-           * Rank alanı, rank verisi henüz GELMEMİŞ ya da hata vermiş olsa bile
-           * her zaman basılabilir: dokununca Rank ekranı açılır ve kullanıcı
-           * oradan Retry görebilir. Sahte rank/RP ÜRETİLMEZ — veri yokken
-           * yalnızca mevcut "unranked" görünümü gösterilir; ikon/yazı ölçüleri
-           * ve düzen değişmez.
-           */
-          <Pressable
-            accessibilityHint={t('ranks.badgeHint')}
-            accessibilityLabel={
-              rank
-                ? `${rankName(rank.id)}, ${t('ranks.rpValue', { rp: rank.rp })}`
-                : t('ranks.unranked')
-            }
-            accessibilityRole="button"
-            onPress={onRankPress}
-            style={({ pressed }) => [styles.identityCell, pressed && styles.pressed]}>
-            {rankContent}
-          </Pressable>
-        ) : (
-          <View style={styles.identityCell}>{rankContent}</View>
-        )}
-      </View>
-
-      <View style={styles.divider} />
-
-      <View style={styles.rhythm}>
-        <View style={styles.xpRow}>
-          <Ionicons color={accentColor} name="flash" size={24} />
-          <Text style={styles.xpValue}>{isMaxLevel ? level : xpIntoLevel}</Text>
-          <Text style={styles.xpUnit}>{isMaxLevel ? t('rewards.levelMaxValue') : 'XP'}</Text>
+      {onLevelPress ? (
+        <Pressable
+          accessibilityHint={t('rewards.info.levelOpenHint')}
+          accessibilityLabel={t('rewards.levelLabel', { level })}
+          accessibilityRole="button"
+          onPress={onLevelPress}
+          style={({ pressed }) => [styles.levelRow, pressed && styles.pressed]}>
+          {levelRow}
+        </Pressable>
+      ) : (
+        <View accessibilityLabel={t('rewards.levelLabel', { level })} accessible style={styles.levelRow}>
+          {levelRow}
         </View>
+      )}
 
+      <View style={styles.xpBlock}>
         <View
           accessibilityLabel={
             isMaxLevel
@@ -138,6 +119,7 @@ export function ProfileProgressSummary({
           <Text style={styles.progressLabel}>
             {isMaxLevel ? t('rewards.maximumLevelReached') : t('rewards.levelCardNext')}
           </Text>
+          <Text style={styles.progressDot}> · </Text>
           <Text style={styles.progressValue}>
             {isMaxLevel
               ? t('rewards.levelLabel', { level })
@@ -151,39 +133,14 @@ export function ProfileProgressSummary({
 
 function createStyles(colors: ThemeColors, accentColor: string) {
   return StyleSheet.create({
-    root: { width: '100%' },
-    identityRow: { alignItems: 'center', flexDirection: 'row', minHeight: 116 },
-    identityCell: {
-      alignItems: 'center',
-      flex: 1,
-      gap: 10,
-      justifyContent: 'center',
-      minHeight: Layout.minTouchSize,
-      minWidth: 0,
-    },
-    identityIcon: {
-      alignItems: 'center',
-      borderColor: colors.separator,
-      borderRadius: 28,
-      borderWidth: StyleSheet.hairlineWidth,
-      height: 56,
-      justifyContent: 'center',
-      width: 56,
-    },
-    identityDivider: { backgroundColor: colors.separator, height: 48, width: StyleSheet.hairlineWidth },
-    identityValue: { color: colors.text, fontSize: 15, fontWeight: '600' },
-    identityValueMuted: { color: colors.textSecondary },
-    divider: { backgroundColor: colors.separator, height: StyleSheet.hairlineWidth },
-    rhythm: { gap: 14, paddingVertical: 24 },
-    xpRow: { alignItems: 'baseline', flexDirection: 'row', gap: 8 },
-    xpValue: {
-      color: colors.text,
-      fontSize: 38,
-      fontVariant: ['tabular-nums'],
-      fontWeight: '600',
-      lineHeight: 42,
-    },
-    xpUnit: { color: colors.textSecondary, fontSize: 15, fontWeight: '600' },
+    root: { gap: 14, width: '100%' },
+    // Level satırı sola hizalı; bütün satır ≥44 pt dokunma alanı (gül seçici).
+    levelRow: { alignSelf: 'flex-start', minHeight: Layout.minTouchSize, justifyContent: 'center' },
+    levelInner: { alignItems: 'center', flexDirection: 'row', gap: 10 },
+    // Görünür gül 32 pt; slot 34 pt. Daire/çerçeve/tint YOK.
+    levelRoseSpot: { alignItems: 'center', height: 34, justifyContent: 'center', width: 34 },
+    levelValue: { color: colors.text, fontSize: 19, fontWeight: '500', lineHeight: 24 },
+    xpBlock: { gap: 8, width: '100%' },
     progressTrack: {
       backgroundColor: colors.surfaceMuted,
       borderRadius: 2,
@@ -192,13 +149,14 @@ function createStyles(colors: ThemeColors, accentColor: string) {
       width: '100%',
     },
     progressFill: { backgroundColor: accentColor, borderRadius: 2, height: '100%' },
-    progressFooter: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+    progressFooter: { alignItems: 'center', flexDirection: 'row' },
     progressLabel: { color: colors.textSecondary, ...Type.caption },
+    progressDot: { color: colors.textTertiary, ...Type.caption },
     progressValue: {
-      color: colors.text,
+      color: colors.textSecondary,
       fontSize: 13,
       fontVariant: ['tabular-nums'],
-      fontWeight: '600',
+      fontWeight: '500',
     },
     pressed: { opacity: 0.6 },
   });

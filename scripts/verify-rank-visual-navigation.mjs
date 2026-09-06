@@ -6,31 +6,34 @@
  *   1. Rank ekranındaki YEREL içerik sekmeleri (Genel / Başarılar / Geçmiş) —
  *      yalnızca sunum state'i: yeni route, bottom tab, sorgu veya RPC YOK ve
  *      veri yüklemeleri sekmeye göre KOŞULLANDIRILMAZ.
- *   2. Kademeye özgü, KOD TABANLI `RankEmblem` sembolü — aynı kaynak rank
- *      özetinde (hero), `RankBadge` içinde (compact) ve rank rehberinde (medium)
- *      kullanılır; yedi rank için yedi geçerli Ionicons eşleşmesi vardır.
+ *   2. Kademeye özgü YEREL RESİM ASSET'i (`RankEmblem`) — aynı doğru asset rank
+ *      özetinde (hero), `RankBadge` içinde (compact), rank rehberinde (medium)
+ *      ve profil özetinde kullanılır; yedi rank için yedi asset eşleşmesi vardır.
+ *
+ * SÖZLEŞME DEĞİŞİKLİĞİ (kullanıcı talebi) — emblem artık Ionicons değil, gerçek
+ * transparan PNG asset'idir. Bu yüzden eski "yalnızca Ionicons / png require
+ * yasak / `color` zorunlu prop" beklentileri yeni sözleşmeyle GEÇERSİZDİR;
+ * yerlerine daha güçlü kontroller kondu: yedi asset dosyasının gerçekten var
+ * olması, PNG + alfa kanalı taşıması ve doğru rank'a eşlenmesi doğrulanır.
  *
  * Projede jest KURULU DEĞİL; diğer rank harness'ları gibi kaynak metni statik
- * denetlenir. Ionicons isimleri projede KURULU glyph map'e karşı doğrulanır,
- * böylece geçersiz bir isim sessizce geçemez.
- *
- * Harness gerçek SÖZLEŞMEYİ test eder; yorum/boşluk değişikliklerine bağlı
- * değildir.
+ * denetlenir. Harness gerçek SÖZLEŞMEYİ test eder; yorum/boşluk değişikliklerine
+ * bağlı değildir.
  */
 
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
+import { Buffer } from 'node:buffer';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '..');
-const require = createRequire(import.meta.url);
 const source = (path) => readFileSync(join(ROOT, path), 'utf8');
 
 const screen = source('app/rank.tsx');
 const badge = source('components/ranks/rank-badge.tsx');
 const guide = source('app/rank-guide.tsx');
 const emblem = source('components/ranks/rank-emblem.tsx');
+const profileShowcase = source('components/ranks/profile-career-showcase.tsx');
 const constants = source('constants/ranks.ts');
 const achievementIcons = source('components/ranks/achievement-icons.ts');
 const tr = source('locales/tr.ts');
@@ -44,7 +47,10 @@ function check(condition, message) {
 
 /** `activeTab === '<key>'` dallanmasını kendi `) : null}` kapanışına kadar çıkarır. */
 function tabBlock(key) {
-  const start = screen.indexOf(`activeTab === '${key}'`);
+  // RENDER dalını hedefle (`activeTab === '<key>' ? (`). Not: rank ekranında ayrıca
+  // sekme-etkin senkron effect'i (`if (activeTab === 'achievements') ...`) bulunur;
+  // bu yüzden yalnız string eşleşmesi değil, koşullu-render biçimi aranır.
+  const start = screen.indexOf(`activeTab === '${key}' ? (`);
   assert.ok(start !== -1, `${key} sekmesi ekranda dallanmalı`);
   const rest = screen.slice(start + key.length);
   const end = rest.indexOf(') : null}');
@@ -85,21 +91,26 @@ const overviewBlock = tabBlock('overview');
 const achievementsBlock = tabBlock('achievements');
 const historyBlock = tabBlock('history');
 check(overviewBlock.includes('WeekFocusCard') && overviewBlock.includes("t('ranks.seasonEndsIn')"), 'Genel sekmesi haftalık odak ve sezon istatistiklerini içermeli');
-check(!overviewBlock.includes('AchievementsGrid') && !overviewBlock.includes("t('ranks.recentActivity')"), 'Genel sekmesi başarı/geçmiş içeriğini içermemeli');
-check(achievementsBlock.includes('AchievementsGrid') && achievementsBlock.includes("t('ranks.achievements.title')"), 'Başarılar sekmesi başarı grid’ini içermeli');
+check(!overviewBlock.includes('CareerAchievementsView') && !overviewBlock.includes("t('ranks.recentActivity')"), 'Genel sekmesi başarı/geçmiş içeriğini içermemeli');
+// ÜRÜN KARARI: Başarılar sekmesi kalıcı kariyer başarımlarının ortak bileşenini
+// gösterir (sezonluk grid kaldırıldı).
+check(achievementsBlock.includes('CareerAchievementsView') && !achievementsBlock.includes('AchievementsGrid'), 'Başarılar sekmesi kalıcı kariyer başarım bileşenini içermeli');
 check(!achievementsBlock.includes('WeekFocusCard') && !achievementsBlock.includes("t('ranks.pastSeasons')"), 'Başarılar sekmesi diğer içerikleri içermemeli');
 check(historyBlock.includes("t('ranks.recentActivity')") && historyBlock.includes("t('ranks.pastSeasons')"), 'Geçmiş sekmesi RP hareketleri ve geçmiş sezonları içermeli');
-check(!historyBlock.includes('WeekFocusCard') && !historyBlock.includes('AchievementsGrid'), 'Geçmiş sekmesi diğer içerikleri içermemeli');
+check(!historyBlock.includes('WeekFocusCard') && !historyBlock.includes('CareerAchievementsView'), 'Geçmiş sekmesi diğer içerikleri içermemeli');
 
 // ---------------------------------------------------------------------------
 // 4. Veri yüklemeleri sekmeye göre KOŞULLANDIRILMAMIŞ.
 // ---------------------------------------------------------------------------
-for (const loader of ['loadHistory', 'loadEvents', 'loadWeekFocus', 'loadAchievements']) {
+// Eski sezon `loadAchievements` mount effect'i kaldırıldı (kalıcı kariyer sistemine
+// devredildi); rank/RP yükleyicileri korunur.
+for (const loader of ['loadHistory', 'loadEvents', 'loadWeekFocus']) {
   check(new RegExp(`useEffect\\(\\(\\) => \\{\\s*void ${loader}\\(\\);`).test(screen), `${loader} mount effect'i korunmalı`);
 }
-// Yükleyici çağrısının olduğu satırlarda sekme state'i geçmemeli.
+check(!/void loadAchievements\(\);/.test(screen), 'eski sezon loadAchievements mount effect\'i hâlâ var');
+// Rank/RP yükleyici çağrısının olduğu satırlarda sekme state'i geçmemeli.
 for (const line of screen.split('\n')) {
-  if (/void load(History|Events|WeekFocus|Achievements)\(\);/.test(line)) {
+  if (/void load(History|Events|WeekFocus)\(\);/.test(line)) {
     check(!line.includes('activeTab'), 'Veri yüklemesi sekmeye göre koşullandırılmamalı');
   }
 }
@@ -109,54 +120,94 @@ check(!/void loadAchievements\(\);\s*\}, \[[^\]]*activeTab/.test(screen), 'Sekme
 check(!screen.includes('.rpc(') && !screen.includes('supabase'), 'Ekran yeni sorgu/RPC eklememeli');
 
 // ---------------------------------------------------------------------------
-// 5. Yedi rank için yedi geçerli emblem eşleşmesi.
+// 5. Yedi rank YEREL ASSET'e eşlenir; yeni kimlik sırası doğru; assetler gerçek.
 // ---------------------------------------------------------------------------
-const rankIds = [...constants.matchAll(/'(bronze|silver|gold|platinum|diamond|master|rosea)'/g)]
-  .map((match) => match[1]);
-const uniqueRankIds = [...new Set(rankIds)];
-check(uniqueRankIds.length === 7, 'constants/ranks.ts yedi rank tanımlamalı');
+// constants/ranks.ts, RANK_IDS bloğundaki YENİ yedi kimliği tanımlamalı.
+const rankIdsBlock = constants.slice(
+  constants.indexOf('RANK_IDS'),
+  constants.indexOf('] as const', constants.indexOf('RANK_IDS')),
+);
+const expectedOrder = ['bronze', 'silver', 'gold', 'platinum', 'emerald', 'diamond', 'rosea'];
+const rankIds = [...rankIdsBlock.matchAll(/'([a-z]+)'/g)].map((m) => m[1]);
+check(
+  JSON.stringify(rankIds) === JSON.stringify(expectedOrder),
+  `RANK_IDS sırası bronze→…→rosea (emerald, diamond) olmalı, gelen: ${rankIds.join(',')}`,
+);
+check(!rankIds.includes('master'), 'Aktif kimliklerde artık master olmamalı');
+const uniqueRankIds = expectedOrder;
 
-const emblemPairs = [...emblem.matchAll(/(\w+):\s*'([a-z-]+)'/g)]
-  .filter(([, key]) => uniqueRankIds.includes(key));
-const emblemMap = Object.fromEntries(emblemPairs.map(([, key, icon]) => [key, icon]));
-check(Object.keys(emblemMap).length === 7, 'RankEmblem yedi rank için yedi eşleşme içermeli');
-
-const expectedEmblem = {
-  bronze: 'shield-outline',
-  silver: 'shield-half-outline',
-  gold: 'medal-outline',
-  platinum: 'star-outline',
-  diamond: 'diamond-outline',
-  master: 'trophy-outline',
-  rosea: 'rose-outline',
-};
+// RANK_EMBLEM_SOURCES yedi kimliği yedi yerel rank asset'ine `require` ile eşler.
+const sourcePairs = [...emblem.matchAll(/(\w+):\s*require\('([^']+)'\)/g)];
+const emblemMap = Object.fromEntries(sourcePairs.map(([, key, path]) => [key, path]));
+check(Object.keys(emblemMap).length === 7, 'RankEmblem yedi rank için yedi asset eşleşmesi içermeli');
 for (const rankId of uniqueRankIds) {
-  check(emblemMap[rankId] === expectedEmblem[rankId], `${rankId} → ${expectedEmblem[rankId]} eşleşmesi olmalı`);
+  check(
+    emblemMap[rankId] === `@/assets/images/ranks/rank-${rankId}.png`,
+    `${rankId} → assets/images/ranks/rank-${rankId}.png eşleşmesi olmalı`,
+  );
 }
 
-// İkon isimleri KURULU Ionicons sürümünde gerçekten geçerli olmalı.
-const glyphMap = require('@expo/vector-icons/build/vendor/react-native-vector-icons/glyphmaps/Ionicons.json');
-for (const [rankId, icon] of Object.entries(emblemMap)) {
-  check(icon in glyphMap, `${rankId} için ${icon} geçerli bir Ionicons ismi olmalı`);
+/** PNG başlığından genişlik/yükseklik/renk tipini okur (IHDR). Renk tipi 6 = RGBA. */
+function readPng(path) {
+  const buf = readFileSync(join(ROOT, path));
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  assert.ok(buf.subarray(0, 8).equals(sig), `${path} geçerli bir PNG olmalı`);
+  return {
+    width: buf.readUInt32BE(16),
+    height: buf.readUInt32BE(20),
+    colorType: buf[25], // 6 = truecolour + alpha
+  };
+}
+for (const rankId of uniqueRankIds) {
+  const rel = `assets/images/ranks/rank-${rankId}.png`;
+  const png = readPng(rel);
+  check(png.colorType === 6, `${rel} gerçek alfa kanalı taşımalı (renk tipi 6)`);
+  check(
+    png.width >= 128 && png.height >= 128 && png.width <= 1024 && png.height <= 1024,
+    `${rel} makul çözünürlükte olmalı (128–1024 px), gelen ${png.width}×${png.height}`,
+  );
 }
 
 // ---------------------------------------------------------------------------
-// 6. Ana ekran, badge ve guide aynı RankEmblem'i kullanır.
+// 6. Ana ekran, badge, guide VE profil "Success" bölümü aynı ortak RankEmblem'i
+//    kullanır. (Rank artık Level/XP özetinde değil, career showcase'de çizilir.)
 // ---------------------------------------------------------------------------
-for (const [name, code] of [['app/rank.tsx', screen], ['rank-badge.tsx', badge], ['rank-guide.tsx', guide]]) {
+const consumers = [
+  ['app/rank.tsx', screen],
+  ['rank-badge.tsx', badge],
+  ['rank-guide.tsx', guide],
+  ['profile-career-showcase.tsx', profileShowcase],
+];
+for (const [name, code] of consumers) {
   check(code.includes("from '@/components/ranks/rank-emblem'"), `${name} RankEmblem'i içe aktarmalı`);
   check(code.includes('<RankEmblem'), `${name} RankEmblem'i kullanmalı`);
 }
 check(screen.includes('variant="hero"'), 'Rank özeti hero sembolünü kullanmalı');
 check(badge.includes('variant="compact"'), 'RankBadge kompakt sembolü kullanmalı');
-check(guide.includes('variant="medium"'), 'Rank rehberi orta boy sembolü kullanmalı');
-// Renkli nokta yerini sembole bırakmış olmalı.
-check(!badge.includes('styles.dot') && !/dot:\s*\{/.test(badge), 'RankBadge içindeki renkli nokta sembolle değişmeli');
-check(!guide.includes('styles.tierDot') && !/tierDot:\s*\{/.test(guide), 'Rehber satırındaki renkli nokta sembolle değişmeli');
+// ÜRÜN KARARI (item 4): Rank Tiers amblemleri artık `medium` varyant DEĞİL,
+// açıkça büyütülmüş bir `size` kullanır (assetlerin iç boşluğu 40 pt'de görünmez
+// oluyordu). Global `medium` ölçüsü değişmez → diğer ekranlar büyümez.
+check(/<RankEmblem rankId=\{rankId\} size=\{5[0-9]\} \/>/.test(guide), 'Rank rehberi amblemi büyütülmüş açık size kullanmalı');
+check(!guide.includes('variant="medium"'), 'Rank rehberi artık medium varyantına bağlı olmamalı');
+// Profil "Success" bölümü doğrudan Ionicons yerine ortak asseti kullanır (bu,
+// eski `RANK_EMBLEM_ICONS` bağımlılığının kapatıldığının kanıtıdır).
+check(
+  !profileShowcase.includes('RANK_EMBLEM_ICONS'),
+  'Profil Success bölümü artık RANK_EMBLEM_ICONS ile doğrudan Ionicons kullanmamalı',
+);
+check(
+  profileShowcase.includes('<RankEmblem rankId={rank.id}'),
+  'Profil Success bölümü rank simgesini ortak asset bileşeninden çizmeli',
+);
+// Renkli nokta yerini emblem asset'ine bırakmış olmalı.
+check(!badge.includes('styles.dot') && !/dot:\s*\{/.test(badge), 'RankBadge içindeki renkli nokta emblemle değişmeli');
+check(!guide.includes('styles.tierDot') && !/tierDot:\s*\{/.test(guide), 'Rehber satırındaki renkli nokta emblemle değişmeli');
 // Rehberdeki mevcut-rank vurgu çizgisi korunmalı.
 check(guide.includes('tierBar') && guide.includes('isCurrent ? color'), 'Rehberdeki mevcut-rank vurgusu korunmalı');
-// Emblem yeni renk tanımlamaz; çağıranların çözdüğü semantik renk zorunlu prop'tur.
-check(/color:\s*string;/.test(emblem) && emblem.includes('withAlpha'), 'Emblem semantik rengi zorunlu prop olarak almalı');
+// Emblem asset'e TINT UYGULAMAZ (metalik/gül renkleri korunur) ve `contain`
+// ile tüm rozeti gösterir.
+check(!/tintColor/.test(emblem), 'Emblem asset tint uygulamamalı (metalik renkleri kaybetmemeli)');
+check(emblem.includes('contentFit="contain"'), 'Emblem tüm rozeti görünür tutmak için contain kullanmalı');
 check(!emblem.includes("from '@/components/ranks/rank-badge'"), 'RankEmblem ↔ RankBadge modül döngüsü olmamalı');
 
 // ---------------------------------------------------------------------------
@@ -201,12 +252,30 @@ const touched = {
 const emojiPattern = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/u;
 for (const [name, code] of Object.entries(touched)) {
   check(!/gradient/i.test(code), `${name} gradient içermemeli`);
+  // Kod tarafında glow/gölge/partikül eklenmez. (Rozet parıltısı tasarımın
+  // kendisindedir ve PNG asset'inin içindedir; bu bir kod efekti değildir.)
   check(!/\bglow\b|shadowColor|shadowOpacity|shadowRadius|elevation:/i.test(code), `${name} glow/gölge içermemeli`);
   check(!emojiPattern.test(code), `${name} emoji içermemeli`);
-  check(!/require\(['"][^'"]+\.(png|jpg|jpeg|svg|gif)['"]\)/i.test(code), `${name} yeni resim asset'i içermemeli`);
 }
-// Emblem yalnızca mevcut Ionicons paketini kullanır; yeni paket eklemez.
-check(emblem.includes("from '@expo/vector-icons'"), 'Emblem mevcut @expo/vector-icons paketini kullanmalı');
+// Görsel yalnızca ORTAK emblem bileşeninden gelir: ekran/badge/guide kendi
+// resim asset'ini `require` etmez, hepsi RankEmblem'den geçer.
+for (const [name, code] of [
+  ['app/rank.tsx', stripComments(screen)],
+  ['rank-guide.tsx', stripComments(guide)],
+  ['rank-badge.tsx', stripComments(badge)],
+]) {
+  check(
+    !/require\(['"][^'"]+\.(png|jpg|jpeg|svg|gif)['"]\)/i.test(code),
+    `${name} kendi resim asset'ini require etmemeli (ortak RankEmblem'den geçmeli)`,
+  );
+}
+// Emblem YEDİ yerel rank asset'ini require eder; bu, yeni sözleşmenin özüdür.
+const emblemCode = stripComments(emblem);
+const emblemRequires = [...emblemCode.matchAll(/require\('([^']+\.png)'\)/g)].map((m) => m[1]);
+check(emblemRequires.length === 7, 'Emblem yedi rank asseti require etmeli');
+// Emblem expo-image kullanır (Ionicons'tan geçiş); yeni ağır paket eklemez.
+check(emblem.includes("from 'expo-image'"), 'Emblem statik yerel asset için expo-image kullanmalı');
+check(!/@expo\/vector-icons/.test(emblem), 'Emblem artık Ionicons kullanmamalı (asset kullanır)');
 check(!/from '(react-native-svg|expo-linear-gradient|@react-native-|lottie)/.test(emblem), 'Emblem yeni paket eklememeli');
 
 console.log(`✓ Rank visual navigation: ${passed} kontrol geçti.`);

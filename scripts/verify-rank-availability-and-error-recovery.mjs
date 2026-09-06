@@ -25,6 +25,9 @@ const profile = source('app/(tabs)/profile.tsx');
 const progress = source('components/rewards/profile-progress-summary.tsx');
 const rankScreen = source('app/rank.tsx');
 const showcase = source('components/ranks/profile-achievement-showcase.tsx');
+const careerShowcase = source('components/ranks/profile-career-showcase.tsx');
+const localeEn = source('locales/en.ts');
+const localeTr = source('locales/tr.ts');
 
 let passed = 0;
 const failures = [];
@@ -56,15 +59,16 @@ const resetEffect = slice(rankContext, 'ownerRef.current += 1;', '}, [userId]);'
 // 1. Soğuk açılış: profil rank/başarı yüklemesini kendiliğinden başlatır.
 //    (RankProvider mount → runSync; runSync başarılı olursa loadAchievements.)
 // ---------------------------------------------------------------------------
-check('1. Soğuk açılışta mount → runSync → loadAchievements zinciri kurulur', () => {
+check('1. Soğuk açılışta mount → runSync zinciri kurulur; arka plan sezon başarım senkronu KALDIRILDI', () => {
   assert(/useEffect\(\(\) => \{[\s\S]*?void runSync\(\);[\s\S]*?AppState\.addEventListener/.test(rankContext),
     'mount/AppState effect runSync çağırmıyor');
-  // Başarılar rank ekranı koşuluna BAĞLI DEĞİL: her başarılı sync sonrası çağrılır.
-  assert(/loadAchievementsRef\.current\(\);/.test(runSync), 'runSync başarı yüklemesini tetiklemiyor');
-  // State güncellemesi render bekleyebilir; aynı uçuşun başarı/vitrin RPC'si
-  // sezonu senkron ref üzerinden hemen görmelidir.
+  // ÜRÜN KARARI: başarımlar artık sezondan BAĞIMSIZ ve kalıcı. runSync artık her
+  // rank sync'inden sonra sezon başarımı senkronlamaz (gereksiz arka plan RPC yok).
+  assert(!/loadAchievementsRef\.current\(\);/.test(runSync), 'runSync hâlâ arka planda sezon başarımı senkronluyor');
+  // State güncellemesi render bekleyebilir; başarılı sync sezonu senkron ref üzerinden
+  // hemen güncellemeli (rank/RP akışı KORUNUR).
   assert(/if \(next\) \{[\s\S]*?seasonRef\.current = next;[\s\S]*?setSeason\(next\);/.test(runSync),
-    'başarılı sync sezon referansını başarı yüklemesinden önce güncellemiyor');
+    'başarılı sync sezon referansını güncellemiyor');
   // Profil, rank ekranına girmeden bu context verisini kullanır (ikinci sorgu yok).
   assert(profile.includes('useRanks()'), 'profil RankContext verisini kullanmıyor');
 });
@@ -74,20 +78,23 @@ check('1. Soğuk açılışta mount → runSync → loadAchievements zinciri kur
 //    (season varken isLoading yalnız achievements/selection'a bağlı; boş entries
 //     → bileşen empty gösterir.)
 // ---------------------------------------------------------------------------
-check('2. season geldiğinde vitrin loading bitip empty state gösterebilir', () => {
-  assert(/rankSeason \? isAchievementsLoading \|\| !isShowcaseSelectionReady/.test(profile),
-    'season varken eski isLoading sözleşmesi korunmuyor');
-  assert(/visible\.length === 0 \?[\s\S]*?showcase\.empty/.test(showcase), 'boş durum metni yok');
+check('2. Kariyer vitrini loading bitip empty state gösterebilir', () => {
+  // Profil KALICI kariyer vitrininin loading'ini iletir; sonsuz spinner olmaz.
+  assert(/isLoading=\{achievementStatus === 'loading' \|\| achievementShowcaseStatus === 'loading'\}/.test(profile),
+    'kariyer vitrini loading sözleşmesi yok');
+  // Kariyer vitrini bileşeni boş durumda nötr metin gösterir (spinner değil).
+  assert(/entries\.length === 0 \?[\s\S]*?showcase\.empty/.test(careerShowcase), 'boş durum metni yok');
 });
 
 // ---------------------------------------------------------------------------
 // 3. Showcase/achievement hatası → spinner SONSUZA kadar kalmaz.
 // ---------------------------------------------------------------------------
-check('3. Başarı/showcase (veya rank) hatası vitrini sonsuz spinnerda bırakmaz', () => {
-  // Profil vitrini hata durumunu iletiyor ve bileşen hatada sessizce gizleniyor.
-  assert(/hasError=\{hasAchievementsError \|\| hasShowcaseSelectionError \|\| hasRankError\}/.test(profile),
-    'vitrin hata girişi rank hatasını içermiyor');
-  assert(/if \(hasError\) return null;/.test(showcase), 'vitrin hatada gizlenmiyor');
+check('3. Kariyer vitrini hatası vitrini sonsuz spinnerda bırakmaz', () => {
+  // Profil kariyer vitrini erişim yok/hata durumunu iletir (unavailable).
+  assert(/hasError=\{achievementStatus === 'unavailable'\}/.test(profile),
+    'kariyer vitrini hata girişi yok');
+  // Kariyer vitrini bileşeni hatada nötr metin gösterir (sonsuz spinner değil).
+  assert(/hasError \?[\s\S]*?showcase\.unavailable/.test(careerShowcase), 'vitrin hatada nötr metin göstermiyor');
 });
 
 // ---------------------------------------------------------------------------
@@ -130,13 +137,56 @@ check('6. Geçerli season cevabı (zero-RP dahil) hata sayılmaz', () => {
 // 7. Rank verisi undefined olsa bile profil Rank alanı /rank navigasyonuna açık.
 // ---------------------------------------------------------------------------
 check('7. Rank alanı rank verisi olmadan da basılabilir ( /rank açar )', () => {
-  // Gate artık `onRankPress && rank` DEĞİL, yalnız `onRankPress`.
-  assert(/\{onRankPress \? \(/.test(progress), 'rank hücresi hâlâ rank verisine bağlı basılabilir');
-  assert(!/onRankPress && rank \?/.test(progress), 'eski `onRankPress && rank` gate’i hâlâ duruyor');
+  // YENİ DÜZEN: rank hücresi "Success" bölümündedir (careerShowcase). Gate
+  // `onRankPress && rank` DEĞİL, yalnız `onRankPress`.
+  assert(/onRankPress \? \(/.test(careerShowcase), 'rank hücresi hâlâ rank verisine bağlı basılabilir');
+  assert(!/onRankPress && rank \?/.test(careerShowcase), 'eski `onRankPress && rank` gate’i hâlâ duruyor');
   assert(/onRankPress=\{\(\) => router\.push\('\/rank'\)\}/.test(profile), 'profil /rank push’unu geçirmiyor');
-  // Sahte rank üretilmez: veri yoksa yine "unranked" içerik gösterilir.
-  assert(/rank \?[\s\S]*?ranks\.rpValue[\s\S]*?:[\s\S]*?ranks\.unranked/.test(progress),
-    'veri yokken unranked erişilebilirlik etiketi kullanılmıyor');
+  // Erişilebilir etiket artık DURUMA göre değişir (sabit unranked değil).
+  assert(/accessibilityLabel=\{rankA11yLabel\}/.test(careerShowcase),
+    'rank hücresi durum-temelli a11y etiketi kullanmıyor');
+});
+
+// ---------------------------------------------------------------------------
+// 12. Profil rank hücresi YÜKLEME / HATA / SIRALANMADI durumlarını AYIRIR.
+//     (Hata "Henüz rank yok" veya sahte Bronze olarak GÖSTERİLMEZ.)
+// ---------------------------------------------------------------------------
+check('12. Profil rank hücresi yükleme/hata/sıralanmadı durumlarını ayırır', () => {
+  // Profil iki durum bayrağını da "Success" bölümüne (careerShowcase) geçirir.
+  assert(/hasRankError=\{hasRankError\}/.test(profile), 'profil hasRankError geçirmiyor');
+  assert(/isRankLoading=\{isRankLoading\}/.test(profile), 'profil isRankLoading geçirmiyor');
+  // Bileşen dört durumu ayrı hesaplar (ranked/error/loading/unranked).
+  assert(/rankState[\s\S]*?'ranked'[\s\S]*?'error'[\s\S]*?'loading'[\s\S]*?'unranked'/.test(careerShowcase),
+    'rankState dört durumu ayırmıyor');
+  // HATA durumu ayrı bir hata metni gösterir; "Henüz rank yok" DEĞİL.
+  assert(/rankState === 'error'[\s\S]*?ranks\.summaryUnavailable/.test(careerShowcase),
+    'hata durumu ayrı hata metni göstermiyor');
+  // YÜKLEME durumu spinner + yükleme metnidir.
+  assert(/rankState === 'loading'[\s\S]*?ActivityIndicator[\s\S]*?ranks\.summaryLoading/.test(careerShowcase),
+    'yükleme durumu spinner/metin göstermiyor');
+  // Emblem YALNIZ gerçek rank varken çizilir; RP’den/sabitten rank ÜRETİLMEZ.
+  assert(/rankState === 'ranked' && rank \? \([\s\S]*?<RankEmblem rankId=\{rank\.id\}/.test(careerShowcase),
+    'emblem yalnız gerçek rank varken çizilmeli');
+  assert(!/'bronze'/.test(careerShowcase), 'Success bölümünde sabit bronze fallback olmamalı');
+});
+
+// ---------------------------------------------------------------------------
+// 13. Rank yükleme HATASI metni internet/çevrimdışı ÇERÇEVESİ kullanmaz.
+//     (Eksik sunucu fonksiyonu "bağlantın dönünce düzelir" gibi anlatılamaz.)
+// ---------------------------------------------------------------------------
+check('13. Rank hata/durum metinleri bağlantı kesintisi çerçevesi kullanmaz', () => {
+  const forbidden = /online|internet|çevrimdışı|çevrim dışı|bağlantın|bağlantısı döndüğ|back online/i;
+  // Ranks bloğundaki loadFailed 'Rank' ile başlar; her iki dilde nötr olmalı.
+  for (const [name, src] of [['en', localeEn], ['tr', localeTr]]) {
+    const match = /loadFailed: '(Rank[^']*)'/.exec(src);
+    assert(match, `${name}: ranks.loadFailed metni bulunamadı`);
+    assert(!forbidden.test(match[1]), `${name}: loadFailed bağlantı kesintisi çerçevesi kullanıyor: ${match[1]}`);
+    // Yeni kompakt durum metinleri mevcut ve nötr.
+    assert(/summaryUnavailable: '([^']*)'/.test(src), `${name}: summaryUnavailable metni yok`);
+    assert(/summaryLoading: '([^']*)'/.test(src), `${name}: summaryLoading metni yok`);
+    const unavailable = /summaryUnavailable: '([^']*)'/.exec(src)[1];
+    assert(!forbidden.test(unavailable), `${name}: summaryUnavailable bağlantı çerçevesi kullanıyor`);
+  }
 });
 
 // ---------------------------------------------------------------------------

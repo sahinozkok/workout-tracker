@@ -23,12 +23,43 @@ export const RANK_IDS = [
   'silver',
   'gold',
   'platinum',
+  'emerald',
   'diamond',
-  'master',
   'rosea',
 ] as const;
 
 export type RankId = (typeof RANK_IDS)[number];
+
+/**
+ * SÜRÜMLÜ SÖZLEŞME sınırında bilinmeyen/uyumsuz rank kimliği.
+ *
+ * `sync_my_rank_v2` ve kardeşleri her zaman bu istemcinin `RANK_IDS`'ini
+ * döndürür. Bir yanıt buraya uymayan bir kimlik taşıyorsa bu bir SÖZLEŞME
+ * UYUMSUZLUĞUDUR (ör. istemci yeni v2 RPC'yi çağırdı ama sunucu henüz eski
+ * sürümde). Bu durumda kimlik SESSİZCE Bronze'a düşürülmez: kontrollü bir hata
+ * fırlatılır ve çağıran mevcut hata/yeniden-dene akışını gösterir. Ne kör string
+ * alias ne de RP'den tahmini rank üretilir.
+ */
+export class RankContractError extends Error {
+  constructor(readonly received: unknown) {
+    super(`rank sözleşmesi uyumsuz kimlik döndürdü: ${String(received)}`);
+    this.name = 'RankContractError';
+  }
+}
+
+/**
+ * Sürümlü sözleşmeden gelen rank kimliğini KATI biçimde daraltır.
+ *
+ * Bilinen `RANK_IDS`'ten biriyse onu döndürür; değilse `RankContractError`
+ * fırlatır. Bu, "sunucu ileride yeni tier ekledi" ile "istemci/sunucu sürümü
+ * uyuşmuyor" durumlarını sessizce Bronze göstererek GİZLEMEZ.
+ */
+export function coerceServerRankId(value: unknown): RankId {
+  if (typeof value === 'string' && (RANK_IDS as readonly string[]).includes(value)) {
+    return value as RankId;
+  }
+  throw new RankContractError(value);
+}
 
 export type RankTier = {
   id: RankId;
@@ -53,9 +84,9 @@ export const RANK_TIERS: readonly RankTier[] = [
   { id: 'bronze', minRp: 0, resetBase: 0, resetMax: 199, color: '#CD7F32' },
   { id: 'silver', minRp: 200, resetBase: 100, resetMax: 199, color: '#A9A9B0' },
   { id: 'gold', minRp: 450, resetBase: 300, resetMax: 449, color: '#D9A441' },
-  { id: 'platinum', minRp: 750, resetBase: 600, resetMax: 749, color: '#70C1B3' },
-  { id: 'diamond', minRp: 1050, resetBase: 900, resetMax: 1049, color: '#4DA3FF' },
-  { id: 'master', minRp: 1350, resetBase: 1150, resetMax: 1349, color: '#8B5CF6' },
+  { id: 'platinum', minRp: 750, resetBase: 600, resetMax: 749, color: '#5FB9E3' },
+  { id: 'emerald', minRp: 1050, resetBase: 900, resetMax: 1049, color: '#22B378' },
+  { id: 'diamond', minRp: 1350, resetBase: 1150, resetMax: 1349, color: '#7B6EF2' },
   { id: 'rosea', minRp: 1650, resetBase: 1450, resetMax: 1649, color: '#E85D9E' },
 ];
 
@@ -142,7 +173,7 @@ export function rankFillRatio(rp: number): number {
  * `newRp = min(destinationMaximum, resetBase + floor((finalRp - rankFloor) * 0.20))`
  *
  * Örnek: 1850 RP ile Rosea biten kullanıcı → taşma 200 → %20 = 40 →
- * 1450 + 40 = 1490 → yeni sezona **Master** olarak başlar.
+ * 1450 + 40 = 1490 → yeni sezona **Diamond** olarak başlar.
  */
 export function softResetRp(finalRp: number): number {
   const safeRp = clampRp(finalRp);
@@ -230,10 +261,10 @@ export const RANK_THRESHOLD_FIXTURES: readonly (readonly [number, RankId])[] = [
   [749, 'gold'],
   [750, 'platinum'],
   [1049, 'platinum'],
-  [1050, 'diamond'],
-  [1349, 'diamond'],
-  [1350, 'master'],
-  [1649, 'master'],
+  [1050, 'emerald'],
+  [1349, 'emerald'],
+  [1350, 'diamond'],
+  [1649, 'diamond'],
   [1650, 'rosea'],
   [999999, 'rosea'],
 ];
@@ -252,10 +283,10 @@ export const RANK_SOFT_RESET_FIXTURES: readonly (readonly [number, number])[] = 
   // Platinum: taban 600, tavan 749.
   [750, 600],
   [1049, 659],
-  // Diamond: taban 900, tavan 1049.
+  // Emerald: taban 900, tavan 1049.
   [1050, 900],
   [1349, 959],
-  // Master: taban 1150, tavan 1349.
+  // Diamond: taban 1150, tavan 1349.
   [1350, 1150],
   [1649, 1209],
   // Rosea: taban 1450, tavan 1649. Görevdeki örnek: 1850 → 1490.

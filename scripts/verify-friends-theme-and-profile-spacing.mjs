@@ -111,15 +111,22 @@ check('4. Yalnız ilk ayırıcı aralığı azalır; global sectionDivider korun
 // ---------------------------------------------------------------------------
 // 5. Edit/Ayarlar ve Level/Rank içerik ölçüleri korunur.
 // ---------------------------------------------------------------------------
-check('5. Edit/Ayarlar ve Level/Rank içerik ölçüleri korunuyor', () => {
+check('5. Ayarlar dişlisi ve Level/Rank içerik ölçüleri korunuyor', () => {
   const progress = source('components/rewards/profile-progress-summary.tsx');
-  assert(/editProfileButton:\s*\{[\s\S]*?minHeight: Layout\.minTouchSize/.test(profile), 'Düzenle butonu 44 pt dokunma alanını kaybetti');
+  // ÜRÜN KARARI: "Düzenle" düğmesi profilden KALDIRILDI (düzenleme Ayarlar'dan).
+  assert(!/editProfileButton/.test(profile), 'profilde eski Düzenle düğmesi hâlâ var');
+  assert(!/name="pencil-outline"/.test(profile), 'profilde eski Düzenle kalemi hâlâ var');
+  // Ayarlar dişlisi 44 pt ve kapak altında hero satırında (item 6).
   assert(/settingsButton:\s*\{[\s\S]*?(height|minHeight): Layout\.minTouchSize/.test(profile), 'Ayarlar butonu 44 pt dokunma alanını kaybetti');
-  assert(/name="pencil-outline" size=\{13\}/.test(profile), 'Düzenle ikonu boyutu değişmiş');
-  assert(/name="settings-outline" size=\{19\}/.test(profile), 'Ayarlar ikonu boyutu değişmiş');
-  // Level/Rank simge çemberi ve satır yüksekliği aynı.
-  assert(/identityIcon:[\s\S]*?height: 56[\s\S]*?width: 56/.test(progress), 'Level/Rank simge çemberi 56 pt değil');
-  assert(/identityRow:[\s\S]*?minHeight: 116/.test(progress), 'Level/Rank satır yüksekliği değişmiş');
+  assert(/name="settings-outline"/.test(profile), 'Ayarlar dişlisi simgesi yok');
+  // YENİ DÜZEN: Level/Rank iki sütunlu kimlik KALDIRILDI. Level satırı sola
+  // hizalı, ≥44 pt dokunma alanı; rank ise "Success" bölümüne (career showcase)
+  // taşındı ve orada dairesiz ~60 pt emblemle çizilir.
+  const careerShowcase = source('components/ranks/profile-career-showcase.tsx');
+  assert(!/identityIcon:/.test(progress), 'eski 56 pt Level/Rank çemberi hâlâ var');
+  assert(!/identityRow:/.test(progress), 'eski iki sütunlu Level/Rank satırı hâlâ ilerleme bileşeninde');
+  assert(/levelRow:[\s\S]*?minHeight: Layout\.minTouchSize/.test(progress), 'Level satırı 44 pt dokunma alanını kaybetti');
+  assert(/<RankEmblem rankId=\{rank\.id\} size=\{60\}/.test(careerShowcase), 'rank amblemi Success bölümünde ~60 pt çizilmiyor');
 });
 
 // ---------------------------------------------------------------------------

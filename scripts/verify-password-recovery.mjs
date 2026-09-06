@@ -794,7 +794,12 @@ check('25. Guard’lar gevşetilmedi; recovery’de kullanıcı verisi mount olm
     layout.includes('if (isLoading || isPasswordRecovery) return <AppNavigation />;'),
     'kurtarma sırasında kullanıcı sağlayıcıları mount ediliyor',
   );
-  for (const layer of ['RankUpCelebrationLayer', 'SeasonRecapLayer', 'AchievementUnlockCelebrationLayer', 'FloatingMascot']) {
+  // NOT: eski `AchievementUnlockCelebrationLayer` (sezonluk başarım kutlaması)
+  // üründen kaldırıldı; artık mount edilmiyor. Kalıcı kariyer kutlaması
+  // (`AchievementCelebrationOverlay`) sağlayıcı ağacındadır ve zaten kurtarma
+  // sırasında kullanıcı sağlayıcıları mount edilmediği için (yukarıdaki guard)
+  // çalışmaz. Aşağıdaki liste korunan katmanları gated tutmaya devam eder.
+  for (const layer of ['RankUpCelebrationLayer', 'SeasonRecapLayer', 'FloatingMascot']) {
     assert(
       layout.includes(`{Boolean(session) && !isPasswordRecovery && <${layer} />}`),
       `katman kurtarma sırasında açılıyor: ${layer}`,

@@ -53,84 +53,89 @@ const renderBody = code.slice(0, code.indexOf('function createStyles('));
 // A. Kimlik hiyerarşisi: ad ANA başlık, kullanıcı adı + bio ikincil, eylemler
 //    kimliğe yakın.
 // ---------------------------------------------------------------------------
-check('A1. Görünen ad ANA başlık; kimlik sırası ad → bio → eylemler', () => {
+check('A1. Kimlik SALT OKUNUR; sıra kullanıcı adı → ad → bio; Düzenle/editör YOK', () => {
   const name = at('styles.summaryName');
   const bio = at('styles.summaryBio');
-  const actions = at('styles.headerActions');
   const username = at('styles.summaryUsername');
   assert(username < name, 'kullanıcı adı görünen addan sonra gelmemeli (eyebrow konumu)');
   assert(name < bio, 'bio görünen adın ALTINDA olmalı');
-  assert(bio < actions, 'Düzenle/Ayarlar eylemleri bio/kimlikten sonra, kimliğe yakın olmalı');
-  // Ad en fazla 2 satır (dar ekranda taşma yok).
   assert(
     /<Text[^>]*numberOfLines=\{2\}[^>]*style=\{styles\.summaryName\}/.test(raw),
     'görünen ad iki satırla sınırlanmamış',
   );
+  // ÜRÜN KARARI: profil salt okunur — Düzenle düğmesi, açılır editör ve
+  // headerActions satırı KALDIRILDI (düzenleme Ayarlar'dan → /profile-edit).
+  assert(!/headerActions/.test(code), 'eski Düzenle/Ayarlar kimlik satırı hâlâ var');
+  assert(!/isProfileEditorOpen|handleProfileEditorToggle|MotionCollapsible|editProfileButton/.test(code),
+    'açılır profil editörü/Düzenle düğmesi hâlâ profilde');
 });
 
-check('A2. Bio TEK yerde: kimlikte gösterilir, ilerlemede TEKRAR edilmez', () => {
-  // Kimlikte bio metni draft.bio'dan gelir.
-  assert(/styles\.summaryBio\}>\{draft\.bio\.trim\(\)\}/.test(code), 'bio kimlik alanında draft.bio ile gösterilmiyor');
+check('A2. Bio TEK yerde: kimlikte profile.bio ile; ilerlemede TEKRAR yok', () => {
+  // Salt okunur ekran artık taslak değil, doğrudan `profile.bio` gösterir.
+  assert(/styles\.summaryBio\}>\{profile\.bio\.trim\(\)\}/.test(code), 'bio kimlik alanında profile.bio ile gösterilmiyor');
   const progressStart = at('<ProfileProgressSummary');
   const progressEnd = code.indexOf('/>', progressStart);
   const progressProps = code.slice(progressStart, progressEnd);
   assert(!/message=|bio=/.test(progressProps), 'bio hem kimlikte hem ilerlemede gösteriliyor (tekrar)');
 });
 
-check('A3. Düzenle + Ayarlar kimliğe YAKIN (ilerleme/istatistikten ÖNCE)', () => {
-  const actions = at('styles.headerActions');
-  const progress = at('<ProfileProgressSummary');
-  const proof = at('<ProfileProofStats');
-  assert(actions < progress && actions < proof, 'eylemler ekranın dibinde kalmış (kimliğe yakın değil)');
-  // İki eylem de kimliğe ait tek satırda ve dengeli.
-  assert(/onPress=\{handleProfileEditorToggle\}/.test(code), 'Düzenle mevcut editör toggle handler’ına bağlı değil');
+check('A3. Ayarlar dişlisi kapak altında hero alanında; /settings korunur', () => {
+  // Item 6: dişli kimlik metninden ÖNCE (banner hero satırında), sağ üstte.
+  const gear = at('styles.settingsButton');
+  const summary = at('styles.profileSummary');
+  assert(gear < summary, 'Ayarlar dişlisi kimlik metninden önce (hero alanında) olmalı');
   assert(/router\.push\('\/settings'\)/.test(code), 'Ayarlar /settings route’unu kaybetti');
+  // Dişli banner hero satırında (heroRow), kimlik metninden ÖNCE.
+  assert(at('styles.heroRow') < gear && gear < summary, 'Ayarlar dişlisi banner hero satırında/kimlik öncesinde değil');
 });
 
 // ---------------------------------------------------------------------------
-// B. Düzenleyici (açılır/kapanır) ve otomatik kaydırma korunuyor.
+// B. Profil düzenleme AYARLAR'a taşındı: tek kaynak hook + /profile-edit ekranı.
 // ---------------------------------------------------------------------------
-check('B1. Editör MotionCollapsible; alan/kaydet/medya davranışları korunuyor', () => {
-  assert(/<MotionCollapsible style=\{styles\.editorSection\}>/.test(code), 'editör MotionCollapsible değil');
-  // Form alanları ve kaydetme korunur (veri mantığı yeniden yazılmadı).
+check('B1. Editör profilden KALDIRILDI; tek kaynak useProfileEditor + /profile-edit', () => {
+  // Profil ekranında editör alan/kaydet/medya mantığı YOK.
+  for (const gone of [
+    'updateDraft',
+    'handleSave',
+    'pickProfileImage',
+    'handleRemoveProfileImage',
+    'MotionCollapsible',
+    'TextInput',
+    'uploadProfileMedia',
+    'saveProfileMedia',
+  ]) {
+    assert(!code.includes(gone), `editör mantığı hâlâ profilde: ${gone}`);
+  }
+  // Ortak hook TEK kaynak (kopyala-yapıştır ikinci uygulama yok).
+  const hook = source('hooks/use-profile-editor.ts');
+  for (const token of ['updateDraft', 'const save', 'pickImage', 'removeImage', 'stagedPathsRef', 'saveProfile(']) {
+    assert(hook.includes(token), `ortak editör hook'unda eksik: ${token}`);
+  }
+  // /profile-edit ekranı hook'u kullanır ve tüm alanları/medya işlemlerini çizer.
+  const editScreen = source('app/profile-edit.tsx');
+  assert(/useProfileEditor\(\)/.test(editScreen), '/profile-edit ortak hook’u kullanmıyor');
   for (const token of [
     "updateDraft('displayName'",
     "updateDraft('username'",
     "updateDraft('bio'",
     "updateDraft('trainingGoal'",
-    'onPress={handleSave}',
-    "pickProfileImage('avatar')",
-    "pickProfileImage('banner')",
-    "handleRemoveProfileImage('avatar')",
-    "handleRemoveProfileImage('banner')",
+    "pickImage('avatar')",
+    "pickImage('banner')",
+    "removeImage('avatar')",
+    "removeImage('banner')",
+    'onPress={() => void onSave()}',
   ]) {
-    assert(code.includes(token), `editör davranışı kayboldu: ${token}`);
+    assert(editScreen.includes(token), `/profile-edit alanı/medya eksik: ${token}`);
   }
 });
 
-check('B2. Otomatik kaydırma ölçümü ve kapatma mantığı KORUNUYOR', () => {
-  // Editör kimliğin altına taşındığı için gerçek içerik ve form yüksekliği
-  // ölçülür; eski "anchor sayfanın sonunda" varsayımı kullanılmaz.
-  assert(/onContentSizeChange=\{handleScrollContentSizeChange\}/.test(code), 'içerik yüksekliği ölçülmüyor');
-  assert(/<View onLayout=\{handleEditorLayout\}>/.test(code), 'editör yüksekliği ölçülmüyor');
-  assert(
-    /scrollContentHeightRef\.current\s*-\s*editorHeightRef\.current/.test(code),
-    'kapanmış içerik yüksekliği gerçek ölçümlerden türetilmiyor',
-  );
-  assert(!/editorAnchorYRef|editorAnchorHeightRef/.test(code), 'eski alt-anchor varsayımı kalmış');
-  // Kapatma yumuşak kaydırma mantığı ekranda hâlâ var.
-  assert(/scrollRef\.current\?\.scrollTo\(\{ animated: true/.test(raw), 'yumuşak kapatma kaydırması kaldırılmış');
-  assert(/const closeProfileEditor = useCallback\(/.test(raw), 'closeProfileEditor mantığı kaldırılmış');
-  // Reduce Motion kapatma kaydırmasını hâlâ kapıyor.
-  assert(/!reduceMotion && hasMeasuredLayout/.test(raw), 'Reduce Motion kapatma kaydırması kapısı kaldırılmış');
-});
-
-check('B3. Editör kimliğe YAKIN açılır (ilerleme bölümünden ÖNCE)', () => {
-  const editor = at('<MotionCollapsible style={styles.editorSection}>');
-  const proof = at('<ProfileProofStats');
-  const divider = at('styles.sectionDivider');
-  assert(editor < proof, 'editör hâlâ ekranın dibinde açılıyor (kimliğe yakın değil)');
-  assert(editor < divider, 'editör ilk ayırıcıdan önce, kimlik alanının hemen altında olmalı');
+check('B2. Settings girişi profil düzenlemeyi açar; güvenli geri', () => {
+  const settings = source('app/settings.tsx');
+  assert(/router\.push\('\/profile-edit'\)/.test(settings), 'Ayarlar’da Profili düzenle girişi yok');
+  assert(/editRowTitle/.test(settings) && /editRowCaption/.test(settings), 'Profili düzenle satırı başlık/açıklama kullanmıyor');
+  // /profile-edit güvenli geri (canGoBack yoksa /settings replace) kullanır.
+  const editScreen = source('app/profile-edit.tsx');
+  assert(/useSafeBack\('\/settings'\)/.test(editScreen), '/profile-edit güvenli geri (fallback /settings) kullanmıyor');
 });
 
 // ---------------------------------------------------------------------------
@@ -160,13 +165,19 @@ check('D1. Kanıt şeridi ve seri /streaks route’u korunuyor', () => {
 // ---------------------------------------------------------------------------
 // E. Başarı vitrini: tek mount, seçim ekranı route’u, sıra korunur.
 // ---------------------------------------------------------------------------
-check('E1. Vitrin tek kez; /rank-showcase ve preserveOrder korunuyor', () => {
-  assert((code.match(/<ProfileAchievementShowcase/g) ?? []).length === 1, 'vitrin çoğaltılmış/kaldırılmış');
+check('E1. Vitrin tek kez; kariyer başarım ekranları açılıyor', () => {
+  // Ürün kararı: profil KALICI kariyer vitrinini gösterir; tek vitrin, tüm
+  // başarımlar (/achievements) ve düzenleme (/achievements-showcase) açılır.
+  assert((code.match(/<ProfileCareerShowcase/g) ?? []).length === 1, 'vitrin çoğaltılmış/kaldırılmış');
+  assert(!/ProfileAchievementShowcase/.test(code), 'profilde eski sezon vitrini kalmış');
   assert(
-    /<ProfileAchievementShowcase[\s\S]{0,700}router\.push\('\/rank-showcase'\)/.test(raw),
-    'vitrin /rank-showcase seçim ekranını açmıyor',
+    /<ProfileCareerShowcase[\s\S]{0,700}router\.push\('\/achievements'\)/.test(raw),
+    'vitrin tüm başarımlar ekranını açmıyor',
   );
-  assert(/<ProfileAchievementShowcase[\s\S]{0,700}preserveOrder/.test(raw), 'vitrin preserveOrder sözleşmesini kaybetti');
+  assert(
+    /<ProfileCareerShowcase[\s\S]{0,700}router\.push\('\/achievements-showcase'\)/.test(raw),
+    'vitrin düzenleme ekranını açmıyor',
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -217,8 +228,7 @@ check('I2. Gradient/glow/glassmorphism/ağır gölge YOK; yeni serbest hex YOK',
 // ---------------------------------------------------------------------------
 // J. Erişilebilirlik / dokunma hedefleri (>= 44 pt).
 // ---------------------------------------------------------------------------
-check('J1. Kimlik eylemleri ve arkadaşlar satırı en az 44 pt dokunma alanı', () => {
-  assert(/editProfileButton:\s*\{[\s\S]*?minHeight: Layout\.minTouchSize/.test(code), 'Düzenle butonu 44 pt değil');
+check('J1. Ayarlar dişlisi ve arkadaşlar satırı en az 44 pt dokunma alanı', () => {
   assert(/settingsButton:\s*\{[\s\S]*?(height|minHeight): Layout\.minTouchSize/.test(code), 'Ayarlar butonu 44 pt değil');
   const friendsStart = code.indexOf('friendsRow:');
   const friends = code.slice(friendsStart, code.indexOf('}', code.indexOf('width:', friendsStart)));
@@ -235,16 +245,22 @@ check('K1. Profil yükleme hatası ve yeniden deneme korunuyor', () => {
   assert(/onPress=\{reloadProfile\}/.test(code), 'yeniden deneme (reloadProfile) kaldırılmış');
 });
 
-check('K2. Staged medya temizliği (kalıcı medya korunması) yerinde', () => {
-  assert(/stagedPathsRef/.test(raw), 'staged yol takibi kaldırılmış');
-  assert(/removeProfileImagePaths/.test(raw), 'staged medya temizliği kaldırılmış');
+check('K2. Staged medya temizliği ortak hook’ta (kalıcı medya korunması)', () => {
+  // Medya/staged temizlik mantığı artık ortak `useProfileEditor` hook'unda.
+  const hook = source('hooks/use-profile-editor.ts');
+  assert(/stagedPathsRef/.test(hook), 'staged yol takibi kaldırılmış');
+  assert(/removeProfileImagePaths/.test(hook), 'staged medya temizliği kaldırılmış');
 });
 
-check('K3. Reduce Motion mevcut helper’lar içinde; ekran akışı helper’larla yumuşak', () => {
+check('K3. Bölüm girişleri MotionSection ile; eski editör scroll/collapsible YOK', () => {
   assert(/from '@\/components\/motion-section'/.test(raw), 'motion helper importu kaldırılmış');
   assert((code.match(/<MotionSection/g) ?? []).length >= 3, 'bölüm girişleri MotionSection ile yumuşatılmıyor');
-  // Ekran Reduce Motion’u yalnız mevcut helper + kaydırma kapısı için okur.
-  assert(/useReducedMotion/.test(raw), 'Reduce Motion okuması kaldırılmış');
+  // Açılır editör kaldırıldığı için scroll ölçümü/otomatik-kaydırma ve
+  // MotionCollapsible profilde artık YOK.
+  assert(
+    !/MotionCollapsible|scrollContentHeightRef|editorHeightRef|closeProfileEditor/.test(code),
+    'eski editör scroll/collapsible mantığı hâlâ profilde',
+  );
 });
 
 // ---------------------------------------------------------------------------

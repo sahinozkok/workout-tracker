@@ -15,7 +15,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { MotionListItem, useListEntrance } from '@/components/motion-list-item';
 import { MotionPressable } from '@/components/motion-pressable';
@@ -27,25 +27,36 @@ import { getWeekdayLabel } from '@/constants/weekdays';
 import { useTranslation } from '@/context/language-context';
 import { useProfile } from '@/context/profile-context';
 import { useWorkout } from '@/context/workout-context';
+import { getProgramExerciseName } from '@/data/exercises';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import { useFeatureColor } from '@/hooks/use-feature-colors';
 import { DisciplineStatus, WorkoutVisual } from '@/types/workout';
 import { toDateKey } from '@/utils/discipline';
+import { formatProgramExerciseTarget } from '@/utils/program-target-format';
 import { getWeekdayDateInCurrentWeek } from '@/utils/workout-schedule';
 import { DEFAULT_PROGRAM_VISUAL, getProgramIconBackground, getProgramVisual } from '@/utils/workout-visual';
 
 /**
  * WORKOUT DAYS ZAMAN ÇİZELGESİNİN ÖLÇÜLERİ
  *
- * Bağlantı çizgilerinin konumu bu dört değerden HESAPLANIR; çizgi stillerinde
- * elle yazılmış tek bir konum sabiti yoktur. Satır yüksekliği, dikey boşluk
- * veya çember boyutu ileride değişirse çizgiler kendiliğinden uyar.
+ * Gün satırları artık egzersiz listesi kadar DEĞİŞKEN yükseklikte olduğu için
+ * eski `TIMELINE_COLUMN_HEIGHT = 64` sabit yükseklik varsayımı KALDIRILDI:
+ * satır kendi içeriği kadar büyür, timeline sütunu satırın gerçek yüksekliğine
+ * `alignItems: 'stretch'` ile uzar ve bağlantı çizgileri satır sınırlarında
+ * kesintisiz buluşur.
+ *
+ * Kalan iki ölçü SÜTUNUN KENDİ geometrisidir; ekran koordinatına bağlı sihirli
+ * değer yoktur:
+ *   * `DAY_NUMBER_SIZE`          — çemberin çapı; çizgiler çemberin merkezine
+ *                                  (`DAY_NUMBER_SIZE / 2`) hizalanır.
+ *   * `DAY_ROW_VERTICAL_PADDING` — satırın dikey iç boşluğu; alt/üst çizgiler
+ *                                  bu kadar negatif taşarak komşu satırın
+ *                                  çizgisiyle tam satır sınırında birleşir.
  */
-const TIMELINE_COLUMN_HEIGHT = 64;
-const TIMELINE_ROW_VERTICAL_PADDING = 10;
 const DAY_NUMBER_SIZE = 34;
-/** Çember sütun içinde dikeyde ortalandığı için üst ve alt boşluk eşittir. */
-const DAY_NUMBER_INSET = (TIMELINE_COLUMN_HEIGHT - DAY_NUMBER_SIZE) / 2;
+const DAY_ROW_VERTICAL_PADDING = 12;
+/** Çizgiyi çember genişliğinin tam ortasına oturtan yatay konum. */
+const TIMELINE_LINE_LEFT = (DAY_NUMBER_SIZE - StyleSheet.hairlineWidth) / 2;
 
 export default function ProgramDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -53,6 +64,9 @@ export default function ProgramDetailScreen() {
   const { colors, isDark } = useAppTheme();
   const { showProgramIcons } = useProfile();
   const { locale, t } = useTranslation();
+  // Özel üst çubuk native başlığın yerini aldığı için güvenli alan çentik ve
+  // Dynamic Island altında elle hesaplanır.
+  const insets = useSafeAreaInsets();
   // Yalnızca "bugün" göstergeleri.
   const todayColor = useFeatureColor('todayHighlight', colors.primary).color;
   // Hazır program/gün ikonlarının vurgusu Workout Days presetinden gelir.
@@ -134,51 +148,71 @@ export default function ProgramDetailScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['bottom']}>
       {/*
-        Program adı yalnızca aşağıdaki özet alanında gösterilir. Üst çubuk
-        başlığı burada ezilmez; app/_layout.tsx içindeki çevrilmiş
-        `nav.programDetail` başlığı geçerli kalır, geri butonu korunur.
+        Genel "Program Detayı" native başlığı KALDIRILDI: program kimliği
+        (ad + meta + düzenle) artık aşağıdaki özel üst çubuktadır. `headerShown:
+        false` native-stack'in iOS geri kaydırma hareketini ETKİLEMEZ; jest
+        aynen çalışır (bkz. friends/profile ekranları).
       */}
+      <Stack.Screen options={{ headerShown: false }} />
+
+      {/*
+        ÜST PROGRAM KİMLİĞİ — solda geri, ortada esneyen program adı + meta,
+        sağda düzenleme. Geri ve düzenleme dokunma alanları 44×44 pt; uzun
+        program adı iki satıra kadar sarar ve iki düğmeyi ekrandan itmez
+        (metin bloğu `flex: 1` ile sıkışır, düğmeler sabit genişlikte kalır).
+      */}
+      <View style={[styles.topBar, { paddingTop: insets.top + 6 }]}>
+        <Pressable
+          accessibilityLabel={t('common.back')}
+          accessibilityRole="button"
+          hitSlop={{ bottom: 8, left: 8, right: 8, top: 8 }}
+          onPress={() => (router.canGoBack() ? router.back() : router.replace('/programs'))}
+          style={({ pressed }) => [styles.topBarButton, pressed && styles.pressed]}>
+          <Ionicons name="chevron-back" size={26} color={colors.text} />
+        </Pressable>
+
+        {showProgramIcons && (
+          <View
+            style={[
+              styles.topBarIcon,
+              getProgramIconBackground(
+                getProgramVisual(program.visual, program.icon),
+                workoutDaysIconColor,
+                isDark,
+              ),
+            ]}>
+            <WorkoutVisualDisplay
+              color={colors.primary}
+              iconColor={workoutDaysIconColor}
+              size={22}
+              visual={getProgramVisual(program.visual, program.icon)}
+            />
+          </View>
+        )}
+
+        <View style={styles.topBarText}>
+          <Text numberOfLines={2} style={styles.programName}>
+            {program.name}
+          </Text>
+          <Text numberOfLines={1} style={styles.programMeta}>
+            {t('programDetail.summary', { days: program.days.length, exercises: exerciseCount })}
+          </Text>
+        </View>
+
+        <Pressable
+          accessibilityLabel={t('programDetail.editProgramLabel')}
+          accessibilityRole="button"
+          hitSlop={{ bottom: 8, left: 8, right: 8, top: 8 }}
+          onPress={openProgramEditor}
+          style={({ pressed }) => [styles.topBarButton, pressed && styles.pressed]}>
+          <Ionicons name="pencil-outline" size={20} color={colors.textSecondary} />
+        </Pressable>
+      </View>
+
       <ScrollView
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}>
-        <View style={styles.summaryRow}>
-          {showProgramIcons && (
-            <View
-              style={[
-                styles.summaryIcon,
-                getProgramIconBackground(
-                  getProgramVisual(program.visual, program.icon),
-                  workoutDaysIconColor,
-                  isDark,
-                ),
-              ]}>
-              <WorkoutVisualDisplay
-                color={colors.primary}
-                iconColor={workoutDaysIconColor}
-                size={24}
-                visual={getProgramVisual(program.visual, program.icon)}
-              />
-            </View>
-          )}
-          <View style={styles.summaryText}>
-            <Text numberOfLines={2} style={styles.programName}>
-              {program.name}
-            </Text>
-            <Text style={styles.programMeta}>
-              {t('programDetail.summary', { days: program.days.length, exercises: exerciseCount })}
-            </Text>
-          </View>
-          <Pressable
-            accessibilityLabel={t('programDetail.editProgramLabel')}
-            accessibilityRole="button"
-            hitSlop={10}
-            onPress={openProgramEditor}
-            style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}>
-            <Ionicons name="pencil-outline" size={16} color={colors.textSecondary} />
-          </Pressable>
-        </View>
-
         <Text style={styles.sectionTitle}>{t('programDetail.workoutDays')}</Text>
 
         <View style={styles.dayList}>
@@ -194,6 +228,17 @@ export default function ProgramDetailScreen() {
             const status = isActiveProgram && dayDateKey && !isFuture ? disciplineStatuses[dayDateKey] : undefined;
             const isFirstDay = dayIndex === 0;
             const isLastDay = dayIndex === program.days.length - 1;
+            // Ana başlık: takvim günü / bugün / sıra numarası + güne verilen ad.
+            const schedule = isToday
+              ? t('day.today')
+              : day.scheduledWeekday === undefined
+                ? t('programDetail.dayNumberLabel', { number: dayIndex + 1 })
+                : getWeekdayLabel(day.scheduledWeekday, locale);
+            const dayTitle = t('programDetail.dayTitle', { name: day.name, schedule });
+            // VoiceOver: gün başlığı + gerçek egzersiz sayısı ya da dinlenme.
+            const daySummaryLabel = day.isOffDay
+              ? t('programDetail.restDay')
+              : t('programDetail.exerciseCount', { count: day.exercises.length });
 
             return (
               /*
@@ -204,7 +249,7 @@ export default function ProgramDetailScreen() {
               <MotionListItem delay={getDelay(dayIndex)} key={day.id}>
                 <Pressable
                   accessibilityHint={t('programDetail.openDayHint')}
-                  accessibilityLabel={t('programDetail.openDayLabel', { name: day.name })}
+                  accessibilityLabel={`${dayTitle}, ${daySummaryLabel}`}
                   accessibilityRole="button"
                   onPress={() =>
                     router.push({
@@ -213,14 +258,20 @@ export default function ProgramDetailScreen() {
                     })
                   }
                   style={({ pressed }) => [styles.dayRow, pressed && styles.pressed]}>
-                  <View style={styles.timelineColumn}>
-                    {/*
-                      Zaman çizelgesi İKİ PARÇA hâlinde çizilir: her satır kendi
-                      çemberinin üstünü bir önceki satıra, altını bir sonrakine
-                      bağlar. İki parça tam olarak satır sınırında buluştuğu
-                      için kopukluk oluşmaz; hiçbir parça kendi satırının
-                      dışına taşmaz, yani kırpılma riski de yoktur.
-                    */}
+                  {/*
+                    ZAMAN ÇİZELGESİ — satır DEĞİŞKEN yükseklikte olduğu için
+                    sütun `alignItems: 'stretch'` ile satırın gerçek yüksekliğine
+                    uzar. Çember sütunun tepesinde, gün başlığıyla dikeyde
+                    ortalanır; üst/alt çizgiler yalnızca sütunun kendi
+                    ölçülerinden (`DAY_NUMBER_SIZE`, `DAY_ROW_VERTICAL_PADDING`)
+                    türetilir. İlk satırda üst, son satırda alt çizgi çizilmez;
+                    aradaki her satırın alt çizgisi bir sonrakinin üst çizgisiyle
+                    tam satır sınırında buluşur, uzun günlerde de kopmaz.
+                  */}
+                  <View
+                    accessibilityElementsHidden
+                    importantForAccessibility="no-hide-descendants"
+                    style={styles.timelineColumn}>
                     {!isFirstDay && <View style={styles.timelineLineAbove} />}
                     {!isLastDay && <View style={styles.timelineLineBelow} />}
                     <View
@@ -241,18 +292,37 @@ export default function ProgramDetailScreen() {
                   </View>
 
                   <View style={styles.dayText}>
-                    <Text numberOfLines={1} style={[styles.dayName, day.isOffDay && styles.dayNameOff]}>
-                      {day.name}
-                    </Text>
-                    <Text numberOfLines={1} style={[styles.dayWeekday, isToday && styles.dayWeekdayToday]}>
-                      {isToday ? t('day.today') : getWeekdayLabel(day.scheduledWeekday, locale)}
-                      {day.isOffDay
-                        ? ''
-                        : ` · ${t('programDetail.exerciseCount', { count: day.exercises.length })}`}
-                    </Text>
+                    <View style={styles.dayHeaderRow}>
+                      <Text
+                        numberOfLines={2}
+                        style={[styles.dayName, day.isOffDay && styles.dayNameOff, isToday && styles.dayNameToday]}>
+                        {dayTitle}
+                      </Text>
+                    </View>
+
+                    {day.isOffDay ? (
+                      <Text style={styles.dayStateText}>{t('programDetail.restDay')}</Text>
+                    ) : day.exercises.length === 0 ? (
+                      <Text style={styles.dayStateText}>{t('programDetail.emptyDay')}</Text>
+                    ) : (
+                      <View style={styles.exerciseList}>
+                        {day.exercises.map((exercise) => (
+                          <View key={exercise.id} style={styles.exerciseRow}>
+                            <Text numberOfLines={2} style={styles.exerciseName}>
+                              {getProgramExerciseName(exercise.exerciseId, exercise.customExerciseName)}
+                            </Text>
+                            <Text style={styles.exerciseTarget}>
+                              {formatProgramExerciseTarget(exercise, t)}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
                   </View>
 
-                  <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+                  <View style={styles.chevronColumn}>
+                    <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+                  </View>
                 </Pressable>
               </MotionListItem>
             );
@@ -351,31 +421,39 @@ function getDayStatusColor(colors: ThemeColors, status: DisciplineStatus | undef
 function createStyles(colors: ThemeColors, todayColor: string) {
   return StyleSheet.create({
     safeArea: { backgroundColor: colors.background, flex: 1 },
-    content: { paddingBottom: 40, paddingHorizontal: Layout.screenPadding, paddingTop: 8 },
+    content: { paddingBottom: 40, paddingHorizontal: Layout.screenPadding, paddingTop: 4 },
     centerState: { alignItems: 'center', flex: 1, gap: 14, justifyContent: 'center', padding: 30 },
     centerStateTitle: { color: colors.text, fontSize: 17, fontWeight: '500', textAlign: 'center' },
-    summaryRow: {
+    // ÜST PROGRAM KİMLİĞİ — solda/sağda sabit 44 pt düğmeler, ortada esneyen ad.
+    topBar: {
       alignItems: 'center',
       borderBottomColor: colors.separator,
       borderBottomWidth: StyleSheet.hairlineWidth,
       flexDirection: 'row',
-      gap: 14,
-      paddingBottom: 18,
-      paddingTop: 6,
+      gap: 8,
+      paddingBottom: 12,
+      paddingHorizontal: Layout.screenPadding - 6,
     },
-    summaryIcon: {
+    topBarButton: {
+      alignItems: 'center',
+      height: 44,
+      justifyContent: 'center',
+      width: 44,
+    },
+    topBarIcon: {
       alignItems: 'center',
       backgroundColor: colors.primarySoft,
-      borderRadius: 20,
-      height: 40,
+      borderRadius: 19,
+      height: 38,
       justifyContent: 'center',
       overflow: 'hidden',
-      width: 40,
+      width: 38,
     },
-    summaryText: { flex: 1, gap: 3 },
-    programName: { color: colors.text, fontSize: 15, fontWeight: '500' },
+    // Program adı ve meta baskın düğmeleri değil kimliği önceler: metin bloğu
+    // sıkışabilir (`flex: 1`, `minWidth: 0`), düğmeler sabit kalır.
+    topBarText: { flex: 1, gap: 2, minWidth: 0 },
+    programName: { color: colors.text, fontSize: 18, fontWeight: '600' },
     programMeta: { color: colors.textSecondary, ...Type.caption },
-    iconButton: { alignItems: 'center', height: 32, justifyContent: 'center', width: 32 },
     editorModal: { flex: 1, justifyContent: 'flex-end' },
     editorBackdrop: {
       ...StyleSheet.absoluteFillObject,
@@ -448,46 +526,55 @@ function createStyles(colors: ThemeColors, todayColor: string) {
       paddingHorizontal: 22,
     },
     primaryButtonText: { color: colors.onPrimary, fontSize: 15, fontWeight: '600' },
-    sectionTitle: { color: colors.text, ...Type.sectionTitle, marginBottom: 8, marginTop: 24 },
+    sectionTitle: { color: colors.text, ...Type.sectionTitle, marginBottom: 8, marginTop: 20 },
     dayList: { marginTop: 4 },
+    /**
+     * Sabit yükseklik YOK. `alignItems: 'stretch'` ile timeline sütunu ve
+     * chevron satırın gerçek yüksekliğine uzar; satır egzersiz listesi kadar
+     * doğal büyür ve içerik kırpılmaz.
+     */
     dayRow: {
-      alignItems: 'center',
+      alignItems: 'stretch',
       flexDirection: 'row',
       gap: 14,
-      minHeight: TIMELINE_COLUMN_HEIGHT,
-      paddingVertical: TIMELINE_ROW_VERTICAL_PADDING,
+      paddingVertical: DAY_ROW_VERTICAL_PADDING,
     },
+    // Çember tepede; sütun tüm satır boyunca uzar, çizgiler ona göre çizilir.
     timelineColumn: {
       alignItems: 'center',
-      height: TIMELINE_COLUMN_HEIGHT,
-      justifyContent: 'center',
+      justifyContent: 'flex-start',
       width: DAY_NUMBER_SIZE,
     },
     /**
-     * Satırın ÜST kenarından (bir önceki satırın alt parçasının bittiği nokta)
-     * bu çemberin ÜST kenarına kadar. `bottom`, sütunun altından ölçüldüğü için
-     * çemberin üstü `TIMELINE_COLUMN_HEIGHT - DAY_NUMBER_INSET` uzaklıktadır.
+     * Satırın ÜST kenarından (`-DAY_ROW_VERTICAL_PADDING`) çemberin MERKEZİNE
+     * (`DAY_NUMBER_SIZE / 2`) kadar. Bir önceki satırın alt çizgisi tam satır
+     * sınırında buluşur; çemberin dolu zemini uçları maskeler.
      */
     timelineLineAbove: {
       backgroundColor: colors.separator,
-      bottom: TIMELINE_COLUMN_HEIGHT - DAY_NUMBER_INSET,
+      height: DAY_NUMBER_SIZE / 2 + DAY_ROW_VERTICAL_PADDING,
+      left: TIMELINE_LINE_LEFT,
       position: 'absolute',
-      top: -TIMELINE_ROW_VERTICAL_PADDING,
+      top: -DAY_ROW_VERTICAL_PADDING,
       width: StyleSheet.hairlineWidth,
     },
     /**
-     * Bu çemberin ALT kenarından satırın alt kenarına kadar. Sonraki satırın
-     * üst parçası tam olarak burada devam eder.
+     * Çemberin MERKEZİNDEN satırın ALT kenarına (`bottom: -DAY_ROW_VERTICAL_
+     * PADDING`) kadar. Değişken satır yüksekliğinde `top`+`bottom` ile uzar;
+     * sonraki satırın üst çizgisi tam burada devam eder.
      */
     timelineLineBelow: {
       backgroundColor: colors.separator,
-      bottom: -TIMELINE_ROW_VERTICAL_PADDING,
+      bottom: -DAY_ROW_VERTICAL_PADDING,
+      left: TIMELINE_LINE_LEFT,
       position: 'absolute',
-      top: DAY_NUMBER_INSET + DAY_NUMBER_SIZE,
+      top: DAY_NUMBER_SIZE / 2,
       width: StyleSheet.hairlineWidth,
     },
     dayNumber: {
       alignItems: 'center',
+      // Dolu zemin çizginin çember içinden geçen ucunu maskeler.
+      backgroundColor: colors.background,
       borderRadius: DAY_NUMBER_SIZE / 2,
       borderWidth: 2,
       height: DAY_NUMBER_SIZE,
@@ -497,12 +584,36 @@ function createStyles(colors: ThemeColors, todayColor: string) {
     dayNumberToday: { borderColor: todayColor },
     dayNumberText: { fontSize: 14, fontWeight: '600' },
     dayNumberTextToday: { color: todayColor },
-    dayText: { flex: 1, gap: 2 },
-    dayName: { color: colors.text, fontSize: 15, fontWeight: '500' },
+    dayText: { flex: 1, gap: 8, minWidth: 0 },
+    // Başlık, çember çapıyla eş yükseklikte ve dikeyde ortalı: gün numarası
+    // satır başlığıyla görsel olarak dengeli hizalanır.
+    dayHeaderRow: { justifyContent: 'center', minHeight: DAY_NUMBER_SIZE },
+    dayName: { color: colors.text, fontSize: 16, fontWeight: '600' },
     dayNameOff: { color: colors.textTertiary },
-    dayWeekday: { color: colors.textSecondary, ...Type.caption },
-    dayWeekdayToday: { color: todayColor },
-    dayCount: { color: colors.textSecondary, ...Type.caption },
+    dayNameToday: { color: todayColor },
+    dayStateText: { color: colors.textTertiary, ...Type.caption },
+    exerciseList: { gap: 8 },
+    exerciseRow: {
+      alignItems: 'baseline',
+      flexDirection: 'row',
+      gap: 12,
+      justifyContent: 'space-between',
+    },
+    // Egzersiz adı gün başlığıyla YARIŞMAZ: set/tekrar metniyle aynı ikincil
+    // katmanda kalır (textSecondary, 13 pt, regular). `flex: 1` uzun adların
+    // iki satıra sarmasını ve hedefin sağda kalmasını korur.
+    exerciseName: { color: colors.textSecondary, flex: 1, fontSize: 13, fontWeight: '400' },
+    exerciseTarget: {
+      color: colors.textSecondary,
+      fontSize: 13,
+      fontVariant: ['tabular-nums'],
+      fontWeight: '500',
+      textAlign: 'right',
+    },
+    // Chevron gün başlığıyla hizalanır: `alignSelf: 'flex-start'` sütunu satırın
+    // tamamına uzamaktan alıkoyar, yalnız başlık yüksekliğini kaplar ve içinde
+    // ortalanır (uzun günlerde satırın ortasında yüzmez).
+    chevronColumn: { alignSelf: 'flex-start', justifyContent: 'center', minHeight: DAY_NUMBER_SIZE },
     pressed: { opacity: 0.6 },
   });
 }

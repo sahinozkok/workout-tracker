@@ -7,6 +7,7 @@ const ROOT = resolve(import.meta.dirname, '..');
 const source = (path) => readFileSync(join(ROOT, path), 'utf8');
 const profile = source('app/(tabs)/profile.tsx');
 const progress = source('components/rewards/profile-progress-summary.tsx');
+const careerShowcase = source('components/ranks/profile-career-showcase.tsx');
 const proof = source('components/rewards/profile-proof-stats.tsx');
 const program = source('components/profile-shared-program.tsx');
 const discipline = source('components/profile-discipline-card.tsx');
@@ -25,10 +26,14 @@ function assert(value, message) {
   if (!value) throw new Error(message);
 }
 
-check('Level ve Rank tek iki-sütunlu kimlik akışında', () => {
+check('Level satırı + XP tek dikey akış; iki sütunlu Level/Rank kaldırıldı', () => {
   assert((profile.match(/<ProfileProgressSummary/g) ?? []).length === 1, 'özet tek mount değil');
-  assert(/identityRow:[\s\S]*?flexDirection: 'row'/.test(progress), 'iki sütunlu yatay düzen yok');
-  assert(/identityDivider:[\s\S]*?width: StyleSheet\.hairlineWidth/.test(progress), 'orta ayırıcı yok');
+  // ÜRÜN KARARI: eski iki sütunlu Level/Rank kimliği KALDIRILDI; rank Success
+  // bölümüne taşındı. Level satırı sola hizalı, ≥44 pt dokunma alanı.
+  assert(!/identityRow:/.test(progress), 'eski iki sütunlu Level/Rank satırı hâlâ var');
+  assert(!/identityDivider:/.test(progress), 'eski orta ayırıcı hâlâ var');
+  assert(/levelRow:[\s\S]*?minHeight: Layout\.minTouchSize/.test(progress), 'Level satırı 44 pt dokunma alanı değil');
+  assert(/t\('rewards\.levelLabel', \{ level \}\)/.test(progress), 'Level N metni yok');
 });
 
 check('Level ve Rank değerleri gerçek contextlerden gelir', () => {
@@ -42,9 +47,31 @@ check('XP yatay ve erişilebilir ilerleme çubuğudur', () => {
   assert(/progressFill:[\s\S]*?backgroundColor: accentColor/.test(progress), 'dolgu profil accent renginde değil');
 });
 
-check('Level ve rank ikonları 56 pt çember içindedir', () => {
-  assert(/identityIcon:[\s\S]*?borderRadius: 28[\s\S]*?height: 56[\s\S]*?width: 56/.test(progress), '56 pt çember sözleşmesi yok');
-  assert(/RANK_EMBLEM_ICONS\[rank\.id\]/.test(progress), 'rank sembolü ortak kaynaktan gelmiyor');
+check('Rank emblemi Success bölümünde dairesiz (~60 pt); level gülü Level satırında (32 pt); ortak asset kaynakları', () => {
+  // ÜRÜN KARARI: rank amblemi artık "Success" bölümünde (career showcase),
+  // arkasında DAİRE/BORDER/ÇERÇEVE YOK. Level/XP özetinde rank yuvası kalmaz.
+  assert(!/identityIcon:/.test(progress), 'eski 56 pt çemberli identityIcon hâlâ var');
+  assert(!/rankVisualSlot:/.test(progress), 'rank yuvası hâlâ Level/XP özetinde');
+  assert(careerShowcase.includes("from '@/components/ranks/rank-emblem'"), 'rank emblemi ortak kaynaktan gelmiyor');
+  assert(/<RankEmblem rankId=\{rank\.id\} size=\{60\}/.test(careerShowcase), 'rank amblemi ~60 pt boyutta çizilmiyor');
+  assert(!careerShowcase.includes('RANK_EMBLEM_ICONS'), 'Success bölümü eski RANK_EMBLEM_ICONS haritasını kullanıyor');
+  const rankColumn = /rankColumn:\s*\{([^}]*)\}/.exec(careerShowcase);
+  assert(rankColumn, 'rankColumn yuvası tanımlı değil');
+  assert(!/border(Width|Color|Radius)/.test(rankColumn[1]), 'rank sütununda çerçeve/daire olmamalı');
+
+  // ÜRÜN KARARI: seviye gülü Level satırında (küçük, ~32 pt); daire/çerçeve YOK.
+  assert(!/levelRoseSlot:/.test(progress), 'eski büyük kimlik gülü yuvası (levelRoseSlot) hâlâ var');
+  assert(!/name="flash"/.test(progress), 'Level satırındaki yıldırım (flash) hâlâ var');
+  assert(progress.includes("from '@/components/rewards/level-rose-emblem'"), 'level gülü ortak kaynaktan gelmiyor');
+  assert(/<LevelRoseEmblem roseId=\{resolveDisplayedRose\(level, selectedRoseId/.test(progress),
+    'level gülü ortak LevelRoseEmblem + resolveDisplayedRose ile çözülmüyor');
+  assert(/size=\{32\}/.test(progress), 'Level satırındaki gül 32 pt değil');
+  const roseSlot = /levelRoseSpot:\s*\{([^}]*)\}/.exec(progress);
+  assert(roseSlot, 'levelRoseSpot yuvası tanımlı değil');
+  assert(!/border(Width|Color|Radius)/.test(roseSlot[1]), 'Level gülü yuvasında çerçeve/daire olmamalı');
+  // Level metni ("Level N") temiz tipografiyle korunur; gül tek bir yerde render edilir.
+  assert(/t\('rewards\.levelLabel', \{ level \}\)/.test(progress), 'Level N metni korunmalı');
+  assert((progress.match(/<LevelRoseEmblem/g) ?? []).length === 1, 'level gülü birden fazla yerde render ediliyor');
 });
 
 check('Kanıt alanı üç dikey, büyük ama gerçek veri statıdır', () => {
@@ -70,11 +97,14 @@ check('Arkadaşlar tam genişlikte, erişilebilir satırdır', () => {
   assert(/router\.push\('\/friends'\)/.test(profile), 'arkadaş routeu kaybolmuş');
 });
 
-check('Season Badges mount ve seçim sözleşmesi değişmedi', () => {
-  assert((profile.match(/<ProfileAchievementShowcase/g) ?? []).length === 1, 'Season Badges mount sayısı değişmiş');
-  assert(/entries=\{profileShowcaseEntries\}/.test(profile), 'Season Badges veri kaynağı değişmiş');
-  assert(/onPress=\{\(\) => router\.push\('\/rank-showcase'\)\}/.test(profile), 'Season Badges rotası değişmiş');
-  assert(/preserveOrder/.test(profile), 'Season Badges sıra sözleşmesi değişmiş');
+check('Başarım vitrini mount ve seçim sözleşmesi (KALICI kariyer sistemi)', () => {
+  // Ürün kararı: profil artık SEZON değil KALICI kariyer vitrinini gösterir.
+  // Aynı güvence: TEK vitrin, kariyer verisi, tüm başarımlar + düzenleme rotaları.
+  assert((profile.match(/<ProfileCareerShowcase/g) ?? []).length === 1, 'Kariyer vitrini mount sayısı değişmiş');
+  assert(!/ProfileAchievementShowcase/.test(profile), 'profilde eski sezon vitrini kalmış (tek vitrin olmalı)');
+  assert(/entries=\{careerShowcaseEntries\}/.test(profile), 'kariyer vitrini veri kaynağı değişmiş');
+  assert(/onPress=\{\(\) => router\.push\('\/achievements'\)\}/.test(profile), 'tüm başarımlar rotası değişmiş');
+  assert(/onEdit=\{\(\) => router\.push\('\/achievements-showcase'\)\}/.test(profile), 'vitrin düzenleme rotası değişmiş');
 });
 
 check('Kart yığını yerine hairline bölüm akışı korunur', () => {
@@ -82,10 +112,14 @@ check('Kart yığını yerine hairline bölüm akışı korunur', () => {
   assert(!/LinearGradient|BlurView/.test(progress + proof), 'gradient/blur eklenmiş');
 });
 
-check('Ritim etiketi kaldırılmış, XP verisi sakin ölçüdedir', () => {
+check('Büyük 38 pt XP sayısı kaldırıldı; XP alt metası sakin', () => {
   assert(!/levelCardEyebrow/.test(progress), 'Your Rhythm etiketi hâlâ çiziliyor');
-  assert(/xpValue:[\s\S]*?fontSize: 38/.test(progress), 'XP değeri 38 pt değil');
-  assert(/xpUnit:[\s\S]*?fontSize: 15/.test(progress), 'XP birimi küçültülmemiş');
+  // ÜRÜN KARARI: eski büyük 38 pt XP sayısı KALDIRILDI (Level odaklı sakin sunum).
+  assert(!/xpValue:/.test(progress), 'eski büyük XP değeri (xpValue) hâlâ var');
+  assert(!/fontSize: 38/.test(progress), 'eski 38 pt XP ölçüsü hâlâ var');
+  // XP alt metası korunur: "Sonraki seviye" + gerçek değer.
+  assert(/t\('rewards\.levelCardNext'\)/.test(progress), 'XP alt etiketi (Sonraki seviye) yok');
+  assert(/t\('rewards\.levelXpValue'/.test(progress), 'XP değer metni yok');
 });
 
 if (failures.length) {

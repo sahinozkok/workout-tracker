@@ -1,94 +1,91 @@
-import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import { useMemo } from 'react';
-import { StyleSheet, View } from 'react-native';
 
-import { withAlpha } from '@/constants/color-presets';
 import { RankId } from '@/constants/ranks';
-import { useAppTheme } from '@/hooks/use-app-theme';
 
 /**
- * Rank sembolü — kademeye özgü, KOD TABANLI Ionicons işareti.
+ * Rank sembolü — kademeye özgü, YEREL RESİM ASSET'i.
  *
- * Aynı görsel kaynak üç yerde kullanılır: rank özetindeki büyük hero işareti,
- * `RankBadge` içindeki kompakt işaret ve rank rehberi satırlarındaki orta boy
- * işaret. Böylece renkli nokta yerine tutarlı bir sembol geçer.
+ * TEK GÖRSEL KAYNAK — bütün rank görselleri buradan eşlenir. Aynı doğru asset
+ * üç yerde kullanılır: rank özetindeki büyük hero, `RankBadge` içindeki kompakt
+ * işaret ve rank rehberi satırlarındaki orta boy işaret. Profil özeti de artık
+ * doğrudan Ionicons yerine bu bileşeni kullanır.
  *
- * RENK KURALI — burada YENİ renk tanımlanmaz. Rank rengi çağıran taraftan
- * `color` ile gelir; color preset sistemi bunu değiştiremez.
- * Zemin ve sınır yalnızca mevcut `withAlpha`
- * yardımcısının çok hafif tonlarıdır. Gradient, glow, gölge veya resim asset'i
- * KULLANILMAZ.
+ * RENK KURALI — asset'e TINT UYGULANMAZ. Rozetin metalik/gül renkleri görselin
+ * kendisindedir; color preset veya rank rengiyle yeniden boyanmaz. `contain`
+ * ile rozetin tamamı her varyantta görünür kalır. Görselin etrafına balon,
+ * daire veya çerçeve EKLENMEZ; asset zaten şeffaf kenar boşluğu taşır.
  *
  * ERİŞİLEBİLİRLİK — üç kullanım da rank adını zaten metinle sunar; bu yüzden
  * sembol varsayılan olarak DEKORATİFTİR ve VoiceOver'a rank adını ikinci kez
- * okutmaz. Gerçekten tek başına anlam taşıması gerekirse `accessibilityLabel`
- * verilebilir.
+ * okutmaz. Tek başına anlam taşıması gerekirse `accessibilityLabel` verilir.
  */
 
-/** Kademe → Ionicons işareti. TEK kaynak; kopyalanmaz. */
-export const RANK_EMBLEM_ICONS: Record<RankId, keyof typeof Ionicons.glyphMap> = {
-  bronze: 'shield-outline',
-  silver: 'shield-half-outline',
-  gold: 'medal-outline',
-  platinum: 'star-outline',
-  diamond: 'diamond-outline',
-  master: 'trophy-outline',
-  rosea: 'rose-outline',
+/**
+ * Kademe → yerel rozet asset'i. TEK kaynak; kopyalanmaz. Bütün `require`
+ * çağrıları statik ve açıktır (Metro dinamik yol çözemez); değer, asset modül
+ * kimliğidir (`number`) ve `expo-image` `source` prop'una doğrudan verilir.
+ */
+export const RANK_EMBLEM_SOURCES: Record<RankId, number> = {
+  bronze: require('@/assets/images/ranks/rank-bronze.png'),
+  silver: require('@/assets/images/ranks/rank-silver.png'),
+  gold: require('@/assets/images/ranks/rank-gold.png'),
+  platinum: require('@/assets/images/ranks/rank-platinum.png'),
+  emerald: require('@/assets/images/ranks/rank-emerald.png'),
+  diamond: require('@/assets/images/ranks/rank-diamond.png'),
+  rosea: require('@/assets/images/ranks/rank-rosea.png'),
 };
 
 export type RankEmblemVariant = 'hero' | 'medium' | 'compact';
 
-/** Her varyantın ölçüsü — 8 pt ritmine yakın, tek yerde tanımlı. */
-const VARIANTS: Record<RankEmblemVariant, { box: number; icon: number; radius: number; framed: boolean }> = {
-  hero: { box: 56, icon: 30, radius: 16, framed: true },
-  medium: { box: 30, icon: 18, radius: 9, framed: true },
-  compact: { box: 16, icon: 14, radius: 0, framed: false },
+/**
+ * Her varyantın ölçüsü. Detaylı rozet, eski 14–16 pt Ionicons alanına
+ * sıkıştırılmaz: hero tasarımı okunacak kadar büyük, kompakt ise metni ezmeden
+ * gereken en küçük boyuttadır. Değerler kutunun kenar uzunluğudur; `contain`
+ * asset'in portre oranını (≈0.76) koruyarak yüksekliğe göre yerleştirir.
+ */
+const VARIANT_SIZE: Record<RankEmblemVariant, number> = {
+  hero: 84,
+  medium: 40,
+  compact: 22,
 };
 
 type RankEmblemProps = {
   /** Yalnızca sunucudan gelen rank kimliği. */
   rankId: RankId;
-  /** Çağıranın mevcut rank sabitlerinden çözdüğü semantik rank rengi. */
-  color: string;
   variant?: RankEmblemVariant;
+  /** Varyant boyutunu geçersiz kılar (ör. profil özetindeki kimlik hücresi). */
+  size?: number;
   /** Verilirse sembol tek başına anlam taşır; verilmezse dekoratiftir. */
   accessibilityLabel?: string;
+  /**
+   * Geriye dönük uyum için kabul edilir ama KULLANILMAZ: asset'e tint
+   * uygulanmadığından çağıranların semantik rengi geçmeye devam etmesi bir
+   * sorun değildir, renk yalnızca yok sayılır.
+   */
+  color?: string;
 };
 
-export function RankEmblem({ accessibilityLabel, color, rankId, variant = 'medium' }: RankEmblemProps) {
-  const { isDark } = useAppTheme();
-  const tint = color;
-  const spec = VARIANTS[variant];
+export function RankEmblem({ accessibilityLabel, rankId, size, variant = 'medium' }: RankEmblemProps) {
+  const box = size ?? VARIANT_SIZE[variant];
 
-  const containerStyle = useMemo(
+  const a11y = useMemo(
     () =>
-      spec.framed
-        ? {
-            alignItems: 'center' as const,
-            backgroundColor: withAlpha(tint, isDark ? 0.18 : 0.12),
-            borderColor: withAlpha(tint, isDark ? 0.34 : 0.24),
-            borderRadius: spec.radius,
-            borderWidth: StyleSheet.hairlineWidth,
-            height: spec.box,
-            justifyContent: 'center' as const,
-            width: spec.box,
-          }
+      accessibilityLabel
+        ? { accessibilityLabel, accessibilityRole: 'image' as const, accessible: true }
         : {
-            alignItems: 'center' as const,
-            height: spec.box,
-            justifyContent: 'center' as const,
-            width: spec.box,
+            accessibilityElementsHidden: true,
+            importantForAccessibility: 'no-hide-descendants' as const,
           },
-    [isDark, spec, tint],
+    [accessibilityLabel],
   );
 
-  const a11y = accessibilityLabel
-    ? { accessibilityLabel, accessibilityRole: 'image' as const, accessible: true }
-    : { accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' as const };
-
   return (
-    <View style={containerStyle} {...a11y}>
-      <Ionicons color={tint} name={RANK_EMBLEM_ICONS[rankId]} size={spec.icon} />
-    </View>
+    <Image
+      contentFit="contain"
+      source={RANK_EMBLEM_SOURCES[rankId]}
+      style={{ height: box, width: box }}
+      {...a11y}
+    />
   );
 }

@@ -29,9 +29,17 @@ function assert(value, message) {
   if (!value) throw new Error(message);
 }
 
-check('Level ve güller ayrı tetikleyicilerle aynı bilgi penceresine bağlı', () => {
-  assert(/onLevelPress=\{\(\) => setRewardInfoKind\('level'\)\}/.test(profile), 'level tetikleyicisi yok');
-  assert(/onRosesPress=\{\(\) => setRewardInfoKind\('roses'\)\}/.test(profile), 'gül tetikleyicisi yok');
+check('Roses bilgi penceresi korunur; XP bilgisi seçim penceresinden erişilir', () => {
+  // Roses tetikleyicisi DEĞİŞMEDİ: doğrudan bilgi penceresini açar.
+  assert(/onRosesPress=\{\(\) => setRewardInfoKind\('roses'\)\}/.test(profile), 'gül (roses) tetikleyicisi yok');
+  // SÖZLEŞME DEĞİŞİKLİĞİ (kullanıcı talebi): level dokunuşu artık XP bilgisini
+  // DOĞRUDAN açmaz; seviye gülü SEÇİM penceresini açar. XP/level bilgisi bu
+  // pencere içindeki görünür bir eylemle (onInfo) KORUNARAK erişilebilir kalır.
+  assert(/onLevelPress=\{\(\) => setRoseSheetOpen\(true\)\}/.test(profile), 'level dokunuşu seçim penceresini açmıyor');
+  const sheetTag = profile.slice(profile.indexOf('<LevelRoseSheet'), profile.indexOf('/>', profile.indexOf('<LevelRoseSheet')));
+  assert(/onInfo=\{\(\) => setRewardInfoKind\('level'\)\}/.test(sheetTag),
+    'XP bilgisi seçim penceresinden erişilemiyor (kaldırılmamalı)');
+  // Bilgi penceresi hâlâ TEK mount.
   assert((profile.match(/<RewardInfoSheet/g) ?? []).length === 1, 'bilgi penceresi tek mount değil');
 });
 
@@ -84,10 +92,11 @@ check('Seviye eğrisi ekrandaki açıklamayla aynı eşiklere bağlı', () => {
   assert(/maximum level is 999/.test(en), 'EN maksimum seviye açıklaması eksik');
 });
 
-check('Season Badges sözleşmesine dokunulmaz', () => {
-  assert((profile.match(/<ProfileAchievementShowcase/g) ?? []).length === 1, 'Season Badges mount değişmiş');
-  assert(/entries=\{profileShowcaseEntries\}/.test(profile), 'Season Badges verisi değişmiş');
-  assert(/preserveOrder/.test(profile), 'Season Badges sıra sözleşmesi değişmiş');
+check('Başarım vitrini sözleşmesi (KALICI kariyer sistemi)', () => {
+  // Profil KALICI kariyer vitrinini gösterir (sezon değil); tek vitrin, kariyer verisi.
+  assert((profile.match(/<ProfileCareerShowcase/g) ?? []).length === 1, 'Kariyer vitrini mount değişmiş');
+  assert(!/ProfileAchievementShowcase/.test(profile), 'profilde eski sezon vitrini kalmış');
+  assert(/entries=\{careerShowcaseEntries\}/.test(profile), 'kariyer vitrini verisi değişmiş');
 });
 
 if (failures.length) {

@@ -100,7 +100,7 @@ const migrationSource = source('supabase/migrations/20260827120000_add_seasonal_
 const localeTr = source('locales/tr.ts');
 const localeEn = source('locales/en.ts');
 
-const ORDER = ['bronze', 'silver', 'gold', 'platinum', 'diamond', 'master', 'rosea'];
+const ORDER = ['bronze', 'silver', 'gold', 'platinum', 'emerald', 'diamond', 'rosea'];
 
 /** `RECAP_HISTORY_MAX_ATTEMPTS` — `context/rank-context.tsx` ile aynı sınır. */
 const RECAP_HISTORY_MAX_ATTEMPTS = 3;
@@ -2361,6 +2361,106 @@ check('M3. Bekleyen kutlama güvenli ekran kontrolü olmasa antrenmanı bölerdi
     () => assertEqual(rx.canShowRankCelebration(WORKOUT), true, 'mutation'),
     'route kontrolü etkisiz — kutlama antrenmanı bölebilir',
   );
+});
+
+// ---------------------------------------------------------------------------
+// Kutlama onay kaydının v1 → v2 SÜRÜM GEÇİŞİ — gerçek yardımcılarla
+// ---------------------------------------------------------------------------
+
+const isValidId = (id) => ORDER.includes(id);
+// Verilen ham kayıtlardan baseline'ı çözer ve kutlama kararını üretir.
+function decideFromStored({ v2Raw = null, v1Raw = null, currentRank, seasonIndex = 5 }) {
+  const baselineRank = rx.resolveCelebrationBaseline({ isValidId, v1Raw, v2Raw });
+  return rx.decideRankCelebration({
+    baseline: baselineRank ? { rank: baselineRank, seasonIndex } : undefined,
+    order: ORDER,
+    season: { currentRank, seasonIndex },
+  });
+}
+
+check('C1. mapLegacyCelebrationRank v1→v2 eşlemesi doğru', () => {
+  assertEqual(rx.mapLegacyCelebrationRank('diamond'), 'emerald', 'eski diamond → emerald');
+  assertEqual(rx.mapLegacyCelebrationRank('master'), 'diamond', 'eski master → diamond');
+  for (const same of ['bronze', 'silver', 'gold', 'platinum', 'rosea']) {
+    assertEqual(rx.mapLegacyCelebrationRank(same), same, `${same} aynı kalmalı`);
+  }
+  assertEqual(rx.mapLegacyCelebrationRank('mythic'), undefined, 'bilinmeyen kayıt yok sayılmalı');
+  assertEqual(rx.mapLegacyCelebrationRank(null), undefined, 'boş kayıt undefined');
+});
+
+check('C2. eski diamond + yeni emerald → GEREKSİZ kutlama YOK', () => {
+  // Kullanıcı eski Diamond(1050) idi; kimlik Emerald olarak yeniden adlandırıldı.
+  // Gerçek bir yükseliş olmadığı için kutlama üretilmemeli.
+  const decision = decideFromStored({ v1Raw: 'diamond', currentRank: 'emerald' });
+  assertEqual(decision.type, 'idle', 'yeniden adlandırma kutlama üretmemeli');
+});
+
+check('C3. eski diamond + yeni DIAMOND(1350) → GERÇEK yükseliş kutlanır', () => {
+  // Kullanıcı eski Diamond(1050→Emerald) iken YENİ Diamond(1350) kademesine
+  // gerçekten çıktı. Eski kayıt yanlışlıkla "zaten Diamond" sayılıp kutlama
+  // KAYBOLMAMALI.
+  const decision = decideFromStored({ v1Raw: 'diamond', currentRank: 'diamond' });
+  assertEqual(decision.type, 'celebrate', 'gerçek yükseliş kutlanmalı');
+  assertEqual(decision.fromRank, 'emerald', 'kaynak kademe emerald olmalı');
+  assertEqual(decision.toRank, 'diamond', 'hedef kademe diamond olmalı');
+});
+
+check('C4. eski master + yeni diamond → GEREKSİZ kutlama YOK', () => {
+  // Eski Master(1350) artık Diamond olarak adlandırıldı; aynı kademe.
+  const decision = decideFromStored({ v1Raw: 'master', currentRank: 'diamond' });
+  assertEqual(decision.type, 'idle', 'yeniden adlandırma kutlama üretmemeli');
+});
+
+check('C5. eski master + rosea → GERÇEK yükseliş korunur', () => {
+  // Eski Master(1350→Diamond) iken Rosea'ya çıkan kullanıcının kutlaması, eski
+  // kaydın "master" tanınmaması yüzünden KAYBOLMAMALI.
+  const decision = decideFromStored({ v1Raw: 'master', currentRank: 'rosea' });
+  assertEqual(decision.type, 'celebrate', 'gerçek yükseliş korunmalı');
+  assertEqual(decision.fromRank, 'diamond', 'kaynak kademe diamond olmalı');
+  assertEqual(decision.toRank, 'rosea', 'hedef kademe rosea olmalı');
+});
+
+check('C6. v2 kaydı ÖNCELİKLİ ve v1→v2 eşlemesinden GEÇMEZ', () => {
+  // v2 anahtarındaki 'diamond' YENİ Diamond'dur; asla emerald'a çevrilmemeli.
+  assertEqual(
+    rx.resolveCelebrationBaseline({ isValidId, v1Raw: 'diamond', v2Raw: 'diamond' }),
+    'diamond',
+    'v2 diamond as-is kalmalı, v1 tarafından ezilmemeli',
+  );
+  // v2 varsa v1 hiç okunmaz: v1 farklı bir değer olsa bile v2 kazanır.
+  assertEqual(
+    rx.resolveCelebrationBaseline({ isValidId, v1Raw: 'master', v2Raw: 'rosea' }),
+    'rosea',
+    'v2 otoritedir',
+  );
+  // Bozuk v2 → v1'e düşer (v1→v2 çevrilir).
+  assertEqual(
+    rx.resolveCelebrationBaseline({ isValidId, v1Raw: 'master', v2Raw: 'garbage' }),
+    'diamond',
+    'geçersiz v2 → v1 çevirisine düşmeli',
+  );
+  // İkisi de yoksa baseline yok (seed).
+  assertEqual(
+    rx.resolveCelebrationBaseline({ isValidId, v1Raw: null, v2Raw: null }),
+    undefined,
+    'kayıt yoksa baseline undefined',
+  );
+});
+
+check('C7. Hesap/sezon izolasyonu ve TEKRAR çalıştırma güvenli', () => {
+  // v2 anahtarı kullanıcı+sezon kapsamlıdır: karışmaz.
+  const a1 = rx.rankCelebrationStorageKeyV2('userA', 5);
+  const b1 = rx.rankCelebrationStorageKeyV2('userB', 5);
+  const a2 = rx.rankCelebrationStorageKeyV2('userA', 6);
+  assert(a1 !== b1 && a1 !== a2 && b1 !== a2, 'v2 anahtarları hesap/sezon kapsamlı olmalı');
+  // v1 ve v2 isim alanları ayrı: v2 anahtarı v1 önekiyle karışmaz.
+  assert(a1.startsWith('rank:celebrated:v2:'), 'v2 anahtarı v2 isim alanında olmalı');
+  assert(!rx.rankCelebrationStorageKey('userA', 5).startsWith('rank:celebrated:v2:'), 'v1 anahtarı ayrı olmalı');
+  // Saf: aynı girdi → aynı sonuç (tekrar çalıştırılabilir).
+  const once = rx.resolveCelebrationBaseline({ isValidId, v1Raw: 'diamond', v2Raw: null });
+  const twice = rx.resolveCelebrationBaseline({ isValidId, v1Raw: 'diamond', v2Raw: null });
+  assertEqual(once, twice, 'çözüm deterministik olmalı');
+  assertEqual(once, 'emerald', 'eski diamond → emerald (tekrar)');
 });
 
 // ---------------------------------------------------------------------------

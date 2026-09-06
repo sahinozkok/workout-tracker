@@ -283,26 +283,26 @@ check('1. Kendi profilinde YALNIZCA açılmış rozetler görünür', () => {
   assertDeepEqual(keysOf(selectShowcase(entries)), ['streak_3', 'first_workout'], 'kilitli rozet sızdı');
 
   /**
-   * Açılmış filtresi ARTIK CONTEXT'TE (`profileShowcaseEntries`): vitrin
-   * seçimi eklendiğinde türetme oraya taşındı. Değişmez aynı — vitrine
-   * yalnızca açılmış rozetler girer — yalnızca yeri değişti.
+   * KALICI kariyer sisteminde açılmış filtresi profil ekranındaki türetmededir
+   * (`careerShowcaseEntries`): vitrine YALNIZCA açılmış başarımlar girer; seçim
+   * yoksa en son açılan üçe düşülür. İkinci Supabase sorgusu YOK (veri context'ten).
    */
-  const derivation = contextSource.slice(
-    contextSource.indexOf('const profileShowcaseEntries = useMemo'),
-    contextSource.indexOf('const value = useMemo<RankContextValue>('),
+  const derivation = ownProfileSource.slice(
+    ownProfileSource.indexOf('const careerShowcaseEntries = useMemo'),
+    ownProfileSource.indexOf('careerShowcaseSelection]);'),
   );
-  assert(derivation.length > 0, 'profileShowcaseEntries türetmesi bulunamadı');
+  assert(derivation.length > 0, 'careerShowcaseEntries türetmesi bulunamadı');
   assert(
-    derivation.includes('achievements.filter((achievement) => achievement.isUnlocked)'),
-    'context açılmış filtresini uygulamıyor',
+    derivation.includes('careerAchievements.filter((a) => a.isUnlocked)'),
+    'profil açılmış filtresini uygulamıyor',
   );
-  // Ekran türetilmiş listeyi kullanır; kendi başına filtre/hesap yapmaz.
+  // Ekran türetilmiş listeyi kullanır; başarı İLERLEMESİNİ okumaz/hesaplamaz.
   assert(
-    ownProfileSource.includes('entries={profileShowcaseEntries}'),
+    ownProfileSource.includes('entries={careerShowcaseEntries}'),
     'kendi profili türetilmiş vitrin listesini kullanmıyor',
   );
   assert(
-    !/currentProgress|targetProgress|isUnlocked/.test(ownProfileSource),
+    !/currentProgress|targetProgress/.test(ownProfileSource),
     'kendi profili başarı ilerlemesi okuyor/hesaplıyor',
   );
   assert(
@@ -759,58 +759,90 @@ check('16. Hesap/route değişiminde ESKİ cevap yeni profile yazamaz', () => {
 });
 
 check('17. Kendi profilinde İKİNCİ bir Supabase achievement sorgusu YOK', () => {
-  // Ekran doğrudan Supabase'e veya servise gitmez; context'i kullanır.
+  // Ekran doğrudan Supabase'e veya servise gitmez; KALICI kariyer context'ini kullanır.
   assert(!ownProfileSource.includes('supabase'), 'kendi profili doğrudan Supabase kullanıyor');
   for (const forbidden of [
-    'syncMySeasonAchievements',
+    'syncMyAchievements(',
     'fetchFriendAchievementShowcase',
-    'loadAchievements(',
+    "from '@/services/achievements'",
     "from '@/services/ranks'",
   ]) {
     assert(!ownProfileSource.includes(forbidden), `kendi profilinde ikinci sorgu yolu: ${forbidden}`);
   }
   assert(
-    ownProfileSource.includes('hasAchievementsError') &&
-      ownProfileSource.includes('isAchievementsLoading') &&
-      ownProfileSource.includes('profileShowcaseEntries'),
-    'mevcut context değerleri kullanılmıyor',
+    ownProfileSource.includes('useAchievements()') &&
+      ownProfileSource.includes('achievementStatus') &&
+      ownProfileSource.includes('careerShowcaseEntries'),
+    'mevcut kariyer context değerleri kullanılmıyor',
   );
-  // Bileşen de kendi başına veri çekmez.
-  assert(!componentSource.includes('supabase'), 'vitrin bileşeni veri çekiyor');
-  assert(!/useEffect|fetch/.test(componentSource), 'vitrin bileşeni yan etki içeriyor');
+  // Kariyer vitrin bileşeni de kendi başına veri çekmez (saf sunum).
+  const careerComponent = source('components/ranks/profile-career-showcase.tsx');
+  assert(!careerComponent.includes('supabase'), 'kariyer vitrin bileşeni veri çekiyor');
+  assert(!/useEffect|fetch\(/.test(careerComponent), 'kariyer vitrin bileşeni yan etki içeriyor');
 });
 
-check('18. Mevcut rank kimliği her profilde YALNIZCA BİR KEZ kalır', () => {
+check('18. Rank kimliği her profilde ORTAK özet ile TEK kez korunur', () => {
   assertEqual(
     (ownProfileSource.match(/<ProfileProgressSummary/g) ?? []).length,
     1,
     'kendi profilinde Level/Rank kimliği çoğaltılmış',
   );
   assertEqual((ownProfileSource.match(/<RankBadge/g) ?? []).length, 0, 'kendi profilinde eski rank rozeti kalmış');
+  /**
+   * Arkadaş profili de artık AYNI ortak `ProfileProgressSummary` bileşenini
+   * kullanır (eski tekil `<RankBadge>` yeniden çizimi KALDIRILDI). Bu kontrol,
+   * yeniden tasarlanan arkadaş profilinin AYNI rank içeriğini/durumlarını
+   * koruduğunu doğrular: özet TEK kez mount edilir, eski rozet çizilmez ve rank
+   * verisi/hata durumu ortak alana geçirilir.
+   */
+  assertEqual(
+    (friendProfileSource.match(/<ProfileProgressSummary/g) ?? []).length,
+    1,
+    'arkadaş profilinde ortak Level/Rank özeti yok veya çoğaltılmış',
+  );
   assertEqual(
     (friendProfileSource.match(/<RankBadge/g) ?? []).length,
-    1,
-    'arkadaş profilinde rank rozeti çoğaltılmış',
+    0,
+    'arkadaş profilinde eski rank rozeti hâlâ çiziliyor (ortak özete geçilmeli)',
+  );
+  // YENİ DÜZEN: rank artık Level/XP özetinde DEĞİL, "Success" bölümünde (ortak
+  // ProfileCareerShowcase) gösterilir. Arkadaş bölümü AYNI rank içeriğini/
+  // durumlarını taşır: rank verisi + hata durumu prop olarak geçer (ranked/
+  // error/unranked ayrımı korunur). Sahte "rank yok" göstermemek için hata
+  // durumu ayrı taşınır.
+  assert(
+    /<ProfileCareerShowcase[\s\S]{0,600}rank=\{friendRank/.test(friendProfileSource),
+    'arkadaş Success bölümüne rank verisi geçirilmiyor (rank içeriği korunmuyor)',
+  );
+  assert(
+    /<ProfileCareerShowcase[\s\S]{0,600}hasRankError=\{hasFriendRankError/.test(friendProfileSource),
+    'arkadaş Success bölümüne rank HATA durumu geçirilmiyor (durumlar korunmuyor)',
   );
   // Vitrin rank rozeti çizmez ve rank/RP göstermez.
   assert(!componentCode.includes('RankBadge'), 'vitrin rank rozetini yeniden çiziyor');
   assert(!/currentRp|rpValue|rankId/.test(componentCode), 'vitrin rank/RP gösteriyor');
-  // Her iki ekranda da vitrin TEK kez mount edilir.
+  // Ürün kararı: profil KALICI kariyer vitrinini gösterir (sezon vitrini artık
+  // profilde mount EDİLMEZ; iki farklı başarım ekranı bırakılmaz). Her iki
+  // ekranda da TEK kariyer vitrini mount edilir.
   assertEqual(
-    (ownProfileSource.match(/<ProfileAchievementShowcase/g) ?? []).length,
+    (ownProfileSource.match(/<ProfileCareerShowcase/g) ?? []).length,
     1,
-    'kendi profilinde vitrin çoğaltılmış',
+    'kendi profilinde kariyer vitrini çoğaltılmış/kaldırılmış',
   );
   assertEqual(
-    (friendProfileSource.match(/<ProfileAchievementShowcase/g) ?? []).length,
+    (friendProfileSource.match(/<ProfileCareerShowcase/g) ?? []).length,
     1,
-    'arkadaş profilinde vitrin çoğaltılmış',
+    'arkadaş profilinde kariyer vitrini çoğaltılmış/kaldırılmış',
   );
-  // Aynı bileşen iki yerde de kullanılıyor (kopyalanmamış).
   assert(
-    ownProfileSource.includes("from '@/components/ranks/profile-achievement-showcase'") &&
-      friendProfileSource.includes("from '@/components/ranks/profile-achievement-showcase'"),
-    'ortak vitrin bileşeni kullanılmıyor',
+    !/ProfileAchievementShowcase/.test(ownProfileSource) && !/ProfileAchievementShowcase/.test(friendProfileSource),
+    'profillerde eski sezon vitrini kalmış (tek başarım vitrini olmalı)',
+  );
+  // Aynı ortak bileşen iki yerde de kullanılıyor (kopyalanmamış).
+  assert(
+    ownProfileSource.includes("from '@/components/ranks/profile-career-showcase'") &&
+      friendProfileSource.includes("from '@/components/ranks/profile-career-showcase'"),
+    'ortak kariyer vitrin bileşeni kullanılmıyor',
   );
 });
 
@@ -842,20 +874,22 @@ check('19. Vitrin EN FAZLA üç öğe render eder ve tasarım sınırlarına uya
   // Ad en fazla iki satır.
   // `{2}` regex'te niceleyicidir; süslü parantezler kaçırılmalı.
   assert(/numberOfLines=\{2\}/.test(code), 'rozet adı iki satırla sınırlanmamış');
-  // Arkadaş vitrini salt okunur (onPress verilmez), kendi profili /rank açar.
+  // Arkadaş kariyer vitrini SALT OKUNUR (düzenleme yok).
   assert(
-    !/<ProfileAchievementShowcase[\s\S]{0,400}onPress/.test(friendProfileSource),
-    'arkadaş vitrini salt okunur değil',
+    !/<ProfileCareerShowcase[\s\S]{0,400}onEdit/.test(friendProfileSource),
+    'arkadaş kariyer vitrini salt okunur değil (onEdit olmamalı)',
   );
   /**
-   * Vitrine dokunmak ARTIK seçim ekranını açar (`/rank-showcase`); rank
-   * ekranına doğrudan gitmez. Arkadaş vitrini salt okunur kalır.
+   * Kendi vitrini KALICI başarım ekranlarını açar: tüm başarımlar (/achievements)
+   * ve düzenleme (/achievements-showcase).
    */
   assert(
-    /<ProfileAchievementShowcase[\s\S]{0,700}router\.push\('\/rank-showcase'\)/.test(
-      ownProfileSource,
-    ),
-    'kendi vitrini seçim ekranını açmıyor',
+    /<ProfileCareerShowcase[\s\S]{0,700}router\.push\('\/achievements'\)/.test(ownProfileSource),
+    'kendi vitrini tüm başarımlar ekranını açmıyor',
+  );
+  assert(
+    /<ProfileCareerShowcase[\s\S]{0,700}router\.push\('\/achievements-showcase'\)/.test(ownProfileSource),
+    'kendi vitrini düzenleme ekranını açmıyor',
   );
   // Metinler locale’den; bileşende sabit kullanıcı metni yok.
   for (const key of ['showcase', 'title', 'empty']) {

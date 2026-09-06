@@ -23,6 +23,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MotionPressable } from '@/components/motion-pressable';
 import { Layout, ThemeColors, Type } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
+import { useOptionalAchievements } from '@/context/achievement-context';
 import { useTranslation } from '@/context/language-context';
 import { MASCOT_NAME } from '@/constants/mascot';
 import { useMascot } from '@/context/mascot-context';
@@ -195,6 +196,7 @@ export default function CoachScreen() {
   const { user } = useAuth();
   const { colors } = useAppTheme();
   const { t, tList } = useTranslation();
+  const achievementSync = useOptionalAchievements()?.requestSync;
   // Rosea sohbeti vurgusu; seçilmediyse bugünkü mavi.
   const chatAccent = useFeatureColor('roseaChat', colors.primary);
   const styles = createStyles(colors, chatAccent.color);
@@ -291,6 +293,8 @@ export default function CoachScreen() {
         reply,
       ]);
       startSpeaking(reply);
+      // Gerçek AI yanıtı alındı → `wise_counsel` için ölçülü senkron (fire-and-forget).
+      achievementSync?.();
     } catch (sendError) {
       setMessages((current) =>
         current.map((message) =>

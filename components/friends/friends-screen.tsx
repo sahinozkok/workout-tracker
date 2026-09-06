@@ -32,6 +32,7 @@ import { FriendsTabs, FriendsTabKey } from '@/components/friends/friends-tabs';
 import { FriendsMetrics, useFriendsPalette } from '@/components/friends/friends-theme';
 import { MotionListItem, useListEntrance } from '@/components/motion-list-item';
 import { MotionSwap } from '@/components/motion-section';
+import { useOptionalAchievements } from '@/context/achievement-context';
 import { useAuth } from '@/context/auth-context';
 import { useTranslation } from '@/context/language-context';
 import {
@@ -64,6 +65,8 @@ export function FriendsScreen({ autoFocusSearch = false }: FriendsScreenProps) {
   const palette = useFriendsPalette();
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
+  // Kabul edilmiş arkadaşlık → `social_step`/`strong_circle` için ölçülü senkron.
+  const achievementSync = useOptionalAchievements()?.requestSync;
   const styles = useMemo(() => createStyles(palette), [palette]);
 
   const [selectedTab, setSelectedTab] = useState<FriendsTabKey>('friends');
@@ -524,9 +527,11 @@ export function FriendsScreen({ autoFocusSearch = false }: FriendsScreenProps) {
                           accessibilityRole="button"
                           disabled={isBusy}
                           onPress={() =>
-                            void runAction(request.friendshipId, () =>
-                              respondToFriendRequest(request.friendshipId, true),
-                            )
+                            void runAction(request.friendshipId, async () => {
+                              await respondToFriendRequest(request.friendshipId, true);
+                              // Yalnız BAŞARILI kabul sonrası (fire-and-forget).
+                              achievementSync?.();
+                            })
                           }
                           style={({ pressed }) => [styles.accentPill, pressed && styles.pressed]}>
                           <Text style={styles.accentPillText}>{t('friends.accept')}</Text>

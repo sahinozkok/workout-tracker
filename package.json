@@ -10,7 +10,8 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "verify:ranks": "node ./scripts/verify-ranks.mjs",
-    "verify:rank-leaderboard": "node ./scripts/verify-rank-leaderboard.mjs"
+    "verify:rank-leaderboard": "node ./scripts/verify-rank-leaderboard.mjs",
+    "verify:level-rose-http": "node ./scripts/verify-level-rose-http.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

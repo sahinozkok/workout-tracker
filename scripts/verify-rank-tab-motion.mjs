@@ -128,8 +128,11 @@ check(
   'Genel dalı haftalık odak ve sezon istatistiklerini taşımalı',
 );
 check(
-  swapBody.includes('AchievementsGrid') && swapBody.includes("t('ranks.achievements.title')"),
-  'Başarılar dalı başarı grid’ini taşımalı',
+  // ÜRÜN KARARI: Başarılar dalı artık sezonluk grid'i DEĞİL, kalıcı kariyer
+  // başarımlarının ortak bileşenini (`CareerAchievementsView`) taşır. Eski
+  // "SEASON ACHIEVEMENTS" başlığı ve altı kartlık sezon grid'i kaldırıldı.
+  swapBody.includes('CareerAchievementsView') && !swapBody.includes('AchievementsGrid'),
+  'Başarılar dalı kalıcı kariyer başarım bileşenini taşımalı (sezon grid değil)',
 );
 check(
   swapBody.includes("t('ranks.recentActivity')") && swapBody.includes("t('ranks.pastSeasons')"),
@@ -168,23 +171,40 @@ check(/tab:\s*\{[^}]*minHeight:\s*Layout\.minTouchSize/.test(screen), 'Her sekme
 check(screen.includes('tabUnderline') && screen.includes('backgroundColor: accent'), 'Seçili alt çizgi rank rengini korumalı');
 
 // ---------------------------------------------------------------------------
-// 7. Dört veri yükleme effect'i sekmeden BAĞIMSIZ; activeTab dep değil.
+// 7. Rank/RP veri yükleme effect'leri sekmeden BAĞIMSIZ; activeTab dep değil.
+//    (Eski sezon `loadAchievements` mount effect'i kaldırıldı — başarımlar artık
+//     kalıcı kariyer sistemine devredildi.)
 // ---------------------------------------------------------------------------
-for (const loader of ['loadHistory', 'loadEvents', 'loadWeekFocus', 'loadAchievements']) {
+for (const loader of ['loadHistory', 'loadEvents', 'loadWeekFocus']) {
   check(
     new RegExp(`useEffect\\(\\(\\) => \\{\\s*void ${loader}\\(\\);`).test(screen),
     `${loader} mount effect'i korunmalı`,
   );
 }
+// Eski sezon başarım mount effect'i rank ekranından KALDIRILDI.
+check(!/void loadAchievements\(\);/.test(screen), 'eski sezon loadAchievements mount effect\'i hâlâ var');
+// Kalıcı kariyer senkronu SEKME ETKİNLEŞİNCE ölçülü (debounce/coalesce) tetiklenir;
+// her render'da değil → RPC fırtınası yok.
+check(
+  /activeTab === 'achievements'\) requestAchievementSync\(\)/.test(screen),
+  'kariyer başarım senkronu sekme etkinleşince tetiklenmiyor',
+);
 // Yükleyici çağrı satırları sekme state'i içermez.
 for (const line of screen.split('\n')) {
   if (/void load(History|Events|WeekFocus|Achievements)\(\);/.test(line)) {
     check(!line.includes('activeTab'), 'Veri yüklemesi sekmeye göre koşullandırılmamalı');
   }
 }
-// Hiçbir bağımlılık dizisi activeTab içermez (sekme değişimi fetch tetiklemez).
+// Rank/RP veri yükleme effect'leri activeTab'a BAĞLI DEĞİL (sekme değişimi fetch
+// tetiklemez). TEK istisna: kalıcı kariyer senkronu sekme etkinleşince ölçülü
+// (debounce/coalesce) tetiklenir; o effect activeTab + requestAchievementSync'e bağlıdır.
 for (const deps of screen.matchAll(/\}, \[([^\]]*)\]\)/g)) {
-  check(!deps[1].includes('activeTab'), 'activeTab hiçbir effect bağımlılığına eklenmemeli');
+  if (deps[1].includes('activeTab')) {
+    check(
+      deps[1].includes('requestAchievementSync'),
+      'activeTab yalnız kariyer senkron effect\'inde bağımlılık olabilir',
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -94,7 +94,7 @@ export function RankBadge({ onPress, rankId, rp }: RankBadgeProps) {
 
   const content = (
     <Animated.View style={[styles.badge, animatedStyle]}>
-      <RankEmblem color={color} rankId={rankId} variant="compact" />
+      <RankEmblem rankId={rankId} variant="compact" />
       <Text numberOfLines={1} style={styles.rankText}>
         {rankName(rankId)}
       </Text>

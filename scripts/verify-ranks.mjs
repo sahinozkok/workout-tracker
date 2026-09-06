@@ -28,7 +28,18 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const ROOT = resolve(import.meta.dirname, '..');
+// Tarihsel migration: şema, RP tutarları, uzlaştırma, soft-reset FORMÜLÜ ve v1
+// yardımcıları (rank_for_rp/floor/reset) buradadır ve ESKİ kademe kimliklerini
+// (diamond@1050, master@1350) taşımaya devam eder — DEĞİŞMEZ. Eski istemciler
+// bu v1 çıktısını almaya devam eder.
 const MIGRATION = join(ROOT, 'supabase/migrations/20260827120000_add_seasonal_ranks.sql');
+// SÜRÜMLÜ SÖZLEŞME migration'ı: v1 yardımcılarını DEĞİŞTİRMEDEN `rank_to_v2`
+// eşlemesini ve `*_v2` RPC'lerini ekler. YENİ istemci ↔ v2 SQL eşleşmesi buna
+// karşı doğrulanır.
+const CONTRACT_MIGRATION = join(
+  ROOT,
+  'supabase/migrations/20260909120000_add_versioned_rank_contract.sql',
+);
 
 let passed = 0;
 const failures = [];
@@ -95,6 +106,32 @@ try {
 }
 
 const sql = readFileSync(MIGRATION, 'utf8');
+const contractSql = readFileSync(CONTRACT_MIGRATION, 'utf8');
+
+/** SÜRÜMLÜ SÖZLEŞMEDEKİ `rank_to_v2` eşlemesini { eskiId: yeniId } olarak okur. */
+function parseRankToV2() {
+  const block = contractSql.slice(
+    contractSql.indexOf('function public.rank_to_v2'),
+    contractSql.indexOf('$$;', contractSql.indexOf('function public.rank_to_v2')),
+  );
+  const map = {};
+  for (const [, from, to] of block.matchAll(/when '([a-z]+)' then '([a-z]+)'/g)) map[from] = to;
+  return map;
+}
+
+/** v1 `rank_for_rp` (tarihsel migration — ESKİ kimlikler) eşiklerini okur. */
+function parseV1RankForRp() {
+  const block = sql.slice(
+    sql.indexOf('function public.rank_for_rp'),
+    sql.indexOf('$$;', sql.indexOf('function public.rank_for_rp')),
+  );
+  return [...block.matchAll(/>= (\d+) then '([a-z]+)'/g)].map((m) => [Number(m[1]), m[2]]);
+}
+
+/** v1 kademe kimliğini v2'ye çevirir (rank_to_v2 ile aynı; bilinmeyen aynen). */
+function rankToV2(id, map = parseRankToV2()) {
+  return map[id] ?? id;
+}
 
 /**
  * Yorumları çıkarılmış SQL.
@@ -114,14 +151,6 @@ function sqlRpAmount(kind) {
   return Number.parseInt(match[1], 10);
 }
 
-/** SQL'deki `rank_tier_floor` tablosundan bir tier tabanını okur. */
-function sqlTierFloor(rankId) {
-  const block = sql.slice(sql.indexOf('function public.rank_tier_floor'));
-  const match = block.match(new RegExp(`when '${rankId}' then (\\d+)`));
-  assert(match, `SQL içinde '${rankId}' tier tabanı bulunamadı`);
-  return Number.parseInt(match[1], 10);
-}
-
 // ---------------------------------------------------------------------------
 // 1 · Rank eşik sınırları — TypeScript ve SQL aynı olmalı
 // ---------------------------------------------------------------------------
@@ -132,9 +161,23 @@ check('1. Bütün rank eşik sınırları (TypeScript)', () => {
   }
 });
 
-check('1b. Eşikler SQL ile birebir aynı', () => {
+check('1b. v1 SQL eşikleri + rank_to_v2 = istemci kademe kimlikleri', () => {
+  // SÖZLEŞME ZİNCİRİ: v1 rank_for_rp (tarihsel, ESKİ kimlik) DEĞİŞMEDİ; sürümlü
+  // migration onu rank_to_v2 ile YENİ kimliğe çevirir. Zincirin sonucu istemci
+  // constants'ıyla birebir aynı olmalı. SAYISAL eşikler korunur.
+  const map = parseRankToV2();
+  const byFloorV2 = new Map(
+    parseV1RankForRp()
+      .filter(([floor]) => floor > 0)
+      .map(([floor, oldId]) => [floor, rankToV2(oldId, map)]),
+  );
   for (const tier of ranks.RANK_TIERS) {
-    assertEqual(sqlTierFloor(tier.id), tier.minRp, `${tier.id} tabanı SQL ile ayrışıyor`);
+    if (tier.minRp === 0) continue;
+    assertEqual(
+      byFloorV2.get(tier.minRp),
+      tier.id,
+      `${tier.id} tabanı ${tier.minRp}: v1 SQL + rank_to_v2 istemci ile ayrışıyor`,
+    );
   }
   // Sınırların iki tarafında da doğru rank çıkmalı: floor-1 bir alt tier.
   for (let index = 1; index < ranks.RANK_TIERS.length; index += 1) {
@@ -146,6 +189,116 @@ check('1b. Eşikler SQL ile birebir aynı', () => {
       `${tier.id} alt sınırının bir altı`,
     );
   }
+});
+
+// ---------------------------------------------------------------------------
+// 1c · SÜRÜMLÜ SÖZLEŞME — açık v2, v1 dokunulmadan; güvenli geçiş
+// ---------------------------------------------------------------------------
+
+check('1c. Aktif kimlikler yedi ve YENİ sıradadır (master yok)', () => {
+  const expected = ['bronze', 'silver', 'gold', 'platinum', 'emerald', 'diamond', 'rosea'];
+  assertEqual(ranks.RANK_IDS.join(','), expected.join(','), 'RANK_IDS yeni sıra olmalı');
+  assertEqual(
+    ranks.RANK_TIERS.map((t) => t.id).join(','),
+    expected.join(','),
+    'RANK_TIERS yeni sıra olmalı',
+  );
+  assert(!ranks.RANK_IDS.includes('master'), 'aktif kimliklerde master kalmamalı');
+});
+
+check('1c-b. rank_to_v2 eşlemesi doğru; değişmeyen kademeler korunur', () => {
+  const map = parseRankToV2();
+  assertEqual(rankToV2('diamond', map), 'emerald', 'eski diamond → emerald');
+  assertEqual(rankToV2('master', map), 'diamond', 'eski master → diamond');
+  for (const same of ['bronze', 'silver', 'gold', 'platinum', 'rosea']) {
+    assertEqual(rankToV2(same, map), same, `${same} kimliği v2'de korunmalı`);
+  }
+  // YENİ SUNUCU + YENİ İSTEMCİ: Emerald 1050, Diamond 1350.
+  assertEqual(rankToV2(parseV1RankForRp().find(([f]) => f === 1050)[1], map), 'emerald', '1050 → Emerald');
+  assertEqual(rankToV2(parseV1RankForRp().find(([f]) => f === 1350)[1], map), 'diamond', '1350 → Diamond');
+});
+
+check('1c-c. SÜRÜMLÜ migration v1/paylaşılan yardımcıları DEĞİŞTİRMEZ', () => {
+  // Eski istemcilerin çıktısını dolaylı bozmamak için v1 fonksiyonları ve
+  // yardımcılar sürümlü migration'da yeniden tanımlanmamalı.
+  for (const fn of [
+    'function public.rank_for_rp',
+    'function public.rank_tier_floor',
+    'function public.rank_reset_base',
+    'function public.rank_reset_max',
+    'function public.sync_my_rank(',
+    'function public.get_my_rank_history(',
+    'function public.get_friend_rank(',
+    'function public.get_friends_rank_leaderboard(',
+  ]) {
+    assert(!contractSql.includes(fn), `sürümlü migration v1'i yeniden tanımlamamalı: ${fn}`);
+  }
+  // Arşiv metni YENİDEN YAZILMAZ (final_rank remap YOK → arşiv RP/sonuç korunur).
+  assert(
+    !/update\s+public\.user_season_ranks/i.test(contractSql),
+    'sürümlü migration arşiv satırlarını güncellememeli (yalnız EKLER)',
+  );
+});
+
+check('1c-d. v2 RPC yüzeyi tam ve güvenli (authenticated EXECUTE)', () => {
+  const v2 = [
+    'sync_my_rank_v2(date)',
+    'get_my_rank_history_v2()',
+    'get_friend_rank_v2(uuid)',
+    'get_friends_rank_leaderboard_v2()',
+  ];
+  for (const sig of v2) {
+    const name = sig.slice(0, sig.indexOf('('));
+    assert(
+      contractSql.includes(`function public.${name}`),
+      `v2 RPC tanımlı olmalı: ${name}`,
+    );
+    // Güvenlik modeli miras: security definer + boş search_path.
+    const body = contractSql.slice(contractSql.indexOf(`function public.${name}`));
+    const head = body.slice(0, body.indexOf('as $$'));
+    assert(/security definer/.test(head), `${name} security definer olmalı`);
+    assert(/set search_path = ''/.test(head), `${name} boş search_path kullanmalı`);
+    // İç v1 fonksiyonunu AYNEN çağırır (kopya mantık yok).
+    const v1name = name.replace(/_v2$/, '');
+    assert(body.includes(`public.${v1name}(`), `${name} iç ${v1name} çağırmalı`);
+    // Çıktıdaki rank kimlikleri v2'ye çevrilir.
+    assert(body.includes('public.rank_to_v2('), `${name} çıktı kimliğini rank_to_v2 ile çevirmeli`);
+    // Grant/revoke doğru.
+    assert(
+      contractSql.includes(`grant execute on function public.${sig} to authenticated`),
+      `${name} authenticated'a EXECUTE vermeli`,
+    );
+    assert(
+      contractSql.includes(`revoke all on function public.${sig} from anon`),
+      `${name} anon'dan revoke etmeli`,
+    );
+  }
+  // rank_to_v2 yardımcı fonksiyonu istemciye AÇIK DEĞİL (yalnız v2 içinden).
+  assert(
+    contractSql.includes('revoke all on function public.rank_to_v2(text) from authenticated'),
+    'rank_to_v2 yardımcısı authenticated role uzerine dogrudan acilmamali',
+  );
+});
+
+check('1c-e. ESKİ SUNUCU + YENİ İSTEMCİ: kontrollü hata, sahte Bronze YOK', () => {
+  // Yeni istemci v2 çağırır; sunucu henüz v2'yi tanımıyorsa (eski sunucu) ya da
+  // eski v1 kimliği sızarsa, katı çözücü SESSİZCE Bronze üretmez, HATA fırlatır.
+  assertThrows(() => ranks.coerceServerRankId('master'), 'eski master sessiz Bronze olmamalı');
+  assertThrows(() => ranks.coerceServerRankId('mythic'), 'bilinmeyen tier sessiz Bronze olmamalı');
+  assertThrows(() => ranks.coerceServerRankId(undefined), 'boş kimlik hata fırlatmalı');
+  assertThrows(() => ranks.coerceServerRankId(null), 'null kimlik hata fırlatmalı');
+  // Geçerli v2 kimlikleri aynen döner.
+  for (const id of ranks.RANK_IDS) {
+    assertEqual(ranks.coerceServerRankId(id), id, `${id} geçerli kimlik olmalı`);
+  }
+  // Not: eski v1 'diamond' metni de v2 istemcisinde YANLIŞ kademe olurdu; ama
+  // yeni istemci yalnız v2 çağırdığı için 'diamond' YENİ anlamıyla (1350) gelir.
+  // Sürüm karışması yalnız yanlış RPC'ye gidildiğinde olur ve o da yukarıdaki
+  // gibi hata/RPC-not-found ile sonuçlanır (istemci RP'den rank TAHMİN ETMEZ).
+  assert(
+    !/parseRankId[\s\S]{0,120}'bronze'/.test(readFileSync(join(ROOT, 'services/ranks.ts'), 'utf8')),
+    'servis bilinmeyen kimliği Bronze fallback ile daraltmamalı',
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -742,7 +895,7 @@ check('16. Bütün soft-reset rank sınırları', () => {
 check('17. %20 overflow aktarımı ve cap — görevdeki örnek', () => {
   // 1850 RP ile Rosea biten kullanıcı → 1450 + floor(200 * 0.2) = 1490.
   assertEqual(ranks.softResetRp(1850), 1490, 'Rosea 1850 → 1490');
-  assertEqual(ranks.resolveRank(1490).id, 'master', 'yeni sezona Master olarak başlanmalı');
+  assertEqual(ranks.resolveRank(1490).id, 'diamond', 'yeni sezona Diamond olarak başlanmalı');
   // Oran gerçekten %20.
   assertEqual(ranks.SOFT_RESET_CARRY_RATIO, 0.2, 'aktarım oranı %20 olmalı');
   assertEqual(ranks.softResetRp(1750), 1470, 'Rosea 1750 → 1470');
@@ -765,7 +918,7 @@ check('18. Kaçırılan sezonlar SIRAYLA kapanır ve her birinde soft reset olur
   // uzlaştırılır, SONRA kapatılır (bkz. `closeSeason`).
   closeSeason(store, 1, { days: {} }, '2026-10-18');
   const second = openNextSeason(store, 1);
-  assertEqual(second.startingRp, 1490, 'sezon 2 → 1490 (Master)');
+  assertEqual(second.startingRp, 1490, 'sezon 2 → 1490 (Diamond)');
 
   closeSeason(store, 2, { days: {} }, '2026-12-13');
   const third = openNextSeason(store, 2);
@@ -774,8 +927,9 @@ check('18. Kaçırılan sezonlar SIRAYLA kapanır ve her birinde soft reset olur
 
   closeSeason(store, 3, { days: {} }, '2027-02-07');
   const fourth = openNextSeason(store, 3);
-  // 1178 Diamond? Hayır: 1178 → diamond (1050–1349) → 900 + floor(128*0.2)=925.
-  assertEqual(ranks.resolveRank(1178).id, 'diamond', '1178 diamond olmalı');
+  // 1178 → emerald (1050–1349) → 900 + floor(128*0.2)=925. (Eski kimlikte bu
+  // kademe 'diamond' idi; yeni kimlikte 'emerald'. Sayısal sonuç DEĞİŞMEZ.)
+  assertEqual(ranks.resolveRank(1178).id, 'emerald', '1178 emerald olmalı');
   assertEqual(fourth.startingRp, 925, 'sezon 4 → 925');
 
   // Her ara sezon gerçekten kapatılmış olmalı.
@@ -1003,15 +1157,16 @@ check('23d. İstemci RP/rank/reset göndereMEZ', () => {
   );
   assert(sql.includes('perform public.assert_client_today(client_today)'), 'client_today doğrulanmıyor');
 
-  // Servis katmanı da başka parametre göndermemeli.
+  // Servis katmanı SÜRÜMLÜ v2 RPC'sini çağırır ve yine yalnız client_today
+  // gönderir (RP/rank/reset YOK). v2 sözleşmesi de tek parametrelidir.
   const service = readFileSync(join(ROOT, 'services/ranks.ts'), 'utf8');
   assert(
-    service.includes("supabase.rpc('sync_my_rank', { client_today: clientToday })"),
-    'servis sync_my_rank’e fazladan parametre gönderiyor',
+    service.includes("supabase.rpc('sync_my_rank_v2', { client_today: clientToday })"),
+    'servis sync_my_rank_v2’ye fazladan parametre gönderiyor',
   );
   /**
    * Servis, RPC çağrılarının PARAMETRE NESNESİNE RP/rank taşıyan hiçbir alan
-   * koymamalı. Yalnızca `{ ... }` bloğu incelenir; fonksiyon adı (`sync_my_rank`)
+   * koymamalı. Yalnızca `{ ... }` bloğu incelenir; fonksiyon adı (`sync_my_rank_v2`)
    * doğal olarak "rank" içerir ve yanlış alarm üretmemelidir.
    */
   const rpcPayloads = [...service.matchAll(/supabase\.rpc\([^,)]*,\s*(\{[^}]*\})/g)].map(
@@ -1060,26 +1215,38 @@ check('24. XP / gül / level toplamları rank sync’ten etkilenmez', () => {
   assert(!rewardContext.includes('rank'), 'reward-context rank sistemine bağlanmış');
 });
 
-check('25. Mevcut ödül/disiplin migration’ları DEĞİŞTİRİLMEDİ', () => {
+check('25. Mevcut ödül/disiplin migration’ları ve XP hesabı DEĞİŞTİRİLMEDİ', () => {
   const changed = execFileSync('git', ['diff', '--name-only', 'HEAD'], { cwd: ROOT })
     .toString()
     .split('\n')
     .filter(Boolean);
 
-  const protectedFiles = [
+  // Bu dosyalar RP/XP/ödül DAVRANIŞININ otoritesidir; byte-byte DEĞİŞMEZ.
+  const frozenFiles = [
     'supabase/migrations/20260820090000_add_progression_rewards.sql',
     'supabase/migrations/20260823120000_add_discipline_day_history.sql',
     'supabase/migrations/20260824120000_add_program_order_and_workout_soft_delete.sql',
     'supabase/migrations/20260814120000_add_friendships_and_shared_discipline.sql',
     'constants/level-curve.ts',
     'types/rewards.ts',
-    'services/rewards.ts',
-    'context/reward-context.tsx',
   ];
-
-  for (const file of protectedFiles) {
-    assert(!changed.includes(file), `${file} bu görevde değiştirilmiş — ödül davranışı riskte`);
+  for (const file of frozenFiles) {
+    assert(!changed.includes(file), `${file} değiştirilmiş — ödül/XP davranışı riskte`);
   }
+
+  // services/rewards.ts ve reward-context.tsx seviye-gülü SEÇİMİ için EKLEMELİ
+  // genişletilebilir; ancak MEVCUT ödül davranış yüzeyi olduğu gibi durmalı.
+  // (Level gülü seçimi XP/RP/roses üretmez; ayrı bir tercih alanıdır.)
+  const rewardsSvc = readFileSync(join(ROOT, 'services/rewards.ts'), 'utf8');
+  for (const rpc of ['sync_workout_rewards', 'claim_daily_rewards', 'award_pet_love', 'get_my_progress']) {
+    assert(rewardsSvc.includes(`supabase.rpc('${rpc}'`), `mevcut ödül RPC çağrısı kaybolmuş: ${rpc}`);
+  }
+  const rewardCtx = readFileSync(join(ROOT, 'context/reward-context.tsx'), 'utf8');
+  for (const api of ['syncWorkoutDay', 'claimDaily', 'awardPetBurst', 'refreshProgress']) {
+    assert(rewardCtx.includes(api), `mevcut ödül context API'si kaybolmuş: ${api}`);
+  }
+  // Toplamlar hâlâ yalnız sunucudan (optimistic/sahte puan yok) — kural korunur.
+  assert(!/setProgress\([\s\S]{0,60}\+/.test(rewardCtx), 'ilerleme optimistic olarak artırılmamalı');
 });
 
 // ===========================================================================

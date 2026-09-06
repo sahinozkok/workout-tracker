@@ -32,6 +32,13 @@ const lightColors = {
     infoText: '#0058B8',
     infoIcon: '#007AFF',
     danger: '#FF3B30',
+    /**
+     * Hata/uyarı METNİ için okunabilir kırmızı. `danger` (#FF3B30) doygun kırmızı
+     * açık zeminde normal metin için 4.5:1'in ALTINA düşüyordu (~3.5:1); bu koyu
+     * kırmızı beyaz/`surface` üzerinde ≥4.5:1 sağlar. Dolgu/ikon zeminleri hâlâ
+     * `danger` kullanır; bu token YALNIZCA küçük metinler içindir.
+     */
+    dangerText: '#C0392B',
     disciplineCompleted: '#34C759',
     disciplinePartial: '#FF9500',
     disciplineSkipped: '#C7C7CC',
@@ -79,6 +86,13 @@ const darkColors = {
     infoText: '#9CC8FF',
     infoIcon: '#0A84FF',
     danger: '#FF453A',
+    /**
+     * Hata/uyarı METNİ için okunabilir kırmızı. `danger` (#FF453A) en açık koyu
+     * yüzey (`softDark` #202020) üzerinde ~4.2:1 ile 4.5:1'in hemen altındaydı;
+     * bu daha açık kırmızı bütün koyu yüzeylerde ≥4.5:1 verir. Dolgu/ikon
+     * zeminleri `danger` kullanmaya devam eder.
+     */
+    dangerText: '#FF6B60',
     disciplineCompleted: '#30D158',
     disciplineSkipped: '#48484A',
     disciplinePartial: '#FF9F0A',

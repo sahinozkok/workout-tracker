@@ -771,10 +771,13 @@ check('14. Metinler locale’den gelir; ikon eşlemesi TEK kaynaktır', () => {
     celebrationSource.includes("from '@/components/ranks/achievement-icons'"),
     'kutlama ortak ikon kaynağını kullanmıyor',
   );
+  // ÜRÜN KARARI: rank ekranı artık sezon başarım rozetlerini render ETMEZ → sezon
+  // ikon kaynağını (achievement-icons) KULLANMAZ; kalıcı kariyer görünümüne devreder.
   assert(
-    screenSource.includes("from '@/components/ranks/achievement-icons'"),
-    'rank ekranı ortak ikon kaynağını kullanmıyor',
+    !screenSource.includes("from '@/components/ranks/achievement-icons'"),
+    'rank ekranı hâlâ sezon ikon kaynağına bağlı (kaldırılmalıydı)',
   );
+  assert(screenSource.includes('CareerAchievementsView'), 'rank ekranı kalıcı kariyer görünümünü kullanmıyor');
   assert(
     !/const ACHIEVEMENT_ICONS[\s\S]{0,40}=\s*\{/.test(screenSource),
     'ikon eşlemesi rank ekranında hâlâ kopyalanmış',
@@ -841,28 +844,24 @@ check('15. Kaynak: onay YALNIZCA layout yolundan, polling YOK', () => {
     ),
     'başarılar için polling kurulmuş',
   );
-  // Rank sync sonrası tazeleme var ve tek-uçuş korunuyor.
-  assert(
-    contextSource.includes('loadAchievementsRef.current();'),
-    'rank sync sonrası başarı tazelemesi yok',
+  // ÜRÜN KARARI: ESKİ sezon başarım kutlaması RETİRED. Arka plan sezon senkronu
+  // (loadAchievementsRef.current()) runSync'ten KALDIRILDI → gereksiz RPC + kutlama
+  // kuyruğu arka planda çalışmaz.
+  const syncBody = contextSource.slice(
+    contextSource.indexOf('const runSync = useCallback('),
+    contextSource.indexOf('const syncRank = useCallback('),
   );
+  assert(syncBody.length > 0, 'runSync bulunamadı');
+  assert(!syncBody.includes('loadAchievementsRef.current();'), 'runSync hâlâ arka planda sezon başarımı senkronluyor');
+  // Eski sezon kutlama katmanı _layout\'ta artık MOUNT EDİLMEZ.
+  assert(!layoutSource.includes('<AchievementUnlockCelebrationLayer'), 'eski sezon kutlama katmanı hâlâ mount ediliyor');
+  // Yerine kalıcı kariyer kutlaması mount edilir; rank yükselme + sezon özeti KORUNUR.
+  assert(layoutSource.includes('<AchievementCelebrationOverlay'), 'kalıcı kariyer kutlaması mount edilmemiş');
   assert(
-    contextSource.includes('if (isAchievementsFetchingRef.current) {'),
-    'tek-uçuş kilidi kaybolmuş (eşzamanlı ikinci RPC riski)',
+    layoutSource.includes('<RankUpCelebrationLayer') && layoutSource.includes('<SeasonRecapLayer'),
+    'rank/sezon kutlamaları kaldırılmış (korunmalıydı)',
   );
-  assert(
-    contextSource.includes('hasQueuedAchievementsRef.current = true;'),
-    'latest-wins kuyruğu kaybolmuş',
-  );
-
-  // Katman mount edilmiş ve oturum guard’ı içinde.
-  assert(
-    layoutSource.includes(
-      '{Boolean(session) && !isPasswordRecovery && <AchievementUnlockCelebrationLayer />}',
-    ),
-    'katman oturum guard’ının dışında mount edilmiş',
-  );
-  // Güvenli rota kuralı yeniden kullanılıyor.
+  // Eski bileşendeki güvenli rota kuralı (dosya korunur) hâlâ tanımlı.
   assert(
     celebrationSource.includes('canShowRankCelebration(pathname)'),
     'mevcut güvenli rota kuralı kullanılmıyor',

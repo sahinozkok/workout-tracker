@@ -2,6 +2,7 @@ import { createContext, PropsWithChildren, useCallback, useContext, useEffect, u
 
 import { useAuth } from '@/context/auth-context';
 import { getProgramExerciseName } from '@/data/exercises';
+import { useOptionalAchievements } from '@/context/achievement-context';
 import { useOptionalRanks } from '@/context/rank-context';
 import { useRewards } from '@/context/reward-context';
 import { supabase } from '@/lib/supabase';
@@ -281,6 +282,13 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
    */
   const ranks = useOptionalRanks();
   const syncRank = ranks?.syncRank;
+  /**
+   * Kariyer başarımları AYRI, kalıcı bir sistemdir (XP/gül/rank ekonomisine
+   * dokunmaz). `useOptionalAchievements` bilinçlidir: sağlayıcı mount değilse
+   * antrenman akışı hata vermeden sürer. Başarım senkronu FIRE-AND-FORGET'tir;
+   * başarısızlığı workout/program işlemini ASLA bozmaz.
+   */
+  const achievementSync = useOptionalAchievements()?.requestSync;
   const [programs, setPrograms] = useState<WorkoutProgram[]>([]);
   const [isProgramsLoading, setIsProgramsLoading] = useState(true);
   const [programsError, setProgramsError] = useState<string>();
@@ -673,6 +681,9 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
       // sunucudan tek seferde okunur.
       await refreshPrograms();
     }
+
+    // Program oluşturuldu → `own_path` başarımı için ölçülü senkron (fire-and-forget).
+    achievementSync?.();
   }
 
   async function activateProgram(programId: string) {
@@ -1545,6 +1556,11 @@ export function WorkoutProvider({ children }: PropsWithChildren) {
           : currentSession,
       ),
     );
+
+    // Workout tamamlandı → kariyer başarımları (workout/set/hacim/kardiyo/streak/
+    // program-loyalty) ölçülü şekilde yeniden senkronize edilir. Coalescing'li ve
+    // fire-and-forget: reward/rank akışını veya tamamlama sonucunu etkilemez.
+    achievementSync?.();
   }
 
   async function cycleDisciplineStatus(dateKey: string) {

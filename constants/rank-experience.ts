@@ -229,6 +229,76 @@ export function rankCelebrationStorageKey(userId: string, seasonIndex: number): 
   return `rank:celebrated:${userId}:${seasonIndex}`;
 }
 
+/**
+ * Kutlama onay kaydının SÜRÜM 2 anahtarı.
+ *
+ * Rank kimlikleri değiştiği için (eski diamond→emerald, eski master→diamond)
+ * saklanan onay kaydı SÜRÜMLENİR. `v2` ayrı bir isim alanıdır: eski uygulamanın
+ * yazdığı `rank:celebrated:...` kaydı OLDUĞU GİBİ kalır (eski uygulama bozulmaz)
+ * ve yeni uygulama yalnız BU anahtara yazar. Hesap+sezon kapsamı korunur.
+ */
+export function rankCelebrationStorageKeyV2(userId: string, seasonIndex: number): string {
+  return `rank:celebrated:v2:${userId}:${seasonIndex}`;
+}
+
+/**
+ * ESKİ (v1) onay kaydındaki kademe kimliğini v2'ye çevirir.
+ *
+ * YALNIZCA açıkça v1 olduğu bilinen anahtardan (`rankCelebrationStorageKey`)
+ * okunan bir değere uygulanmalıdır: o değer eski uygulamanın v1 kelime
+ * dağarcığıyla yazılmıştır. Eşleme SQL'deki `rank_to_v2` ile aynıdır:
+ *   * eski `diamond` (5. kademe, taban 1050) → `emerald`
+ *   * eski `master`  (6. kademe, taban 1350) → `diamond`
+ *   * diğer geçerli kimlikler AYNI kalır
+ * Tanınmayan değer `undefined` döner (bozuk kayıt yok sayılır). Bir v2 değerine
+ * ASLA uygulanmamalıdır (yeni `diamond` yanlışlıkla `emerald`'a düşerdi); bu
+ * yüzden `resolveCelebrationBaseline` v2 anahtarına önceliği verir.
+ */
+export function mapLegacyCelebrationRank(value: string | null | undefined): string | undefined {
+  if (value == null) return undefined;
+  const trimmed = value.trim();
+  switch (trimmed) {
+    case 'diamond':
+      return 'emerald';
+    case 'master':
+      return 'diamond';
+    case 'bronze':
+    case 'silver':
+    case 'gold':
+    case 'platinum':
+    case 'rosea':
+      return trimmed;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Kutlama baseline'ını iki ham kayıttan GÜVENLE seçer.
+ *
+ * SÖZLEŞME:
+ *   * v2 kaydı VARSA ve geçerliyse otoritedir; v1 tarafından EZİLMEZ ve v1→v2
+ *     eşlemesinden GEÇMEZ (yeni `diamond` yanlış çevrilmesin).
+ *   * v2 yoksa yalnız v1 anahtarı okunur ve v1→v2 eşlemesiyle çevrilir.
+ *   * İkisi de yoksa/gecersizse `undefined` (baseline yok → seed).
+ *
+ * Saf ve TEKRAR ÇALIŞTIRILABİLİR: yalnız iki ham dizeye ve bir doğrulayıcıya
+ * bağlıdır; AsyncStorage'a veya sıraya erişmez. Geçerlilik testi (`isValidId`)
+ * çağıran taraftan gelir; böylece bu modül `RANK_IDS`'e bağımlı kalmaz.
+ */
+export function resolveCelebrationBaseline(input: {
+  v2Raw: string | null | undefined;
+  v1Raw: string | null | undefined;
+  isValidId: (value: string) => boolean;
+}): string | undefined {
+  const { isValidId, v1Raw, v2Raw } = input;
+  const v2 = v2Raw?.trim();
+  if (v2 && isValidId(v2)) return v2; // v2 otoritedir; eşlemeden geçmez.
+  const migrated = mapLegacyCelebrationRank(v1Raw);
+  if (migrated && isValidId(migrated)) return migrated;
+  return undefined;
+}
+
 // ---------------------------------------------------------------------------
 // 3) Sezon sonu özeti — tek seferlik gösterim kararı
 // ---------------------------------------------------------------------------
@@ -412,10 +482,16 @@ function asCount(value: unknown): number | undefined {
  * İSTEMCİ BURADA HİÇBİR ŞEY HESAPLAMAZ: RP, rank ve sıra doğrudan sunucudan
  * gelir. `is_ranked` doğru olsa bile RP veya sıra tutarsızsa satır güvenli
  * biçimde "bu sezon sıralanmadı" durumuna düşer — uydurma değer üretilmez.
+ *
+ * SÜRÜMLÜ SÖZLEŞME — bir satır SIRALANMIŞ (`isRanked`) ama rank kimliği
+ * `options.order` içinde DEĞİLSE, bu bir sözleşme uyumsuzluğudur ve kontrollü
+ * bir HATA fırlatılır. Bilinmeyen tier SESSİZCE Bronze'a düşürülmez; çağıran
+ * bütün listeyi mevcut hata/yeniden-dene akışıyla ele alır. (Sıralanmamış
+ * satırda rank hiç okunmaz, bu yüzden hata fırlatmaz.)
  */
 export function parseFriendRankLeaderboardRow<Rank extends string>(
   row: FriendRankLeaderboardRow,
-  options: { order: readonly Rank[]; fallbackRank: Rank },
+  options: { order: readonly Rank[] },
 ): FriendRankLeaderboardParsedEntry<Rank> | undefined {
   const userId = asText(row.participant_id);
   if (!userId) return undefined;
@@ -425,16 +501,19 @@ export function parseFriendRankLeaderboardRow<Rank extends string>(
   const isRanked =
     row.is_ranked === true && currentRp !== undefined && position !== undefined && position > 0;
 
-  const rawRank = asText(row.current_rank);
-  const currentRank =
-    rawRank !== undefined && options.order.includes(rawRank as Rank)
-      ? (rawRank as Rank)
-      : options.fallbackRank;
+  let currentRank: Rank | undefined;
+  if (isRanked) {
+    const rawRank = asText(row.current_rank);
+    if (rawRank === undefined || !options.order.includes(rawRank as Rank)) {
+      throw new Error(`rank_contract_mismatch:${String(row.current_rank)}`);
+    }
+    currentRank = rawRank as Rank;
+  }
 
   return {
     avatarUrl: asText(row.avatar_url),
     // Sıralanmamış katılımcıda rank/RP/sıra HİÇ doldurulmaz.
-    currentRank: isRanked ? currentRank : undefined,
+    currentRank,
     currentRp: isRanked ? currentRp : undefined,
     displayName: asText(row.display_name),
     isRanked,
@@ -455,7 +534,7 @@ export function parseFriendRankLeaderboardRow<Rank extends string>(
  */
 export function parseFriendRankLeaderboard<Rank extends string>(
   rows: readonly FriendRankLeaderboardRow[] | null | undefined,
-  options: { order: readonly Rank[]; fallbackRank: Rank },
+  options: { order: readonly Rank[] },
 ): FriendRankLeaderboardParsed<Rank> {
   const entries: FriendRankLeaderboardParsedEntry<Rank>[] = [];
   const seen = new Set<string>();

@@ -1152,7 +1152,10 @@ check('29. Önizleme sınırdan 1 MS önce görünür, TAM sınırda kaybolur', 
 });
 
 check('30. Liste ekranında AYNI ANDA en fazla bir expiry timer bulunur', () => {
-  const now = BASE;
+  // Bu kontrol GERÇEK `Date.now()` ile önizleme süresi kapısını değerlendirir;
+  // veri seti bu yüzden gerçek "şimdi"ye göre kurulur. (Sabit geçmiş bir BASE
+  // kullanmak, duvar saati BASE+24s'yi geçince yanlış negatif üretiyordu.)
+  const now = Date.now();
   const make = (id, at) => ({
     displayName: `K${id}`,
     lastMessageAt: at === undefined ? undefined : new Date(at).toISOString(),

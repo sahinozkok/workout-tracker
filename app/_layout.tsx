@@ -8,13 +8,14 @@ import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { FriendMessageAlerts } from '@/components/friends/message-alert-banner';
 import { FloatingMascot } from '@/components/mascot/floating-mascot';
-import { AchievementUnlockCelebrationLayer } from '@/components/ranks/achievement-unlock-celebration';
 import { RankUpCelebrationLayer } from '@/components/ranks/rank-up-celebration';
 import { SeasonRecapLayer } from '@/components/ranks/season-recap';
 import { AuthProvider, useAuth } from '@/context/auth-context';
 import { LanguageProvider, useLanguage, useTranslation } from '@/context/language-context';
 import { MascotProvider } from '@/context/mascot-context';
 import { ProfileProvider, useProfile } from '@/context/profile-context';
+import { AchievementCelebrationOverlay } from '@/components/ranks/achievement-celebration-overlay';
+import { AchievementProvider } from '@/context/achievement-context';
 import { RankProvider } from '@/context/rank-context';
 import { RewardProvider } from '@/context/reward-context';
 import { ThemePreferenceProvider } from '@/context/theme-context';
@@ -71,13 +72,21 @@ function UserScopedApp() {
               set kaydından sonra rank senkronizasyonunu buradan tetikleyebilsin.
               Rank okunamazsa antrenman akışı etkilenmez. */}
           <RankProvider>
+            {/* Kariyer başarımları: sezondan BAĞIMSIZ, kalıcı. RankProvider'ın
+                sezon başarı/kutlama katmanına dokunmaz; ayrı sürümlü baseline
+                anahtarı kullanır. */}
+            <AchievementProvider>
             <WorkoutProvider>
               <MascotProvider>
                 <SharedDisciplineSync />
                 <WorkoutReminderNavigator />
                 <AppNavigation />
+                {/* Kalıcı başarım kutlaması — mevcut rank/sezon overlay önceliğine
+                    saygı gösterir (onlar aktifken beklemede). */}
+                <AchievementCelebrationOverlay />
               </MascotProvider>
             </WorkoutProvider>
+            </AchievementProvider>
           </RankProvider>
         </RewardProvider>
       </WorkoutReminderProvider>
@@ -228,6 +237,13 @@ function AppNavigation() {
             name="settings"
             options={{ headerBackTitle: t('tabs.profile'), title: t('profile.settings') }}
           />
+          {/* Profil düzenleme Ayarlar'dan açılan kök Stack ekranıdır (eski açılır
+              editörün yerine). Native başlık + geri kaydırma korunur; ekran ayrıca
+              güvenli `headerLeft` çizer ve kayıtta Ayarlar'a güvenle döner. */}
+          <Stack.Screen
+            name="profile-edit"
+            options={{ headerBackTitle: t('profile.settings'), title: t('profile.editNavTitle') }}
+          />
           {/* Antrenman hatırlatıcıları Ayarlar'dan açılan kök Stack ekranıdır:
               native başlık + geri düğmesi ve iOS geri kaydırma hareketi çalışır,
               alt sekme çubuğu görünmez ve YENİ SEKME EKLENMEZ. */}
@@ -265,6 +281,16 @@ function AppNavigation() {
               title: t('ranks.achievements.showcase.editTitle'),
             }}
           />
+          {/* Kalıcı başarımlar ekranı — kök Stack'te açılır (yeni sekme yok). */}
+          <Stack.Screen
+            name="achievements"
+            options={{ headerBackTitle: t('tabs.profile'), title: t('careerAchievements.navTitle') }}
+          />
+          {/* Kalıcı başarım vitrini seçim ekranı. */}
+          <Stack.Screen
+            name="achievements-showcase"
+            options={{ headerBackTitle: t('tabs.profile'), title: t('careerAchievements.showcase.viewAll') }}
+          />
           {/* Arkadaşlık ekranları kök Stack'te açılır: alt sekme çubuğu
               görünmez, native geri hareketi korunur.
 
@@ -277,10 +303,12 @@ function AppNavigation() {
           {/* Arkadaş sezon sıralaması da kök Stack'te açılır: alt sekme
               çubuğuna YENİ SEKME EKLENMEZ ve ekran kendi başlığını çizer. */}
           <Stack.Screen name="friends/leaderboard" options={{ headerShown: false }} />
-          <Stack.Screen
-            name="profile/[userId]"
-            options={{ headerBackTitle: t('friends.title'), title: '' }}
-          />
+          {/* Arkadaş profili native başlığı KAPALI: kapak fotoğrafı çentiğin
+              arkasından, ekranın fiziksel en üstünden başlasın (kendi profil
+              hero'suyla aynı). Ekran kendi güvenli geri düğmesini kapağın üzerine
+              çizer. `headerShown: false` native-stack geri kaydırma hareketini
+              etkilemez; iOS jesti aynen çalışır. */}
+          <Stack.Screen name="profile/[userId]" options={{ headerShown: false }} />
           {/* Mesajlaşma ekranları da arkadaşlık ekranlarıyla AYNI güvenli
               bölgede, kök Stack'te açılır: alt sekme çubuğuna YENİ SEKME
               EKLENMEZ ve bu ekranlarda sekme çubuğu görünmez. Native başlık
@@ -344,12 +372,13 @@ function AppNavigation() {
       */}
       {Boolean(session) && !isPasswordRecovery && <SeasonRecapLayer />}
       {/*
-        Başarı kutlaması ÖNCELİK SIRASINDA en sondadır: bekleyen bir rank
-        yükselmesi veya sezon özeti varken kendini hiç göstermez. Üçü de
-        `RankContext` üzerinden senkron katman sahipliği alır, bu yüzden
-        hiçbir koşulda üst üste binmezler.
+        ESKİ SEZON BAŞARIMI KUTLAMASI KALDIRILDI. Başarımlar artık sezondan
+        BAĞIMSIZ ve kalıcıdır; tek kutlama katmanı, sağlayıcı ağacında mount
+        edilen kalıcı `AchievementCelebrationOverlay`'dir. Eski
+        `AchievementUnlockCelebrationLayer` (sezonluk `RankContext` kuyruğu)
+        artık mount edilmez → arka planda eski sezon başarım kutlama kuyruğu
+        çalışmaz. Rank yükselme ve sezon özeti kutlamaları KORUNUR.
       */}
-      {Boolean(session) && !isPasswordRecovery && <AchievementUnlockCelebrationLayer />}
       {Boolean(session) && !isPasswordRecovery && <FloatingMascot />}
       <StatusBar style={isDark ? 'light' : 'dark'} />
     </ThemeProvider>

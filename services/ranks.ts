@@ -9,7 +9,7 @@ import {
   SeasonAchievementKey,
   SeasonAchievementRow,
 } from '@/constants/rank-experience';
-import { RankId, RANK_IDS } from '@/constants/ranks';
+import { coerceServerRankId, RankId, RANK_IDS } from '@/constants/ranks';
 import { supabase } from '@/lib/supabase';
 import {
   FriendRankLeaderboard,
@@ -105,13 +105,17 @@ function toDateKey(timestamp: string): string {
 }
 
 /**
- * Sunucudan gelen rank kimliğini güvenle daraltır.
+ * SÜRÜMLÜ SÖZLEŞME sınırı — sunucudan gelen rank kimliğini KATI daraltır.
  *
- * Sunucu ileride yeni bir tier eklerse eski istemci çökmez; bilinmeyen kimlik
- * en düşük ranka düşer ve ekran çalışmaya devam eder.
+ * Bu servis artık YALNIZCA `*_v2` RPC'lerini çağırır; onların sözleşmesi her
+ * zaman bu istemcinin `RANK_IDS`'ini döndürür. Bir kimlik buna uymuyorsa
+ * (ör. sunucu henüz v2'yi tanımıyor veya sürümler uyuşmuyor) SESSİZCE Bronze'a
+ * DÜŞÜRÜLMEZ: `coerceServerRankId` `RankContractError` fırlatır ve çağıran
+ * ekranların mevcut hata/yeniden-dene akışı devreye girer. Böylece kör string
+ * alias veya RP'den tahmini rank üretilmez.
  */
 function parseRankId(value: unknown): RankId {
-  return RANK_IDS.includes(value as RankId) ? (value as RankId) : 'bronze';
+  return coerceServerRankId(value);
 }
 
 function toOptional(value: string | null): string | undefined {
@@ -150,7 +154,7 @@ function toSummary(row: SeasonRow): RankSeasonSummary {
  * sonraki güvenli sync'te yeniden dener.
  */
 export async function syncMyRank(clientToday: string): Promise<RankSeasonSummary | undefined> {
-  const { data, error } = await supabase.rpc('sync_my_rank', { client_today: clientToday });
+  const { data, error } = await supabase.rpc('sync_my_rank_v2', { client_today: clientToday });
   if (error) throw error;
   const row = firstRow<SeasonRow>(data);
   return row ? toSummary(row) : undefined;
@@ -158,7 +162,7 @@ export async function syncMyRank(clientToday: string): Promise<RankSeasonSummary
 
 /** Kapanmış sezon arşivim. Salt okunur; sunucuda hiçbir şeyi değiştirmez. */
 export async function fetchMyRankHistory(): Promise<RankSeasonArchive[]> {
-  const { data, error } = await supabase.rpc('get_my_rank_history');
+  const { data, error } = await supabase.rpc('get_my_rank_history_v2');
   if (error) throw error;
 
   return ((data ?? []) as HistoryRow[]).map((row) => ({
@@ -183,7 +187,7 @@ export async function fetchMyRankHistory(): Promise<RankSeasonArchive[]> {
  * rozeti hiç çizmez. Gül bakiyesi ve ham event geçmişi bu yoldan HİÇ gelmez.
  */
 export async function fetchFriendRank(targetUserId: string): Promise<FriendRankSummary | undefined> {
-  const { data, error } = await supabase.rpc('get_friend_rank', {
+  const { data, error } = await supabase.rpc('get_friend_rank_v2', {
     target_user_id: targetUserId,
   });
   if (error) throw error;
@@ -288,16 +292,17 @@ export async function fetchMyRankWeekFocus(clientToday: string): Promise<RankWee
  * istekler ve arkadaş olmayanlar hiç dönmez. Global leaderboard YOKTUR.
  *
  * Sıralama ve sıra numaraları sunucudan geldiği gibi korunur — bu katman
- * yalnızca satırları güvenle daraltır. Bilinmeyen bir rank kimliği ekranı
- * çökertmez, bozuk satır sessizce düşer ve güncel sezonda rank satırı olmayan
- * arkadaş Bronze/0'a ZORLANMAZ.
+ * yalnızca satırları güvenle daraltır. Kimliksiz/tutarsız satır sessizce düşer
+ * ve güncel sezonda rank satırı olmayan arkadaş Bronze/0'a ZORLANMAZ. Ancak
+ * SIRALANMIŞ bir satır tanınmayan bir rank kimliği taşırsa (sürüm uyumsuzluğu)
+ * kontrollü bir hata fırlar; bu, yanlış rank göstermek yerine hata/yeniden-dene
+ * akışını tetikler.
  */
 export async function fetchFriendsRankLeaderboard(): Promise<FriendRankLeaderboard> {
-  const { data, error } = await supabase.rpc('get_friends_rank_leaderboard');
+  const { data, error } = await supabase.rpc('get_friends_rank_leaderboard_v2');
   if (error) throw error;
 
   return parseFriendRankLeaderboard<RankId>(data as FriendRankLeaderboardRow[] | null, {
-    fallbackRank: 'bronze',
     order: RANK_IDS,
   });
 }

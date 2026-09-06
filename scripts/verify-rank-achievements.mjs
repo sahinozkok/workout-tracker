@@ -640,97 +640,59 @@ check('15. Hesap değiştirme yarışı A verisini B state’ine YAZAMIYOR', () 
   assertDeepEqual(unlockedKeys(rowsForB), [], 'A’nın kazanımı B’de göründü');
 });
 
-check('16. Hata durumunda mevcut rank ekranı ÇALIŞMAYA DEVAM EDİYOR', () => {
-  // Başarı hatası kendi state'inde kalır; sezon/RP akışına dokunmaz.
-  const body = contextSource.slice(
-    contextSource.indexOf('const loadAchievements = useCallback('),
-    contextSource.indexOf('loadAchievementsRef.current = () => {'),
-  );
-  assert(body.includes('setHasAchievementsError(true);'), 'hata durumu sunulmuyor');
-  assert(!body.includes('setSeason('), 'başarı hatası sezon state’ine dokunuyor');
-  assert(!body.includes('throw'), 'hata yukarı fırlatılıyor');
-
-  /**
-   * Ekranın erken dönüş bloğu (sezon henüz yokken gösterilen durum) başarı
-   * state'ine HİÇ bakmaz: başarı hatası bu yolu değiştiremez.
-   */
-  const guardStart = screenSource.indexOf('if (!season) {');
-  assert(guardStart > 0, 'sezon erken dönüş bloğu bulunamadı');
-  const guardBlock = screenSource.slice(guardStart, screenSource.indexOf('const accent ='));
-  for (const leak of ['achievements', 'hasAchievementsError', 'isAchievementsLoading']) {
-    assert(!guardBlock.includes(leak), `sezon kontrolü başarı verisine bağlanmış: ${leak}`);
+check('16. ÜRÜN KARARI: Rank ekranı sezon başarımı UI\'ını kullanmaz; arka plan sezon senkronu KALDIRILDI', () => {
+  // Rank ekranı artık sezonluk başarım verisine/UI'ına HİÇ bağlı değil.
+  for (const leak of [
+    'SeasonAchievement',
+    'AchievementsGrid',
+    'AchievementBadge',
+    'loadAchievements',
+    'hasAchievementsError',
+    'isAchievementsLoading',
+  ]) {
+    assert(!screenSource.includes(leak), `rank ekranı hâlâ sezon başarımına bağlı: ${leak}`);
   }
-  // Yeniden deneme yolu var.
-  assert(
-    screenSource.includes('onRetry={() => void loadAchievements()}'),
-    'kullanıcı tekrar deneyemiyor',
-  );
-  // Polling YOK.
-  assert(
-    !/setInterval[\s\S]{0,120}loadAchievements|setTimeout[\s\S]{0,120}loadAchievements/.test(
-      contextSource + screenSource,
-    ),
-    'başarılar için polling kurulmuş',
-  );
-  /**
-   * Tazeleme MEVCUT rank sync'ine bağlıdır — kendi tetikleyicisini kurmaz.
-   *
-   * Faz 7A'da bu çağrı `hasRequestedAchievementsRef` ile koşulluydu; başarı
-   * açılma kutlaması eklendiğinde koşul KALDIRILDI, çünkü
-   * `sync_my_season_achievements` rozetleri YAZAN RPC'dir ve yalnızca Rank
-   * ekranı açıldığında çağrılsaydı kullanıcı antrenmandan hemen sonraki
-   * kutlamayı kaçırırdı. Kalıcı güvence "koşullu olması" değil, tazelemenin
-   * yalnızca zaten var olan rank sync'inden gelmesi ve tek-uçuş kilidinin
-   * eşzamanlı ikinci RPC'yi engellemesidir.
-   */
+  // Bunun yerine kalıcı kariyer başarımlarının ORTAK bileşenini ve kaynağını kullanır.
+  assert(screenSource.includes('CareerAchievementsView'), 'rank ekranı kalıcı kariyer bileşenini kullanmıyor');
+  assert(/useAchievements\(\)/.test(screenSource), 'rank ekranı kalıcı kaynağı (useAchievements) kullanmıyor');
+
+  // ARKA PLAN SEZON BAŞARIM SENKRONU KALDIRILDI: runSync artık her rank sync'inden
+  // sonra `sync_my_season_achievements` çağırmaz (gereksiz RPC + kutlama kuyruğu yok).
   const syncBody = contextSource.slice(
     contextSource.indexOf('const runSync = useCallback('),
     contextSource.indexOf('const syncRank = useCallback('),
   );
   assert(syncBody.length > 0, 'runSync bulunamadı');
-  assert(
-    syncBody.includes('loadAchievementsRef.current();'),
-    'rank sync sonrası başarı tazelemesi yok',
-  );
-  assert(
-    contextSource.includes('if (isAchievementsFetchingRef.current) {') &&
-      contextSource.includes('hasQueuedAchievementsRef.current = true;'),
-    'tek-uçuş/latest-wins kaybolmuş — eşzamanlı ikinci RPC riski',
-  );
+  assert(!syncBody.includes('loadAchievementsRef.current();'), 'runSync hâlâ arka planda sezon başarımı senkronluyor');
+  // Rank/RP sync'i KORUNUR (bu değişiklik rank hesabına dokunmaz).
+  assert(syncBody.includes('syncMyRank('), 'rank/RP sync bozulmuş');
+
+  // Sezon erken-dönüş (season yokken) bloğu başarı verisine HİÇ bakmaz.
+  const guardStart = screenSource.indexOf('if (!season) {');
+  assert(guardStart > 0, 'sezon erken dönüş bloğu bulunamadı');
+  const guardBlock = screenSource.slice(guardStart, screenSource.indexOf('const accent ='));
+  for (const leak of ['hasAchievementsError', 'isAchievementsLoading']) {
+    assert(!guardBlock.includes(leak), `sezon kontrolü başarı verisine bağlanmış: ${leak}`);
+  }
+  // Rank ekranında polling/timer YOK.
+  assert(!/setInterval|setTimeout/.test(screenSource), 'rank ekranında polling/timer var');
 });
 
-check('17. Loading / empty / error / success görünümleri güvenli', () => {
-  assert(screenSource.includes("t('ranks.achievements.title')"), 'başlık çeviriden gelmiyor');
-  assert(screenSource.includes("t('ranks.achievements.unavailable')"), 'hata metni yok');
-  assert(screenSource.includes("t('ranks.achievements.empty')"), 'boş durum metni yok');
-  assert(screenSource.includes('ActivityIndicator'), 'yükleniyor göstergesi yok');
-  assert(screenSource.includes("t('ranks.achievements.progress'"), 'ilerleme metni çeviriden gelmiyor');
-  assert(screenSource.includes('MotionSection'), 'mevcut motion yapısı kullanılmıyor');
-  assert(screenSource.includes('accessibilityLabel'), 'erişilebilirlik etiketi yok');
-  assert(
-    screenSource.includes('unlockedA11y') && screenSource.includes('lockedA11y'),
-    'kilitli/açık erişilebilirlik metinleri eksik',
-  );
+check('17. ÜRÜN KARARI: Rank Başarılar sekmesi kalıcı kariyer görünümünü render eder; sezon grid KALDIRILDI', () => {
+  // Eski "SEASON ACHIEVEMENTS" başlığı ve sezon grid bileşenleri rank ekranından kaldırıldı.
+  assert(!screenSource.includes("t('ranks.achievements.title')"), 'eski SEASON ACHIEVEMENTS başlığı hâlâ render ediliyor');
+  assert(!screenSource.includes('AchievementsGrid') && !screenSource.includes('AchievementBadge'), 'eski sezon grid bileşenleri hâlâ var');
 
-  // Bu fazda modal, kutlama ve yeni ekran YOK.
-  assert(!/Modal|celebration|confetti/i.test(screenSource.slice(screenSource.indexOf('AchievementsGrid'))), 'kapsam dışı modal/kutlama eklenmiş');
+  // Achievements dalı kalıcı kariyer ortak bileşenini render eder.
+  const swap = screenSource.slice(screenSource.indexOf("activeTab === 'achievements'"));
+  assert(swap.includes('CareerAchievementsView'), 'achievements dalı kalıcı kariyer bileşenini render etmiyor');
 
-  // İstemci ilerleme HESAPLAMAZ: sunucu değeri olduğu gibi taşınır.
-  const grid = screenSource.slice(
-    screenSource.indexOf('function AchievementBadge('),
-    screenSource.indexOf('function StatRow('),
-  );
-  assert(!/\.filter\(|\.length|currentProgress\s*[+*-]/.test(grid), 'ekran ilerleme hesaplıyor');
-
-  // İki dilde de bütün metinler tanımlı.
+  // GERİYE DÖNÜK KORUMA: sezon başarım locale'i (backend/eski uyumluluk) SİLİNMEDİ.
+  assert(localeTr.includes("title: 'SEZON BAŞARILARI'"), 'TR sezon locale başlığı silinmiş (geriye dönük veri korunmalı)');
+  assert(localeEn.includes("title: 'SEASON ACHIEVEMENTS'"), 'EN sezon locale başlığı silinmiş (geriye dönük veri korunmalı)');
   for (const key of ['first_workout', 'workout_5', 'workout_15', 'streak_3', 'streak_7', 'perfect_week']) {
     assert(localeTr.includes(`${key}: {`), `tr sözlüğünde ${key} yok`);
     assert(localeEn.includes(`${key}: {`), `en sözlüğünde ${key} yok`);
-  }
-  assert(localeTr.includes("title: 'SEZON BAŞARILARI'"), 'TR bölüm başlığı beklenen değil');
-  assert(localeEn.includes("title: 'SEASON ACHIEVEMENTS'"), 'EN bölüm başlığı beklenen değil');
-  for (const name of ['İlk Adım', 'Ritim Kazanıyor', 'İstikrarlı', '3 Günlük Seri', '7 Günlük Seri', 'Kusursuz Hafta']) {
-    assert(localeTr.includes(name), `TR başarı adı eksik: ${name}`);
   }
 });
 

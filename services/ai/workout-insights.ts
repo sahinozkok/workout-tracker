@@ -115,9 +115,10 @@ function isWorkoutInsight(value: unknown): value is WeeklyWorkoutInsight {
 
 async function invokeWorkoutCoach(body: {
   exerciseName?: string;
-  feature: 'exercise_progress' | 'weekly_summary';
+  feature: 'exercise_progress' | 'weekly_summary' | 'workout_analysis';
   periodEnd?: string;
   periodStart?: string;
+  workoutSessionId?: string;
 }) {
   const {
     data: { session },
@@ -151,6 +152,94 @@ async function invokeWorkoutCoach(body: {
   }
   if (!isWorkoutInsight(data)) throw new Error('Özet beklenen biçimde gelmedi.');
   return data;
+}
+
+/**
+ * Analiz hata türleri — istemci, kullanıcıya DOĞRU mesajı ve doğru eylemi
+ * (tekrar dene / bekle / sınır) göstermek için ayırt eder:
+ *   * `quota`      — günlük AI sınırına ulaşıldı (429).
+ *   * `connection` — sunucuya ulaşılamadı / oturum yenilenemedi (ağ).
+ *   * `generic`    — beklenmeyen sunucu/biçim hatası.
+ */
+export type WorkoutAnalysisErrorKind = 'quota' | 'connection' | 'generic';
+
+export class WorkoutAnalysisError extends Error {
+  readonly kind: WorkoutAnalysisErrorKind;
+  constructor(kind: WorkoutAnalysisErrorKind, message: string) {
+    super(message);
+    this.kind = kind;
+    this.name = 'WorkoutAnalysisError';
+  }
+}
+
+/**
+ * Analiz sonucu:
+ *   * `ready`       — analiz hazır (yeni üretim veya cache).
+ *   * `in_progress` — başka bir istek şu anda üretiyor (paralel Gemini YOK);
+ *                     istemci kısa süre sonra yeniden dener.
+ */
+export type WorkoutAnalysisResult =
+  | { status: 'ready'; insight: WeeklyWorkoutInsight }
+  | { status: 'in_progress' };
+
+async function classifyAnalysisError(error: unknown): Promise<WorkoutAnalysisError> {
+  const context = error && typeof error === 'object' && 'context' in error ? (error as { context?: unknown }).context : undefined;
+  // Yanıt gövdesi yoksa fetch başarısız olmuştur → bağlantı hatası.
+  if (!(context instanceof Response)) {
+    return new WorkoutAnalysisError('connection', 'Koç servisine ulaşılamadı. Bağlantını kontrol edip tekrar dene.');
+  }
+  let serverMessage: string | undefined;
+  try {
+    const payload = (await context.clone().json()) as { error?: unknown; message?: unknown };
+    const raw = typeof payload.error === 'string' ? payload.error : payload.message;
+    if (typeof raw === 'string' && raw.trim()) serverMessage = raw;
+  } catch {
+    // Sunucu JSON döndürmediyse güvenli genel mesaj kullanılır.
+  }
+  if (context.status === 429) {
+    return new WorkoutAnalysisError('quota', serverMessage ?? 'Günlük AI isteği sınırına ulaştın. Daha sonra tekrar dene.');
+  }
+  return new WorkoutAnalysisError('generic', serverMessage ?? 'Analiz oluşturulamadı. Lütfen tekrar dene.');
+}
+
+/**
+ * Belirli, TAMAMLANMIŞ bir antrenman için GERÇEK AI (Gemini) toparlanma/gelişim
+ * analizi. Sunucu session'ın kullanıcıya ait ve tamamlanmış olduğunu doğrular,
+ * sonucu `ai_workout_analyses` defterine kaydeder (tekrar istekte YENİ AI maliyeti
+ * yok, mevcut sonuç döner). `coach_to_the_top` başarımının kanıt kaynağıdır.
+ *
+ * EŞZAMANLILIK — sunucu atomik claim ile tek üreticiyi seçer; başka istek üretirken
+ * bu çağrı `in_progress` döner (yeni Gemini çağrısı YOK). Hata türleri ayrıştırılır
+ * (`WorkoutAnalysisError.kind`). Mock/deterministik yol YOKTUR.
+ */
+export async function generateWorkoutAnalysis(workoutSessionId: string): Promise<WorkoutAnalysisResult> {
+  if (!isCoachBackendEnabled) {
+    throw new WorkoutAnalysisError('generic', 'Koç servisi şu anda kullanılamıyor.');
+  }
+
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession();
+  if (sessionError || !session?.access_token) {
+    throw new WorkoutAnalysisError('connection', 'Oturumun yenilenemedi. Çıkış yapıp tekrar giriş yapmayı dene.');
+  }
+
+  const { data, error } = await supabase.functions.invoke('workout-coach', {
+    body: { feature: 'workout_analysis', workoutSessionId },
+    headers: { Authorization: `Bearer ${session.access_token}` },
+  });
+
+  if (error) throw await classifyAnalysisError(error);
+
+  // 202: başka istek üretiyor → paralel Gemini YOK; istemci kısa süre sonra dener.
+  if (data && typeof data === 'object' && (data as { status?: unknown }).status === 'in_progress') {
+    return { status: 'in_progress' };
+  }
+  if (!isWorkoutInsight(data)) {
+    throw new WorkoutAnalysisError('generic', 'Analiz beklenen biçimde gelmedi.');
+  }
+  return { status: 'ready', insight: data };
 }
 
 export async function generateWeeklyWorkoutInsight(metrics: WeeklyWorkoutMetrics) {

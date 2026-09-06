@@ -232,6 +232,25 @@ export default function SettingsScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         style={styles.settingsCard}>
+        {/* PROFİLİ DÜZENLE — profil hesabıyla ilgili ilk giriş; dil/görünüm gibi
+            genel ayarlardan ÖNCE. Kök Stack'teki `/profile-edit` ekranını açar. */}
+        <Pressable
+          accessibilityLabel={t('profile.editRowTitle')}
+          accessibilityRole="button"
+          onPress={() => router.push('/profile-edit')}
+          style={({ pressed }) => [styles.settingRow, styles.featureRow, pressed && styles.pressed]}>
+          <View style={styles.settingIcon}>
+            <Ionicons name="person-circle-outline" size={19} color={settingsAccent} />
+          </View>
+          <View style={styles.settingText}>
+            <Text style={styles.settingTitle}>{t('profile.editRowTitle')}</Text>
+            <Text style={styles.caption}>{t('profile.editRowCaption')}</Text>
+          </View>
+          <Ionicons color={colors.textTertiary} name="chevron-forward" size={18} />
+        </Pressable>
+
+        <View style={styles.divider} />
+
         <View style={[styles.settingRow, styles.topSettingRow]}>
           <View style={styles.settingText}>
             <Text style={styles.settingTitle}>{t('profile.language')}</Text>

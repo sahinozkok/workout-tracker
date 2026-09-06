@@ -413,32 +413,22 @@ check('5. MUTASYON: kalan miktar hedeften türetilmezse test DÜŞER', () => {
 // Katman 2 — kaynak ve sözlük denetimi
 // ---------------------------------------------------------------------------
 
-check('6. Kartlar dokunulabilir ve erişilebilir', () => {
-  const badge = screenSource.slice(
-    screenSource.indexOf('function AchievementBadge('),
-    screenSource.indexOf('function StatRow('),
-  );
+check('6. Kartlar dokunulabilir ve erişilebilir (ortak kariyer görünümü)', () => {
+  // ÜRÜN KARARI: Rank Başarılar sekmesi artık sezon rozet kartlarını değil, kalıcı
+  // kariyer başarımlarının ORTAK satır bileşenini (`CareerAchievementsView`) gösterir.
+  const swap = screenSource.slice(screenSource.indexOf("activeTab === 'achievements'"));
+  assert(swap.includes('CareerAchievementsView'), 'rank achievements dalı ortak kariyer bileşenini render etmiyor');
 
-  assert(badge.includes('MotionPressable'), 'kartlarda mevcut press feedback bileşeni yok');
-  assert(badge.includes('accessibilityRole="button"'), 'kartta accessibilityRole="button" yok');
-  assert(badge.includes('onPress={() => onOpen(key)}'), 'kart dokunuşu pencereyi açmıyor');
-  assert(badge.includes('accessibilityHint'), 'kartta ne olacağını anlatan ipucu yok');
-
-  // Etiket ad + kilit durumu + ilerlemeyi anlatır.
-  assert(
-    badge.includes('unlockedA11y') && badge.includes('lockedA11y'),
-    'kilitli/açık erişilebilirlik metinleri eksik',
-  );
-  for (const locale of [localeTr, localeEn]) {
-    const unlocked = /unlockedA11y: '([^']+)'/.exec(locale)?.[1] ?? '';
-    assert(
-      unlocked.includes('{name}') && unlocked.includes('{current}') && unlocked.includes('{target}'),
-      'açık rozet etiketi ad/ilerleme taşımıyor',
-    );
-  }
-
-  // İstemci ilerleme HESAPLAMAZ (mevcut kural korunur).
-  assert(!/\.filter\(|\.length|currentProgress\s*[+*-]/.test(badge), 'kart ilerleme hesaplıyor');
+  const view = source('components/achievements/career-achievements-view.tsx');
+  // Press feedback (Pressable + pressed stili), düğme rolü, ipucu ve detay açma.
+  assert(view.includes('Pressable'), 'satırlarda press feedback (Pressable) yok');
+  assert(/pressed && styles\.pressed/.test(view), 'basılı durum görsel geri bildirimi yok');
+  assert(view.includes('accessibilityRole="button"'), 'satırda accessibilityRole="button" yok');
+  assert(view.includes('onPress={() => setDetail(a)}'), 'satır dokunuşu detayı açmıyor');
+  assert(view.includes('accessibilityHint'), 'satırda ne olacağını anlatan ipucu yok');
+  // Etiket ad + kilit durumu (+ ilerleme metni) taşır.
+  assert(view.includes('a11yState.unlocked') && view.includes('a11yState.locked'), 'kilitli/açık erişilebilirlik metinleri eksik');
+  assert(/progressText\(a\)/.test(view), 'a11y etiketi ilerleme metnini taşımıyor');
 });
 
 check('7. Pencere ÜÇ kapatma yoluyla da kapanır ve arka ekranı kilitler', () => {
@@ -585,9 +575,11 @@ check('12. Kapsam sınırı: kutlama ve profil vitrini değişmemiş', () => {
     !/celebration|showcase|acknowledge|dismiss/i.test(sheetCode),
     'pencere kutlama veya vitrin akışına dokunuyor',
   );
-  // Rank ekranı ayrıntı için yeni sayfa veya navigasyon AÇMAZ.
-  const grid = screenSource.slice(screenSource.indexOf('function AchievementsGrid('));
-  assert(!/router\.(push|replace|navigate)/.test(grid), 'ayrıntı için navigasyon eklenmiş');
+  // Ayrıntı için yeni sayfa/navigasyon AÇILMAZ: ortak kariyer görünümü detayı
+  // bir Modal ile gösterir (rank ekranı sekmeyi bu bileşene devreder).
+  const view = source('components/achievements/career-achievements-view.tsx');
+  assert(!/router\.(push|replace|navigate)/.test(view), 'ayrıntı için navigasyon eklenmiş');
+  assert(view.includes('<Modal'), 'kariyer detay penceresi Modal ile gösterilmiyor');
   // İkon eşlemesi hâlâ TEK kaynaktan gelir.
   assert(
     sheetSource.includes("from '@/components/ranks/achievement-icons'") &&

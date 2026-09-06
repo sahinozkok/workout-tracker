@@ -15,11 +15,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ActivityProgress } from '@/components/activity-progress';
 import { ActivityRecordEditorSheet } from '@/components/activity-record-editor-sheet';
+import { WorkoutAnalysisSheet } from '@/components/workout-analysis-sheet';
 import { ExerciseProgress } from '@/components/exercise-progress';
 import { MotionListItem, useListEntrance } from '@/components/motion-list-item';
 import { MotionSection, MotionSwap } from '@/components/motion-section';
 import { ProgressRing } from '@/components/progress-ring';
 import { Layout, ThemeColors, Type } from '@/constants/theme';
+import { useOptionalAchievements } from '@/context/achievement-context';
 import { useTranslation } from '@/context/language-context';
 import { useWorkout } from '@/context/workout-context';
 import {
@@ -84,6 +86,8 @@ export default function HistoryScreen() {
   const durationRing = useFeatureColor('historyDurationRing', colors.accent).color;
   const styles = createStyles(colors, historyAccent);
   const [expandedSessionId, setExpandedSessionId] = useState<string>();
+  const [analyzeSessionId, setAnalyzeSessionId] = useState<string>();
+  const achievementSync = useOptionalAchievements()?.requestSync;
   /** Aynı anda yalnızca bir satırın silme alanı açık kalır. */
   const [swipedSessionId, setSwipedSessionId] = useState<string>();
   const [activeView, setActiveView] = useState<'workouts' | 'progress'>('workouts');
@@ -230,6 +234,7 @@ export default function HistoryScreen() {
                   expanded={expandedSessionId === session.id}
                   isSwipeOpen={swipedSessionId === session.id}
                   key={session.id}
+                  onAnalyze={setAnalyzeSessionId}
                   onDelete={() => void handleDeleteSession(session.id)}
                   onSwipeClosed={() =>
                     setSwipedSessionId((currentId) => (currentId === session.id ? undefined : currentId))
@@ -289,6 +294,15 @@ export default function HistoryScreen() {
       <ActivityRecordEditorSheet
         onClose={() => setEditingRecordId(undefined)}
         record={editingRecord}
+      />
+
+      {/* Koç workout analizi — tamamlanmış antrenman için gerçek AI analizi;
+          başarıyla üretilince coach_to_the_top için başarım senkronu tetiklenir. */}
+      <WorkoutAnalysisSheet
+        accentColor={historyAccent}
+        onAnalyzed={() => achievementSync?.()}
+        onClose={() => setAnalyzeSessionId(undefined)}
+        sessionId={analyzeSessionId}
       />
     </SafeAreaView>
   );
@@ -460,6 +474,7 @@ function SessionHistoryRow({
   expanded,
   isSwipeOpen,
   locale,
+  onAnalyze,
   onDelete,
   onEditRecord,
   onSwipeClosed,
@@ -478,6 +493,7 @@ function SessionHistoryRow({
   expanded: boolean;
   isSwipeOpen: boolean;
   locale: string;
+  onAnalyze: (sessionId: string) => void;
   onDelete: () => void;
   onEditRecord: (recordId: string) => void;
   onSwipeClosed: () => void;
@@ -653,6 +669,19 @@ function SessionHistoryRow({
               <Text style={styles.noSetDetailsText}>{t('history.noSetDetails')}</Text>
             </View>
           )}
+
+          {/* KOÇ ANALİZİ — bu tamamlanmış antrenman için gerçek AI toparlanma/
+              gelişim analizini açar (coach_to_the_top kanıtı). Mevcut tasarım
+              diliyle sade satır CTA; yeni büyük kart/sabit renk yok. */}
+          <Pressable
+            accessibilityHint={t('history.coachAnalysis.cta')}
+            accessibilityLabel={t('history.coachAnalysis.cta')}
+            accessibilityRole="button"
+            onPress={() => onAnalyze(session.id)}
+            style={({ pressed }) => [styles.analyzeButton, pressed && { opacity: 0.6 }]}>
+            <Ionicons name="sparkles-outline" size={16} color={colors.primary} />
+            <Text style={styles.analyzeText}>{t('history.coachAnalysis.cta')}</Text>
+          </Pressable>
         </View>
       )}
     </MotionListItem>
@@ -898,6 +927,17 @@ function createStyles(colors: ThemeColors, historyAccent: string) {
     },
     noSetDetails: { alignItems: 'center', flexDirection: 'row', gap: 8 },
     noSetDetailsText: { color: colors.textSecondary, flex: 1, ...Type.footnote, lineHeight: 15 },
+    // Koç analizi CTA: sade satır, 44 pt dokunma; büyük kart/sabit renk yok.
+    analyzeButton: {
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+      flexDirection: 'row',
+      gap: 6,
+      marginTop: 12,
+      minHeight: Layout.minTouchSize,
+      paddingHorizontal: 4,
+    },
+    analyzeText: { color: colors.primary, fontSize: 14, fontWeight: '600' },
     rpeNote: { color: colors.textTertiary, ...Type.footnote, lineHeight: 15 },
     progressStack: { gap: 24 },
     /** Strength ve kardiyo gelişim bölümlerini ayıran sade hairline. */

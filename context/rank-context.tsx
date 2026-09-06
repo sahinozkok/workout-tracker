@@ -18,7 +18,9 @@ import {
   decideSeasonRecap,
   parseCelebratedAchievementKeys,
   rankCelebrationStorageKey,
+  rankCelebrationStorageKeyV2,
   RankOverlayOwner,
+  resolveCelebrationBaseline,
   seasonAchievementCelebrationStorageKey,
   SeasonAchievementKey,
   seasonRecapStorageKey,
@@ -408,19 +410,15 @@ export function RankProvider({ children }: PropsWithChildren) {
       if (hasRequestedEventsRef.current) loadEventsRef.current();
       if (hasRequestedWeekFocusRef.current) loadWeekFocusRef.current();
       /**
-       * BAŞARILAR HER BAŞARILI RANK SYNC'İNDEN SONRA UZLAŞTIRILIR.
+       * ESKİ SEZON BAŞARIMI ARKA PLAN SENKRONU KALDIRILDI.
        *
-       * Bilinçli olarak `hasRequestedAchievementsRef` koşuluna BAĞLI DEĞİLDİR:
-       * `sync_my_season_achievements` rozetleri yazan RPC'dir, dolayısıyla
-       * yalnızca Rank ekranı açıldığında çağrılsaydı kullanıcı antrenmandan
-       * hemen sonraki kutlamayı kaçırırdı.
-       *
-       * Ek yük sınırlıdır ve yeni bir istek DÖNGÜSÜ kurulmaz: `loadAchievements`
-       * kendi tek-uçuş kilidini uygular (eşzamanlı ikinci RPC başlamaz), RPC
-       * idempotenttir ve POLLING/interval YOKTUR — tetikleyici yalnızca zaten
-       * var olan rank sync'idir.
+       * Başarımlar artık sezondan BAĞIMSIZ ve kalıcıdır (`AchievementContext` +
+       * `sync_my_achievements`). Eskiden burada her rank sync'inden sonra
+       * `sync_my_season_achievements` RPC'si çağrılıyor ve sezonluk kutlama
+       * kuyruğu besleniyordu; bu artık kullanıcı arayüzünde gösterilmediği için
+       * ARKA PLANDA GEREKSİZ RPC ve kutlama kuyruğu ÇALIŞTIRILMAZ. Rank/RP sync'i
+       * (`syncMyRank`) ve rank yükselme/sezon özeti kutlamaları KORUNUR.
        */
-      loadAchievementsRef.current();
     } catch {
       // Rank okunamazsa akış engellenmez; sonraki güvenli sync eksikleri
       // idempotent tamamlar. Yalnızca gösterilecek hiç sezon YOKKEN hata
@@ -936,8 +934,10 @@ export function RankProvider({ children }: PropsWithChildren) {
 
       acknowledgedCelebrationIdRef.current = celebrationId;
 
+      // Onay kaydı SÜRÜMLÜ v2 anahtarına yazılır (yeni kimliklerle). Eski v1
+      // anahtarına dokunulmaz.
       await AsyncStorage.setItem(
-        rankCelebrationStorageKey(userId, celebration.seasonIndex),
+        rankCelebrationStorageKeyV2(userId, celebration.seasonIndex),
         celebration.toRank,
       ).catch(() => undefined);
     },
@@ -1138,7 +1138,11 @@ export function RankProvider({ children }: PropsWithChildren) {
     async (ownerId: string, snapshot: RankSeasonSummary, owner: number) => {
       if (owner !== ownerRef.current) return;
 
-      const storageKey = rankCelebrationStorageKey(ownerId, snapshot.seasonIndex);
+      // SÜRÜMLÜ KAYIT — yazma her zaman v2 anahtarına gider; okuma v2 önceliklidir
+      // ve v2 yoksa yalnız açıkça v1 olduğu bilinen eski anahtar okunup v1→v2
+      // çevrilir (bkz. `resolveCelebrationBaseline`). Eski anahtara v2 yazılmaz.
+      const storageKey = rankCelebrationStorageKeyV2(ownerId, snapshot.seasonIndex);
+      const legacyKey = rankCelebrationStorageKey(ownerId, snapshot.seasonIndex);
       let baseline = baselineRef.current;
 
       // Bellek içi kopya bu hesaba ve bu sezona ait değilse depo okunur.
@@ -1147,10 +1151,19 @@ export function RankProvider({ children }: PropsWithChildren) {
         baseline.userId !== ownerId ||
         baseline.seasonIndex !== snapshot.seasonIndex
       ) {
-        const stored = await AsyncStorage.getItem(storageKey).catch(() => null);
+        const [v2Raw, v1Raw] = await Promise.all([
+          AsyncStorage.getItem(storageKey).catch(() => null),
+          AsyncStorage.getItem(legacyKey).catch(() => null),
+        ]);
         if (!isMountedRef.current || owner !== ownerRef.current) return;
 
-        const storedRank = parseStoredRank(stored);
+        const storedRank = parseStoredRank(
+          resolveCelebrationBaseline({
+            isValidId: (value) => RANK_IDS.includes(value as RankId),
+            v1Raw,
+            v2Raw,
+          }) ?? null,
+        );
         baseline = storedRank
           ? { rank: storedRank, seasonIndex: snapshot.seasonIndex, userId: ownerId }
           : undefined;
@@ -1186,11 +1199,18 @@ export function RankProvider({ children }: PropsWithChildren) {
       if (decision.type !== 'celebrate') {
         await AsyncStorage.setItem(storageKey, decision.baseline.rank).catch(() => undefined);
 
-        // Yeni sezona geçildiğinde bir önceki sezonun kaydı gereksizdir.
+        // Yeni sezona geçildiğinde bir önceki sezonun kaydı gereksizdir. Hem v2
+        // hem de (varsa) eski v1 anahtarı temizlenir; kapanmış sezonun eski
+        // kaydını silmek yaşayan bir eski uygulama davranışını bozmaz.
         if (decision.type === 'seed' && snapshot.seasonIndex > 1) {
-          await AsyncStorage.removeItem(
-            rankCelebrationStorageKey(ownerId, snapshot.seasonIndex - 1),
-          ).catch(() => undefined);
+          await Promise.all([
+            AsyncStorage.removeItem(
+              rankCelebrationStorageKeyV2(ownerId, snapshot.seasonIndex - 1),
+            ).catch(() => undefined),
+            AsyncStorage.removeItem(
+              rankCelebrationStorageKey(ownerId, snapshot.seasonIndex - 1),
+            ).catch(() => undefined),
+          ]);
         }
       }
 

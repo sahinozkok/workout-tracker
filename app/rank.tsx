@@ -1,17 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { CareerAchievementsView } from '@/components/achievements/career-achievements-view';
 import { MotionPressable } from '@/components/motion-pressable';
 import { MotionSection, MotionSwap } from '@/components/motion-section';
-import { AchievementDetailSheet } from '@/components/ranks/achievement-detail-sheet';
-import { ACHIEVEMENT_ICONS } from '@/components/ranks/achievement-icons';
-import { AchievementMedallion } from '@/components/ranks/achievement-medallion';
-import { getRankColor, getRankSoftBackground, useRankName } from '@/components/ranks/rank-badge';
+import { getRankColor, useRankName } from '@/components/ranks/rank-badge';
 import { RankEmblem } from '@/components/ranks/rank-emblem';
-import { SeasonAchievementKey, toRankRpDisplay } from '@/constants/rank-experience';
+import { toRankRpDisplay } from '@/constants/rank-experience';
 import {
   daysRemainingInSeason,
   nextRank,
@@ -20,14 +18,15 @@ import {
   RANK_RP,
   rpToNextRank,
 } from '@/constants/ranks';
-import { getOnAccentColor, withAlpha } from '@/constants/color-presets';
+import { getOnAccentColor } from '@/constants/color-presets';
 import { Layout, ThemeColors } from '@/constants/theme';
+import { useAchievements } from '@/context/achievement-context';
 import { useTranslation } from '@/context/language-context';
 import { useRanks } from '@/context/rank-context';
 import { useAppTheme } from '@/hooks/use-app-theme';
 import { useFeatureColor } from '@/hooks/use-feature-colors';
 import { useLocalDateKey } from '@/hooks/use-shared-discipline-sync';
-import { RankEvent, RankSeasonArchive, RankWeekFocus, SeasonAchievement } from '@/types/ranks';
+import { RankEvent, RankSeasonArchive, RankWeekFocus } from '@/types/ranks';
 import { dateFromKey } from '@/utils/workout-schedule';
 
 /**
@@ -59,20 +58,16 @@ const RANK_TAB_KEYS: readonly RankTabKey[] = ['overview', 'achievements', 'histo
 const HEAVY_CONTENT_TABS: readonly RankTabKey[] = ['history'];
 
 export default function RankScreen() {
-  const { colors, isDark } = useAppTheme();
+  const { colors } = useAppTheme();
   const { locale, t } = useTranslation();
   const {
-    achievements,
     events,
-    hasAchievementsError,
     history,
-    isAchievementsLoading,
     isEventsLoading,
     isHistoryLoading,
     isRankLoading,
     isWeekFocusLoading,
     hasWeekFocusError,
-    loadAchievements,
     loadEvents,
     loadHistory,
     loadWeekFocus,
@@ -80,6 +75,9 @@ export default function RankScreen() {
     syncRank,
     weekFocus,
   } = useRanks();
+  // Kalıcı kariyer başarımları AYRI, sezondan bağımsız kaynaktan gelir. Rank ekranı
+  // yalnız sekmeye geçilince ölçülü senkron ister (debounce+coalesce+tek-uçuş).
+  const { requestSync: requestAchievementSync } = useAchievements();
   const rankName = useRankName();
   const todayKey = useLocalDateKey();
   const todayColor = useFeatureColor('todayHighlight', colors.primary).color;
@@ -106,9 +104,12 @@ export default function RankScreen() {
     void loadWeekFocus();
   }, [loadWeekFocus]);
 
+  // Achievements sekmesine geçildiğinde kalıcı başarımlar tazelenir. `requestSync`
+  // DEBOUNCE + COALESCE + TEK-UÇUŞ olduğundan render/effect döngüsü RPC fırtınası
+  // oluşturmaz; sekmeye tekrar dönmek ekstra istek yığmaz.
   useEffect(() => {
-    void loadAchievements();
-  }, [loadAchievements]);
+    if (activeTab === 'achievements') requestAchievementSync();
+  }, [activeTab, requestAchievementSync]);
 
   if (!season) {
     return (
@@ -188,10 +189,10 @@ export default function RankScreen() {
             accessibilityRole="progressbar"
             accessibilityValue={{ max: 100, min: 0, now: Math.round(fill * 100) }}
             accessible
-            style={[styles.card, { backgroundColor: getRankSoftBackground(season.currentRank, isDark) }]}>
+            style={styles.summary}>
             <View style={styles.cardTopRow}>
               <View style={styles.cardIdentity}>
-                <RankEmblem color={accent} rankId={season.currentRank} variant="hero" />
+                <RankEmblem rankId={season.currentRank} variant="hero" />
                 <View style={styles.cardTitleGroup}>
                   <Text style={styles.cardEyebrow}>{t('ranks.currentRank')}</Text>
                   <Text numberOfLines={1} style={[styles.cardRank, { color: accent }]}>
@@ -292,20 +293,15 @@ export default function RankScreen() {
           ) : null}
 
           {activeTab === 'achievements' ? (
+            /**
+             * KALICI KARİYER BAŞARIMLARI — `/achievements` ekranıyla AYNI ortak
+             * bileşen ve AYNI kaynak (`useAchievements`). Eski "SEASON ACHIEVEMENTS"
+             * başlığı ve altı kartlık sezon grid'i kaldırıldı. Bileşen kendi dikey
+             * ScrollView'ını AÇMAZ; bu ekranın mevcut ScrollView'ı içinde nested
+             * scroll oluşturmadan doğal yüksekliğiyle akar.
+             */
             <View style={styles.achievementsBlock}>
-              <Text style={styles.sectionLabel}>{t('ranks.achievements.title')}</Text>
-              <AchievementsGrid
-                accent={accent}
-                achievements={achievements}
-                colors={colors}
-                hasError={hasAchievementsError}
-                isDark={isDark}
-                isLoading={isAchievementsLoading}
-                locale={locale}
-                onRetry={() => void loadAchievements()}
-                styles={styles}
-                t={t}
-              />
+              <CareerAchievementsView />
             </View>
           ) : null}
 
@@ -534,242 +530,6 @@ function WeekFocusCard({
   );
 }
 
-/**
- * Sezon başarıları — iki sütunlu kompakt rozet ızgarası.
- *
- * Bu bölüm hiçbir ilerleme HESAPLAMAZ: `currentProgress` / `targetProgress`
- * sunucudan geldiği gibi gösterilir. Rozetler yalnızca görseldir; RP, XP veya
- * gül üretmez. Hata bu bölümle sınırlıdır — ekranın geri kalanı çalışmaya
- * devam eder.
- *
- * İkon eşlemesi `components/ranks/achievement-icons.ts` içindedir; açılma
- * kutlaması da aynı kaynağı kullanır.
- */
-function AchievementsGrid({
-  accent,
-  achievements,
-  colors,
-  hasError,
-  isDark,
-  isLoading,
-  locale,
-  onRetry,
-  styles,
-  t,
-}: {
-  accent: string;
-  achievements: SeasonAchievement[];
-  colors: ThemeColors;
-  hasError: boolean;
-  isDark: boolean;
-  isLoading: boolean;
-  locale: string;
-  onRetry: () => void;
-  styles: ReturnType<typeof createStyles>;
-  t: (key: string, params?: Record<string, string | number>) => string;
-}) {
-  /**
-   * Ayrıntısı açık olan rozet.
-   *
-   * Anahtar saklanır, nesne DEĞİL: arka planda yeni bir sunucu cevabı gelirse
-   * pencere donmuş bir kopyayı değil GÜNCEL ilerlemeyi gösterir.
-   */
-  const [openKey, setOpenKey] = useState<SeasonAchievementKey>();
-  const closeDetail = useCallback(() => setOpenKey(undefined), []);
-
-  const openAchievement = achievements.find((entry) => entry.key === openKey);
-  const openUnlockedAt = openAchievement?.unlockedAt;
-  // Tarih biçimlendirmesi bu ekranın mevcut yardımcısıdır; kopyalanmaz.
-  const openUnlockedLabel = openUnlockedAt ? formatUnlockedAt(openUnlockedAt, locale) : undefined;
-
-  if (achievements.length === 0) {
-    return (
-      <View style={styles.achievementsState}>
-        {isLoading ? (
-          <ActivityIndicator color={colors.textSecondary} size="small" />
-        ) : (
-          <>
-            <Text style={styles.achievementsStateText}>
-              {hasError ? t('ranks.achievements.unavailable') : t('ranks.achievements.empty')}
-            </Text>
-            {hasError ? (
-              <MotionPressable
-                accessibilityRole="button"
-                onPress={onRetry}
-                style={styles.achievementsRetry}>
-                <Text style={[styles.achievementsRetryText, { color: accent }]}>
-                  {t('ranks.achievements.retry')}
-                </Text>
-              </MotionPressable>
-            ) : null}
-          </>
-        )}
-      </View>
-    );
-  }
-
-  /**
-   * ÖZET — yalnızca sunum bilgisi.
-   *
-   * Kazanılan sayısı mevcut `isUnlocked` değerlerinden sayılır; yeni başarı
-   * mantığı, eşik veya hedef ÜRETİLMEZ. Genel çizginin dolumu kazanılan/toplam
-   * oranıdır ve güvenli biçimde 0–1 aralığına sınırlıdır.
-   */
-  const earnedCount = achievements.filter((entry) => entry.isUnlocked).length;
-  const totalCount = achievements.length;
-  const summaryRatio = totalCount > 0 ? Math.min(1, Math.max(0, earnedCount / totalCount)) : 0;
-
-  return (
-    <>
-      <View
-        accessible
-        accessibilityLabel={t('ranks.achievements.summaryA11y', {
-          earned: earnedCount,
-          total: totalCount,
-        })}
-        style={styles.achievementsSummary}>
-        <Text style={styles.achievementsSummaryText}>
-          {t('ranks.achievements.summaryLabel', { earned: earnedCount, total: totalCount })}
-        </Text>
-        <View style={[styles.achievementsSummaryTrack, { backgroundColor: colors.surfaceMuted }]}>
-          <View
-            style={[
-              styles.achievementsSummaryFill,
-              { backgroundColor: accent, width: `${Math.round(summaryRatio * 100)}%` },
-            ]}
-          />
-        </View>
-      </View>
-
-      <View style={styles.achievementsGrid}>
-        {achievements.map((achievement) => (
-          <AchievementBadge
-            accent={accent}
-            achievement={achievement}
-            colors={colors}
-            isDark={isDark}
-            key={achievement.key}
-            locale={locale}
-            onOpen={setOpenKey}
-            styles={styles}
-            t={t}
-          />
-        ))}
-      </View>
-
-      <AchievementDetailSheet
-        accent={accent}
-        achievement={openAchievement}
-        onClose={closeDetail}
-        unlockedLabel={openUnlockedLabel}
-      />
-      {hasError ? (
-        <MotionPressable
-          accessibilityRole="button"
-          onPress={onRetry}
-          style={styles.achievementsRetryInline}>
-          <Text style={[styles.achievementsRetryText, { color: accent }]}>
-            {t('ranks.achievements.retry')}
-          </Text>
-        </MotionPressable>
-      ) : null}
-    </>
-  );
-}
-
-/**
- * Tek başarı rozet KUTUSU — iki sütunlu koleksiyonun bir hücresi.
- *
- * Yatay küçük kart değil, dikey rozet kutusu: üstte ortak medallion, altında en
- * fazla iki satırlık ad, ardından duruma göre kilitli ilerleme (metin + ince
- * çizgi) veya açılma tarihi/"Açıldı" metni. Hiçbir ilerleme HESAPLANMAZ; dolum
- * oranı yalnızca sunucudan gelen `currentProgress` / `targetProgress` ile
- * bulunur ve güvenli biçimde 0–1 aralığına sınırlanır.
- */
-function AchievementBadge({
-  accent,
-  achievement,
-  colors,
-  isDark,
-  locale,
-  onOpen,
-  styles,
-  t,
-}: {
-  accent: string;
-  achievement: SeasonAchievement;
-  colors: ThemeColors;
-  isDark: boolean;
-  locale: string;
-  onOpen: (key: SeasonAchievementKey) => void;
-  styles: ReturnType<typeof createStyles>;
-  t: (key: string, params?: Record<string, string | number>) => string;
-}) {
-  const { currentProgress, isUnlocked, key, targetProgress, unlockedAt } = achievement;
-  const name = t(`ranks.achievements.items.${key}.name`);
-  const progressLabel = t('ranks.achievements.progress', {
-    current: currentProgress,
-    target: targetProgress,
-  });
-  const unlockedLabel = unlockedAt ? formatUnlockedAt(unlockedAt, locale) : undefined;
-  const unlockedDetail = unlockedLabel ?? t('ranks.achievements.unlocked');
-  const progressRatio =
-    targetProgress > 0 ? Math.min(1, Math.max(0, currentProgress / targetProgress)) : 0;
-
-  return (
-    <MotionPressable
-      accessibilityHint={t('ranks.achievements.detail.openHint')}
-      accessibilityLabel={
-        isUnlocked
-          ? t('ranks.achievements.unlockedA11y', {
-              current: currentProgress,
-              name,
-              target: targetProgress,
-            })
-          : t('ranks.achievements.lockedA11y', {
-              current: currentProgress,
-              name,
-              target: targetProgress,
-            })
-      }
-      accessibilityRole="button"
-      onPress={() => onOpen(key)}
-      style={[
-        styles.achievementCard,
-        { borderColor: isUnlocked ? withAlpha(accent, isDark ? 0.5 : 0.35) : colors.separator },
-        !isUnlocked && styles.achievementCardLocked,
-      ]}>
-      <AchievementMedallion accent={accent} icon={ACHIEVEMENT_ICONS[key]} isUnlocked={isUnlocked} />
-
-      <Text
-        numberOfLines={2}
-        style={[styles.achievementName, !isUnlocked && styles.achievementNameLocked]}>
-        {name}
-      </Text>
-
-      {isUnlocked ? (
-        <Text numberOfLines={1} style={styles.achievementDetail}>
-          {unlockedDetail}
-        </Text>
-      ) : (
-        <View style={styles.achievementProgress}>
-          <Text numberOfLines={1} style={styles.achievementDetail}>
-            {progressLabel}
-          </Text>
-          <View style={[styles.achievementTrack, { backgroundColor: colors.surfaceMuted }]}>
-            <View
-              style={[
-                styles.achievementFill,
-                { backgroundColor: accent, width: `${Math.round(progressRatio * 100)}%` },
-              ]}
-            />
-          </View>
-        </View>
-      )}
-    </MotionPressable>
-  );
-}
-
 function StatRow({
   isLast = false,
   label,
@@ -899,13 +659,6 @@ function formatEventDate(dateKey: string, locale: string) {
   return dateFromKey(dateKey).toLocaleDateString(locale, { day: 'numeric', month: 'short' });
 }
 
-/** `timestamptz` → kısa yerelleştirilmiş gün. Okunamazsa `undefined`. */
-function formatUnlockedAt(timestamp: string, locale: string) {
-  const date = new Date(timestamp);
-  if (Number.isNaN(date.getTime())) return undefined;
-  return date.toLocaleDateString(locale, { day: 'numeric', month: 'short' });
-}
-
 function formatWeekday(dateKey: string, locale: string) {
   return dateFromKey(dateKey).toLocaleDateString(locale, { weekday: 'short' }).replace('.', '');
 }
@@ -938,7 +691,16 @@ function createStyles(colors: ThemeColors) {
     eyebrow: { color: colors.text, fontSize: 17, fontWeight: '600' },
     dateRange: { color: colors.textSecondary, fontSize: 13, fontWeight: '400' },
 
-    card: { borderRadius: Layout.radiusMedium, gap: 12, padding: 16 },
+    /**
+     * Rank özeti artık KART DEĞİL: renkli arka plan dolgusu, kart sınırı, gölge
+     * ve kart köşe yuvarlaklığı kaldırıldı. Aynı içerik doğrudan ekran zemininde
+     * durur; hiyerarşi hizalama + ölçülü boşluk + mevcut tipografiyle kurulur.
+     * Yatay hizalama ekranın kendi `screenPadding`'inden gelir; buraya yatay
+     * padding EKLENMEZ. `marginBottom` özeti alttaki sekmelerden ayırır (üst
+     * boşluğu başlığın `marginBottom`'u verir). Sabit arka plan rengi yoktur;
+     * tema tokenları (metin/track) olduğu gibi kullanılır.
+     */
+    summary: { gap: 12, marginBottom: 20 },
     cardTopRow: { alignItems: 'center', flexDirection: 'row', gap: 12, justifyContent: 'space-between' },
     cardIdentity: { alignItems: 'center', flexDirection: 'row', flexShrink: 1, gap: 12 },
     cardTitleGroup: { flexShrink: 1, gap: 2 },
@@ -1018,63 +780,9 @@ function createStyles(colors: ThemeColors) {
     weekRetryInline: { alignSelf: 'flex-start', minHeight: Layout.minTouchSize, justifyContent: 'center' },
     weekRetryText: { fontSize: 13, fontWeight: '600' },
 
+    // Kalıcı kariyer başarımları ortak `CareerAchievementsView` ile render edilir;
+    // bu blok yalnız üst boşluğu verir (kendi kart/grid stilleri bileşenin içinde).
     achievementsBlock: { marginTop: 24 },
-
-    /**
-     * Koleksiyon özeti: kazanılan/toplam metni ve ince genel ilerleme çizgisi.
-     * Yalnızca sunum — sayılar `isUnlocked` değerlerinden gelir.
-     */
-    achievementsSummary: { gap: 8, marginBottom: 16 },
-    achievementsSummaryText: { color: colors.textSecondary, fontSize: 13, fontWeight: '600' },
-    achievementsSummaryTrack: { borderRadius: 2, height: 4, overflow: 'hidden', width: '100%' },
-    achievementsSummaryFill: { height: '100%' },
-
-    achievementsGrid: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
-    },
-    /**
-     * İki sütunlu rozet KUTUSU — dikey yerleşim: medallion, ad, durum. Genişlik
-     * %48; 375 pt ekranda iki sütun taşmadan sığar ve metinler sarar.
-     */
-    achievementCard: {
-      alignItems: 'center',
-      backgroundColor: colors.card,
-      borderRadius: Layout.radiusMedium,
-      borderWidth: StyleSheet.hairlineWidth,
-      gap: 8,
-      minHeight: 128,
-      padding: 14,
-      width: '48%',
-    },
-    achievementCardLocked: { opacity: 0.82 },
-    achievementName: {
-      color: colors.text,
-      fontSize: 13,
-      fontWeight: '600',
-      textAlign: 'center',
-    },
-    achievementNameLocked: { color: colors.textSecondary },
-    achievementDetail: {
-      color: colors.textTertiary,
-      fontSize: 11,
-      fontWeight: '400',
-      textAlign: 'center',
-    },
-    /** Kilitli kutuda ilerleme metni + ince çizgi. */
-    achievementProgress: { alignItems: 'center', alignSelf: 'stretch', gap: 6 },
-    achievementTrack: { borderRadius: 2, height: 4, overflow: 'hidden', width: '100%' },
-    achievementFill: { height: '100%' },
-    achievementsState: { alignItems: 'center', gap: 8, justifyContent: 'center', minHeight: 64 },
-    achievementsStateText: { color: colors.textSecondary, fontSize: 13, textAlign: 'center' },
-    achievementsRetry: { justifyContent: 'center', minHeight: Layout.minTouchSize },
-    achievementsRetryInline: {
-      alignSelf: 'flex-start',
-      justifyContent: 'center',
-      minHeight: Layout.minTouchSize,
-    },
-    achievementsRetryText: { fontSize: 13, fontWeight: '600' },
 
     statList: { marginTop: 24 },
     statRow: {
